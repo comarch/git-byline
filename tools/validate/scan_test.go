@@ -132,6 +132,7 @@ func TestTruncate(t *testing.T) {
 		{"short", "short", 10},
 		{"exactly-10", "exactly-10", 10},
 		{"this line is far too long", "this line ...", 10},
+		{"zażółć gęślą jaźń", "zażółć ...", 7},
 	}
 	for _, tt := range tests {
 		if got := truncate(tt.in, tt.limit); got != tt.want {

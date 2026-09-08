@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -22,7 +23,13 @@ func TestBuildSmoke(t *testing.T) {
 	}
 
 	const injected = "v0.1.0-smoke"
-	bin := filepath.Join(t.TempDir(), "git-byline")
+	binName := "git-byline"
+	if runtime.GOOS == "windows" {
+		// go build writes the exact -o name without adding .exe, and
+		// exec.Command cannot resolve an extension-less binary there.
+		binName += ".exe"
+	}
+	bin := filepath.Join(t.TempDir(), binName)
 	build := exec.Command("go", "build",
 		"-ldflags", "-X github.com/mrwogu/git-byline/internal/version.Version="+injected,
 		"-o", bin,

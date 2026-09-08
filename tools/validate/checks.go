@@ -185,30 +185,68 @@ func checkBuilds(root string) error {
 }
 
 // checkDependencies enforces the stdlib-only policy: no package in the
-// repository may depend on anything outside the standard library and the
-// module itself. When this rule changes, the pull request needs a
-// written justification.
+// repository, production or test, may depend on anything outside the
+// standard library and the module itself. When this rule changes, the
+// pull request needs a written justification.
 func checkDependencies(root string) error {
 	module, err := modulePathOf(root)
 	if err != nil {
 		return err
 	}
-	out, err := goCmd{dir: root}.run("list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", "./...")
+	// -test includes imports made from _test.go files, which plain
+	// -deps would miss; the pseudo-packages it adds are filtered out
+	// by filterExternal.
+	out, err := goCmd{dir: root}.run("list", "-test", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", "./...")
 	if err != nil {
 		return err
 	}
+	if external := filterExternal(out, module); len(external) > 0 {
+		return fmt.Errorf("non-standard dependencies present, stdlib-only policy:\n%s", strings.Join(external, "\n"))
+	}
+	return nil
+}
+
+// filterExternal returns every non-standard dependency in `go list -deps`
+// output that is neither part of the module nor a test pseudo-package.
+// With -test, go list reports three extra kinds of lines: the test
+// binary "<pkg>.test" and the test variants "<pkg> [<pkg>.test]" and
+// "<pkg>_test [<pkg>.test]"; they are artifacts of listing, not imports.
+func filterExternal(out, module string) []string {
 	var external []string
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || line == module || strings.HasPrefix(line, module+"/") {
+		if line == "" || ownedByModule(line, module) || isTestArtifact(line, module) {
 			continue
 		}
 		external = append(external, line)
 	}
-	if len(external) > 0 {
-		return fmt.Errorf("non-standard dependencies present, stdlib-only policy:\n%s", strings.Join(external, "\n"))
+	return external
+}
+
+// ownedByModule reports whether path is the module itself or a package
+// inside it.
+func ownedByModule(path, module string) bool {
+	return path == module || strings.HasPrefix(path, module+"/")
+}
+
+// isTestArtifact reports whether line is a `go list -test` pseudo-package
+// rather than a real import: the test binary "<pkg>.test" or a test
+// variant "<pkg> [<pkg>.test]". Real import paths cannot contain spaces or
+// brackets, so a bracketed line is always a variant; only variants of
+// the module itself count, an external package genuinely named x.test
+// stays a finding.
+func isTestArtifact(line, module string) bool {
+	if pkg, ok := strings.CutSuffix(line, ".test"); ok && ownedByModule(pkg, module) {
+		return true
 	}
-	return nil
+	if _, variant, ok := strings.Cut(line, " ["); ok {
+		if base, ok := strings.CutSuffix(variant, "]"); ok {
+			if pkg, ok := strings.CutSuffix(base, ".test"); ok && ownedByModule(pkg, module) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // productionPatterns returns the package patterns of the production

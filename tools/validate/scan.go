@@ -188,12 +188,14 @@ func scanFile(rel, path string) ([]finding, error) {
 	return found, nil
 }
 
-// truncate shortens text to at most limit characters for display.
+// truncate shortens text to at most limit characters for display. It
+// counts runes, not bytes, so a cut never splits a multi-byte character.
 func truncate(text string, limit int) string {
-	if len(text) <= limit {
+	runes := []rune(text)
+	if len(runes) <= limit {
 		return text
 	}
-	return text[:limit] + "..."
+	return string(runes[:limit]) + "..."
 }
 
 // isBinary reports whether data looks like binary rather than text: it

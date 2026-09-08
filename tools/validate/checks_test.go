@@ -114,15 +114,90 @@ func TestCheckBuilds(t *testing.T) {
 	}
 }
 
-func TestCheckDependencies(t *testing.T) {
+// TestCheckDependenciesClean pins the clean case end to end: with -test,
+// go list reports test pseudo-packages for the fixture's own test
+// binary, and the stage must not mistake them for external dependencies.
+func TestCheckDependenciesClean(t *testing.T) {
 	t.Parallel()
 	dir := copyFixture(t)
 	if err := checkDependencies(dir); err != nil {
 		t.Fatalf("checkDependencies(clean fixture) = %v, want nil", err)
 	}
-	writeFixtureFile(t, dir, "external.go", "package fixture\n\nimport \"golang.org/x/crypto/sha3\"\n\nvar _ = sha3.NewLegacySHAKE128\n")
-	if err := checkDependencies(dir); err == nil {
-		t.Error("checkDependencies(external import) = nil, want error")
+}
+
+// TestCheckDependenciesFlagsExternalImport proves the reporting path: a
+// fixture that imports a module outside the standard library and itself
+// fails the stage with the external import path named in the error. The
+// external module is wired in with a replace directive to a local
+// directory so the import resolves offline.
+func TestCheckDependenciesFlagsExternalImport(t *testing.T) {
+	t.Parallel()
+	dir := copyFixture(t)
+
+	extDir := filepath.Join(dir, "external")
+	if err := os.MkdirAll(extDir, 0o755); err != nil {
+		t.Fatalf("create external module dir: %v", err)
+	}
+	writeFixtureFile(t, extDir, "go.mod", "module example.com/external\n\ngo 1.24\n")
+	writeFixtureFile(t, extDir, "lib.go", "package external\n\nfunc Ping() {}\n")
+	writeFixtureFile(t, dir, "go.mod",
+		"module example.com/fixture\n\ngo 1.24\n\n"+
+			"require example.com/external v0.0.0\n\n"+
+			"replace example.com/external => ./external\n")
+	writeFixtureFile(t, dir, "external.go",
+		"package fixture\n\nimport \"example.com/external\"\n\nvar _ = external.Ping\n")
+
+	err := checkDependencies(dir)
+	if err == nil {
+		t.Fatal("checkDependencies(external import) = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "example.com/external") {
+		t.Errorf("error = %v, want it to name the external dependency", err)
+	}
+}
+
+func TestFilterExternal(t *testing.T) {
+	t.Parallel()
+	const module = "example.com/fixture"
+	input := strings.Join([]string{
+		module,
+		module + "/inner",
+		module + " [" + module + ".test]",
+		module + "_test [" + module + ".test]",
+		module + ".test",
+		module + "/inner.test",
+		"golang.org/x/crypto/sha3",
+		"evil.com/x.test",
+		"",
+	}, "\n")
+	want := []string{"golang.org/x/crypto/sha3", "evil.com/x.test"}
+	got := filterExternal(input, module)
+	if len(got) != len(want) {
+		t.Fatalf("filterExternal = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("filterExternal[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestOwnedByModule(t *testing.T) {
+	t.Parallel()
+	const module = "example.com/fixture"
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{module, true},
+		{module + "/inner", true},
+		{"example.com/fixture-similar", false},
+		{"evil.com/fixture", false},
+	}
+	for _, tt := range tests {
+		if got := ownedByModule(tt.path, module); got != tt.want {
+			t.Errorf("ownedByModule(%q) = %v, want %v", tt.path, got, tt.want)
+		}
 	}
 }
 
