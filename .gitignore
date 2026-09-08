@@ -1,0 +1,11 @@
+# Development worktrees created during git-byline work
+.worktrees/
+
+# Build artifacts
+/git-byline
+dist/
+
+# Test and coverage artifacts
+*.test
+coverage.out
+coverage*.out

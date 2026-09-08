@@ -1,0 +1,11 @@
+id: git-byline
+syntax: 1.5.0
+includePromptScriptSkill: false
+targets:
+  - factory
+validation:
+  rules:
+    empty-block: warning
+formatting:
+  tabWidth: 2
+  proseWrap: preserve
