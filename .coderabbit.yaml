@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+tone_instructions: >-
+  Be direct and concise. Report only concrete correctness, security, privacy,
+  compatibility, or test-coverage risks. Skip praise and formatting nits.
+early_access: false
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  changed_files_summary: true
+  review_status: true
+  commit_status: true
+  fail_commit_status: false
+  collapse_walkthrough: false
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: true
+  auto_apply_labels: false
+  suggested_reviewers: false
+  auto_assign_reviewers: false
+  sequence_diagrams: false
+  poem: false
+  enable_prompt_for_ai_agents: false
+  abort_on_close: true
+  path_filters:
+    - "!AGENTS.md"
+    - "!CLAUDE.md"
+    - "!GEMINI.md"
+    - "!.claude/**"
+    - "!.codex/**"
+    - "!.cursor/**"
+    - "!.factory/droids/**"
+    - "!.factory/hooks.json"
+    - "!.gemini/**"
+    - "!.github/agents/**"
+    - "!.github/copilot-instructions.md"
+    - "!.github/hooks/**"
+    - "!.grok/**"
+    - "!.promptscript/generated/**"
+    - "!.windsurf/**"
+  path_instructions:
+    - path: "internal/**/*.go"
+      instructions: >-
+        Verify deterministic attribution, complete ordered line coverage,
+        bounded resource use, error wrapping, and regression tests.
+    - path: "internal/{gitcmd,hooks,preset,store}/**"
+      instructions: >-
+        Treat paths, hook JSON, Git output, filesystem state, and environment
+        data as untrusted. Check traversal, symlink, race, injection, overwrite,
+        data-loss, and secret-disclosure boundaries.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Verify least privilege, immutable action SHAs, fork safety, credential
+        isolation, exact release refs, and deterministic artifact checks.
+    - path: "{.goreleaser.yml,renovate.json,codecov.yml,.coderabbit.yaml}"
+      instructions: >-
+        Check schema validity, pinned tools, release integrity, and consistency
+        with documented repository policy.
+    - path: ".promptscript/**"
+      instructions: >-
+        Review source configuration rather than generated files. Verify every
+        native target keeps hook ownership, project-root execution, and drift
+        coverage.
+    - path: "{install.sh,install.ps1,marketplace/**}"
+      instructions: >-
+        Verify HTTPS-only downloads, strict version validation, platform
+        mapping, checksum verification before execution, temporary cleanup,
+        quoting, and no elevated privileges.
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 5
+    drafts: false
+    base_branches:
+      - main
+
+chat:
+  auto_reply: true
+  allow_non_org_members: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - AGENTS.md
+      - files: "docs/SECURITY_MODEL.md,docs/SUPPLY_CHAIN.md"
+        applyTo: "internal/**,.github/**,.goreleaser.yml,renovate.json"
+  issues:
+    scope: local
+  pull_requests:
+    scope: local
+  learnings:
+    scope: local
+  web_search:
+    enabled: false

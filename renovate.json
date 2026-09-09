@@ -1,0 +1,80 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "baseBranchPatterns": [
+    "main"
+  ],
+  "enabledManagers": [
+    "gomod",
+    "github-actions"
+  ],
+  "dependencyDashboard": true,
+  "labels": [
+    "dependencies"
+  ],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "rebaseWhen": "behind-base-branch",
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Keep every PromptScript pin synchronized",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.*\\.ya?ml$/",
+        "/^CONTRIBUTING\\.md$/",
+        "/^tools/validate/promptscript\\.go$/"
+      ],
+      "matchStrings": [
+        "@promptscript/cli@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "PromptScript CLI (?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "pinnedPromptScriptVersion\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "@promptscript/cli",
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Keep PromptScript tooling out of product releases",
+      "matchDepNames": [
+        "@promptscript/cli"
+      ],
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps-dev"
+    },
+    {
+      "description": "Release Go dependency maintenance as a patch",
+      "matchManagers": [
+        "gomod"
+      ],
+      "semanticCommitType": "fix",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Keep GitHub Actions maintenance out of product releases",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "semanticCommitScope": "ci"
+    },
+    {
+      "description": "Keep major updates under manual review",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "dependencies",
+        "breaking"
+      ],
+      "automerge": false
+    }
+  ]
+}

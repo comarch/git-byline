@@ -1,0 +1,21 @@
+{
+  "name": "git-byline",
+  "description": "Official git-byline plugin marketplace",
+  "owner": {
+    "name": "Comarch S.A."
+  },
+  "plugins": [
+    {
+      "name": "git-byline",
+      "description": "Install and use local human and AI line attribution",
+      "source": "./marketplace/git-byline",
+      "category": "developer-tools",
+      "homepage": "https://github.com/comarch/git-byline",
+      "tags": [
+        "git",
+        "attribution",
+        "ai"
+      ]
+    }
+  ]
+}

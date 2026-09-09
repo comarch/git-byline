@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${CLAUDE_PROJECT_DIR:-}\" ]; then printf '%s\\n' 'PromptScript claude hook requires non-empty CLAUDE_PROJECT_DIR.' >&2; exit 1; fi; cd \"${CLAUDE_PROJECT_DIR}\" && git-byline checkpoint portable-claude --type human --hook-input stdin # promptscript-generated:claude-pre-edit",
+            "timeout": 30,
+            "statusMessage": "git-byline: capturing pre-edit state"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${CLAUDE_PROJECT_DIR:-}\" ]; then printf '%s\\n' 'PromptScript claude hook requires non-empty CLAUDE_PROJECT_DIR.' >&2; exit 1; fi; cd \"${CLAUDE_PROJECT_DIR}\" && git-byline checkpoint portable-claude --type ai --hook-input stdin # promptscript-generated:claude-post-edit",
+            "timeout": 30,
+            "statusMessage": "git-byline: capturing AI edit"
+          }
+        ]
+      }
+    ]
+  }
+}
