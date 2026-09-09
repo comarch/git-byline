@@ -1,0 +1,17 @@
+{
+  "name": "git-byline",
+  "description": "Install and use local human and AI line attribution",
+  "version": "0.1.0",
+  "author": {
+    "name": "Wojciech Guziak (Comarch S.A.)"
+  },
+  "homepage": "https://github.com/comarch/git-byline",
+  "repository": "https://github.com/comarch/git-byline",
+  "license": "MIT",
+  "keywords": [
+    "git",
+    "attribution",
+    "ai",
+    "provenance"
+  ]
+}

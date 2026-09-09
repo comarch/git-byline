@@ -1,0 +1,19 @@
+* text=auto
+
+*.go text diff=golang
+*.md text
+*.yaml text
+*.yml text
+*.prs text
+*.mod text
+*.sum text
+go.work text
+LICENSE text
+LICENSE.* text
+.gitignore text
+.gitattributes text
+.editorconfig text
+
+# Windows scripts must keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
