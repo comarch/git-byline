@@ -240,4 +240,6 @@ See [SECURITY.md](SECURITY.md).
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Author: Wojciech Guziak (Comarch S.A.).
+
+MIT License. Copyright (c) 2026 Comarch S.A. See [LICENSE](LICENSE).

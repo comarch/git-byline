@@ -109,4 +109,4 @@ Link an issue for non-trivial work. CODEOWNERS review is required for
 automation, security, release, storage, notes, Git execution, and hook paths.
 Squash merge is the default.
 
-Contributions are licensed under Apache-2.0.
+Contributions are licensed under the MIT License.
