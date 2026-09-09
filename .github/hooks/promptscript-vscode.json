@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "git-byline checkpoint portable-vscode --type human --hook-input stdin # promptscript-generated:vscode-pre-edit",
+        "windows": "& 'git-byline' 'checkpoint' 'portable-vscode' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:vscode-pre-edit",
+        "matcher": "create_file|replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file|apply_patch",
+        "cwd": ".",
+        "timeout": 30
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "git-byline checkpoint portable-vscode --type ai --hook-input stdin # promptscript-generated:vscode-post-edit",
+        "windows": "& 'git-byline' 'checkpoint' 'portable-vscode' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:vscode-post-edit",
+        "matcher": "create_file|replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file|apply_patch",
+        "cwd": ".",
+        "timeout": 30
+      }
+    ]
+  }
+}

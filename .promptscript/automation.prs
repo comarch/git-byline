@@ -1,0 +1,188 @@
+@hooks {
+  factory-pre-edit: {
+    event: "pre-tool-use"
+    matcher: "Create|Edit|ApplyPatch"
+    command: ["git-byline", "checkpoint", "portable-factory", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-edit state"
+    enabled: false
+    targets: { factory: { enabled: true } }
+  }
+  factory-post-edit: {
+    event: "post-tool-use"
+    matcher: "Create|Edit|ApplyPatch"
+    command: ["git-byline", "checkpoint", "portable-factory", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI edit"
+    enabled: false
+    targets: { factory: { enabled: true } }
+  }
+
+  claude-pre-edit: {
+    event: "pre-tool-use"
+    matcher: "Write|Edit|MultiEdit"
+    command: ["git-byline", "checkpoint", "portable-claude", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-edit state"
+    enabled: false
+    targets: { claude: { enabled: true } }
+  }
+  claude-post-edit: {
+    event: "post-tool-use"
+    matcher: "Write|Edit|MultiEdit"
+    command: ["git-byline", "checkpoint", "portable-claude", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI edit"
+    enabled: false
+    targets: { claude: { enabled: true } }
+  }
+
+  copilot-pre-edit: {
+    event: "pre-tool-use"
+    matcher: "apply_patch|create_file|edit_file|write_file|replace_string_in_file|multi_replace_string_in_file"
+    command: ["git-byline", "checkpoint", "portable-copilot", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-edit state"
+    enabled: false
+    targets: { github: { enabled: true } }
+  }
+  copilot-post-edit: {
+    event: "post-tool-use"
+    matcher: "apply_patch|create_file|edit_file|write_file|replace_string_in_file|multi_replace_string_in_file"
+    command: ["git-byline", "checkpoint", "portable-copilot", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI edit"
+    enabled: false
+    targets: { github: { enabled: true } }
+  }
+
+  vscode-pre-edit: {
+    event: "pre-tool-use"
+    matcher: "create_file|replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file|apply_patch"
+    command: ["git-byline", "checkpoint", "portable-vscode", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-edit state"
+    enabled: false
+    targets: { vscode: { enabled: true } }
+  }
+  vscode-post-edit: {
+    event: "post-tool-use"
+    matcher: "create_file|replace_string_in_file|multi_replace_string_in_file|insert_edit_into_file|apply_patch"
+    command: ["git-byline", "checkpoint", "portable-vscode", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI edit"
+    enabled: false
+    targets: { vscode: { enabled: true } }
+  }
+
+  cursor-pre-edit: {
+    event: "pre-tool-use"
+    matcher: "create_file|delete_file|edit_file|write_file|apply_patch|search_replace|Edit|Write"
+    command: ["git-byline", "checkpoint", "portable-cursor", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-edit state"
+    enabled: false
+    targets: { cursor: { enabled: true } }
+  }
+  cursor-post-edit: {
+    event: "post-tool-use"
+    matcher: "create_file|delete_file|edit_file|write_file|apply_patch|search_replace|Edit|Write"
+    command: ["git-byline", "checkpoint", "portable-cursor", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI edit"
+    enabled: false
+    targets: { cursor: { enabled: true } }
+  }
+
+  codex-pre-edit: {
+    event: "pre-tool-use"
+    matcher: "apply_patch|create_file|delete_file|edit_file|write_file"
+    command: ["git-byline", "checkpoint", "portable-codex", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-edit state"
+    enabled: false
+    targets: { codex: { enabled: true } }
+  }
+  codex-post-edit: {
+    event: "post-tool-use"
+    matcher: "apply_patch|create_file|delete_file|edit_file|write_file"
+    command: ["git-byline", "checkpoint", "portable-codex", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI edit"
+    enabled: false
+    targets: { codex: { enabled: true } }
+  }
+
+  gemini-pre-edit: {
+    event: "pre-tool-use"
+    matcher: "write_file|replace"
+    command: ["git-byline", "checkpoint", "portable-gemini", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-edit state"
+    enabled: false
+    targets: { gemini: { enabled: true } }
+  }
+  gemini-post-edit: {
+    event: "post-tool-use"
+    matcher: "write_file|replace"
+    command: ["git-byline", "checkpoint", "portable-gemini", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI edit"
+    enabled: false
+    targets: { gemini: { enabled: true } }
+  }
+
+  windsurf-pre-edit: {
+    event: "pre-tool-use"
+    command: ["git-byline", "checkpoint", "portable-windsurf", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-edit state"
+    enabled: false
+    targets: { windsurf: { enabled: true } }
+  }
+  windsurf-post-edit: {
+    event: "post-tool-use"
+    command: ["git-byline", "checkpoint", "portable-windsurf", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI edit"
+    enabled: false
+    targets: { windsurf: { enabled: true } }
+  }
+
+  grok-pre-edit: {
+    event: "pre-tool-use"
+    matcher: "Create|Edit|ApplyPatch|create_file|edit_file|write_file|apply_patch"
+    command: ["git-byline", "checkpoint", "portable-grok", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-edit state"
+    enabled: false
+    targets: { grok: { enabled: true } }
+  }
+  grok-post-edit: {
+    event: "post-tool-use"
+    matcher: "Create|Edit|ApplyPatch|create_file|edit_file|write_file|apply_patch"
+    command: ["git-byline", "checkpoint", "portable-grok", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI edit"
+    enabled: false
+    targets: { grok: { enabled: true } }
+  }
+}
