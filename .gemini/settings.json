@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${GEMINI_PROJECT_DIR:-}\" ]; then printf '%s\\n' 'PromptScript gemini hook requires non-empty GEMINI_PROJECT_DIR.' >&2; exit 1; fi; cd \"$GEMINI_PROJECT_DIR\" && git-byline checkpoint portable-gemini --type human --hook-input stdin # promptscript-generated:gemini-pre-edit",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${GEMINI_PROJECT_DIR:-}\" ]; then printf '%s\\n' 'PromptScript gemini hook requires non-empty GEMINI_PROJECT_DIR.' >&2; exit 1; fi; cd \"$GEMINI_PROJECT_DIR\" && git-byline checkpoint portable-gemini --type ai --hook-input stdin # promptscript-generated:gemini-post-edit",
+            "timeout": 30000
+          }
+        ]
+      }
+    ]
+  }
+}

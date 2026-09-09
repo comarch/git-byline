@@ -1,0 +1,37 @@
+id: git-byline
+syntax: 1.5.0
+includePromptScriptSkill: false
+targets:
+  - factory:
+      version: full
+  - claude:
+      version: full
+  - cursor:
+      version: full
+  - codex:
+      version: full
+      output: .promptscript/generated/codex.md
+      agentsFile: AGENTS.md
+  - gemini:
+      version: full
+  - windsurf:
+      version: full
+builds:
+  github:
+    entry: .promptscript/project.prs
+    output: .
+    targets:
+      - github:
+          version: full
+  grok:
+    entry: .promptscript/project.prs
+    output: .
+    targets:
+      - grok:
+          version: full
+validation:
+  rules:
+    empty-block: warning
+formatting:
+  tabWidth: 2
+  proseWrap: preserve

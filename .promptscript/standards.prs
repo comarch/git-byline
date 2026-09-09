@@ -1,0 +1,44 @@
+@standards {
+  architecture: [
+    "Keep internal/engine independent from files, Git, JSON, clocks, subprocesses, and global state",
+    "Run every production Git subprocess through internal/gitcmd using argument slices, never a shell",
+    "Keep worktree state separate and notes common to the repository",
+    "Version persisted formats and use deterministic serialization",
+    "Keep hook installation idempotent, structural, backed up, and limited to managed content"
+  ]
+
+  quality: [
+    "Wrap errors with context using fmt.Errorf and %w",
+    "Validate untrusted hook input, paths, Git output, notes, and state",
+    "Return usage errors as exit code 2 and operational failures as exit code 1",
+    "Preserve complete ordered non-overlapping line coverage",
+    "Make uncertain provenance untracked instead of guessing"
+  ]
+
+  testing: [
+    "Use table-driven tests for engine, model, store, and Git boundaries",
+    "Use temporary Git repositories and isolated configuration for integration tests",
+    "Cover attribution changes with invariants, regression scenarios, or golden contracts",
+    "Cover hook changes with install, preservation, idempotency, and uninstall scenarios",
+    "Run narrow tests during work and go run ./tools/validate before merge"
+  ]
+
+  formatting: [
+    "Use gofmt for Go source",
+    "Write code comments, documentation, configuration text, and commit messages in English",
+    "Use ASCII hyphens instead of em dash or en dash characters",
+    "Keep line endings and generated output deterministic"
+  ]
+
+  git: {
+    format: "Conventional Commits"
+    subjectLimit: 70
+    allowedTypes: [feat, fix, docs, test, refactor, chore, ci, perf, revert, build]
+  }
+
+  documentation: [
+    "Update README and docs when CLI, format, compatibility, privacy, or release behavior changes",
+    "Do not claim support without a test or documented verification",
+    "Ask contributors for minimal synthetic or redacted reproductions"
+  ]
+}
