@@ -1,0 +1,21 @@
+# Default ownership
+* @mrwogu
+
+# Security, automation, and release policy
+/.github/ @mrwogu
+/.promptscript/ @mrwogu
+/.factory/droids/ @mrwogu
+/AGENTS.md @mrwogu
+/SECURITY.md @mrwogu
+/docs/SECURITY_MODEL.md @mrwogu
+/docs/SUPPLY_CHAIN.md @mrwogu
+/renovate.json @mrwogu
+/release-please-config.json @mrwogu
+/.release-please-manifest.json @mrwogu
+/.goreleaser.yml @mrwogu
+
+# Sensitive attribution and hook paths
+/internal/gitcmd/ @mrwogu
+/internal/hooks/ @mrwogu
+/internal/notes/ @mrwogu
+/internal/store/ @mrwogu

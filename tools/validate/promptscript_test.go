@@ -53,8 +53,8 @@ func TestCheckPromptScriptMissingFiles(t *testing.T) {
 	}
 }
 
-// TestCheckDriftDetectsMutation proves the drift check bites: a modified
-// source that no longer matches the committed AGENTS.md must fail.
+// TestCheckDriftDetectsMutation proves a modified source that no longer
+// matches committed generated instructions fails the drift check.
 func TestCheckDriftDetectsMutation(t *testing.T) {
 	if _, err := exec.LookPath("promptscript"); err != nil {
 		t.Skip("promptscript CLI not available")
@@ -74,7 +74,7 @@ func TestCheckDriftDetectsMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read project.prs: %v", err)
 	}
-	mutated := strings.Replace(string(data), "internal AI code attribution tool",
+	mutated := strings.Replace(string(data), "local AI code attribution tool",
 		"mutated AI code attribution tool", 1)
 	if mutated == string(data) {
 		t.Fatal("mutation target text not found in project.prs")
@@ -82,6 +82,22 @@ func TestCheckDriftDetectsMutation(t *testing.T) {
 	srcDir := filepath.Join(dir, ".promptscript")
 	if err := os.MkdirAll(srcDir, 0o755); err != nil {
 		t.Fatalf("create %s: %v", srcDir, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".promptscript"))
+	if err != nil {
+		t.Fatalf("read PromptScript sources: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == "project.prs" || filepath.Ext(entry.Name()) != ".prs" {
+			continue
+		}
+		fragment, err := os.ReadFile(filepath.Join(root, ".promptscript", entry.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", entry.Name(), err)
+		}
+		if err := os.WriteFile(filepath.Join(srcDir, entry.Name()), fragment, 0o644); err != nil {
+			t.Fatalf("write %s: %v", entry.Name(), err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(srcDir, "project.prs"), []byte(mutated), 0o644); err != nil {
 		t.Fatalf("write mutated project.prs: %v", err)

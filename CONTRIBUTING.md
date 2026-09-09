@@ -1,86 +1,112 @@
 # Contributing to git-byline
 
-Thank you for investing time in git-byline. This document describes how to
-set up a development environment and what every change must pass before
-review.
+Contributions are welcome. Keep changes focused, test public behavior, and
+protect local repository data.
 
 ## Prerequisites
 
 - Go 1.24 or newer.
-- git 2.x.
-- The PromptScript CLI, version 1.18.1 (pinned). Needed to regenerate
-  AGENTS.md. Other versions are not validated against this repository.
+- Git 2.31 or newer.
+- PromptScript CLI 1.18.1.
+- GoReleaser 2.18.1 when release configuration changes.
+- Syft on `PATH` when building release snapshots.
 
 ## Setup
 
-```
-git clone git@github.com:mrwogu/git-byline.git
+```sh
+git clone https://github.com/mrwogu/git-byline.git
 cd git-byline
-go build ./...
 go test ./...
+go build ./...
 ```
+
+Tests create isolated temporary repositories. They must not use your working
+repository, home configuration, credentials, or live services.
 
 ## Validation
 
-Run the full local pipeline before every push:
+Run narrow package tests while working:
 
+```sh
+go test ./internal/engine
+go test ./internal/provenance
 ```
+
+Before opening a pull request, run:
+
+```sh
 go run ./tools/validate
 ```
 
-The pipeline checks, in order: formatting, vet, tests with a coverage floor,
-CGO-free builds for all six release targets, PromptScript strict validation
-with a drift check against the compiled AGENTS.md, and repository scans
-(secrets, placeholders, private paths, forbidden characters, dependency
-policy). A failing stage stops the pipeline. Never bypass a failing check;
-fix the cause.
+Do not bypass a failing stage, lower coverage, weaken a fixture, or skip a
+required check to get a green result. See [docs/VALIDATION.md](docs/VALIDATION.md).
+
+## Code rules
+
+- Pure Go. CGo is forbidden.
+- Production code must not import network packages.
+- `os/exec` is allowed only in `internal/gitcmd`.
+- Validate paths and untrusted hook input at the boundary.
+- Wrap errors with context using `fmt.Errorf` and `%w`.
+- Keep the attribution engine independent from Git, files, JSON, clocks, and
+  process state.
+- Keep comments short and in English.
+- Use ASCII hyphens, not em dash or en dash characters.
+- Add no dependency without necessity, license, source, binary size, and
+  security justification in the pull request.
+
+Engine and store work uses table-driven tests. Attribution behavior needs
+property, golden, or integration coverage. Hook changes need isolated
+configuration scenarios. Every bug fix includes a minimal regression test.
+
+Fixtures must be minimal, deterministic, synthetic, or redacted. Never commit
+raw agent captures, transcripts, private repository paths, tokens, complete
+environment dumps, or production data.
 
 ## Generated files
 
-`AGENTS.md` is generated from `.promptscript/project.prs`. Never edit it
-directly. Change the source file instead, then regenerate:
+`AGENTS.md` and `.factory/droids/*.md` are generated from `.promptscript/`.
+Edit PromptScript sources, then:
 
-```
+```sh
+promptscript validate --strict .promptscript/project.prs
 promptscript compile --all --force
 ```
 
-The validation pipeline fails when the committed AGENTS.md does not match
-what the source compiles to, so hand edits cannot slip through review.
+Review the generated diff. Never edit generated instruction files directly.
 
-## Commit message style
+Release Please owns `CHANGELOG.md`, release versions, release pull requests,
+and tags. Do not hand-edit release output except while bootstrapping an empty
+changelog.
 
-Conventional Commits, subject line at most 70 characters. Use the types
-`feat:`, `fix:`, `test:`, `chore:`, and `build:`. Comments, commit messages,
-documentation, and code are written in English.
+## Branches and commits
 
-Example:
+Create a focused branch from `main`. Use Conventional Commits with an
+imperative subject, no trailing period, and at most 70 characters.
 
+Allowed types:
+
+```text
+feat fix docs test refactor chore ci perf revert build
 ```
-feat: add version command with linker-injected version string
-```
 
-## Code and testing conventions
-
-- Table-driven tests for engine and store code; property or golden tests
-  where invariants demand them.
-- Integration scenarios run against temporary git repositories created for
-  the test, never against your working repositories.
-- Errors are wrapped with context using `fmt.Errorf` and `%w`, never
-  swallowed.
-- Pure Go only: no CGo, no new dependencies without a written justification
-  in the pull request. The binary must never make network calls.
-- Do not use em dashes or en dashes anywhere in the repository; use plain
-  hyphens.
+Use `fix(deps)` for runtime dependency updates, `chore(deps-dev)` for
+development tools, and `chore(ci)` for action updates.
 
 ## Pull requests
 
-1. Create a branch from `main`.
-2. Make your change with tests covering the new behavior.
-3. Run `go run ./tools/validate` and fix everything it reports.
-4. Open a pull request describing what changed and why, and link the issue
-   it resolves when one exists.
+Every pull request must explain:
 
-## License
+- behavior and rationale;
+- compatibility and migration impact;
+- exact validation commands and results;
+- tests and documentation;
+- generated artifact impact;
+- release impact;
+- security and privacy impact.
 
-By contributing, you agree that your contributions are licensed under the
-Apache License 2.0.
+Link an issue for non-trivial work. CODEOWNERS review is required for
+automation, security, release, storage, notes, Git execution, and hook paths.
+Squash merge is the default.
+
+Contributions are licensed under Apache-2.0.

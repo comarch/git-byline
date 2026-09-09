@@ -1,0 +1,54 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "baseBranchPatterns": [
+    "main"
+  ],
+  "enabledManagers": [
+    "gomod",
+    "github-actions"
+  ],
+  "dependencyDashboard": true,
+  "labels": [
+    "dependencies"
+  ],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "rebaseWhen": "behind-base-branch",
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
+  "packageRules": [
+    {
+      "description": "Release Go dependency maintenance as a patch",
+      "matchManagers": [
+        "gomod"
+      ],
+      "semanticCommitType": "fix",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Keep GitHub Actions maintenance out of product releases",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "semanticCommitScope": "ci"
+    },
+    {
+      "description": "Keep major updates under manual review",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "dependencies",
+        "breaking"
+      ],
+      "automerge": false
+    }
+  ]
+}

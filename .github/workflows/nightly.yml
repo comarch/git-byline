@@ -1,0 +1,48 @@
+name: Nightly robustness
+
+on:
+  schedule:
+    - cron: "15 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-robustness
+  cancel-in-progress: true
+
+jobs:
+  robustness:
+    name: Randomized and fuzz tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Repeat invariant scenarios
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
+        run: go test ./internal/engine ./internal/provenance -count=10
+
+      - name: Fuzz line splitting
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
+        run: go test ./internal/engine -run '^$' -fuzz '^FuzzSplitLines$' -fuzztime 5m
+
+      - name: Fuzz Droid payload parsing
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
+        run: go test ./internal/preset -run '^$' -fuzz '^FuzzParseDroid$' -fuzztime 5m

@@ -11,7 +11,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/mrwogu/git-byline/internal/version"
 )
@@ -34,6 +36,8 @@ type Env struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
+	Dir    string
+	Now    func() time.Time
 }
 
 // command is a single git-byline subcommand.
@@ -47,6 +51,48 @@ type command struct {
 // commands returns the command registry in help order.
 func commands() []*command {
 	return []*command{
+		{
+			name:  "checkpoint",
+			short: "record a human or AI edit snapshot",
+			usage: "Usage: git-byline checkpoint <droid|claude|agent-v1> [--type human|ai] --hook-input stdin\n\n" +
+				"Read one agent hook event from stdin and record allowed file snapshots.",
+			run: runCheckpoint,
+		},
+		{
+			name:  "annotate",
+			short: "write attribution for HEAD to git notes",
+			usage: "Usage: git-byline annotate\n\n" +
+				"Replay pending checkpoints and annotate the current commit.",
+			run: runAnnotate,
+		},
+		{
+			name:  "blame",
+			short: "show line-level attribution",
+			usage: "Usage: git-byline blame [--json] <file>\n\n" +
+				"Show human, AI, or untracked attribution for every line at HEAD.",
+			run: runBlame,
+		},
+		{
+			name:  "status",
+			short: "show repository attribution state",
+			usage: "Usage: git-byline status [--json]\n\n" +
+				"Show pending checkpoints, retained snapshots, and annotation state.",
+			run: runStatus,
+		},
+		{
+			name:  "install-hooks",
+			short: "install agent and Git hooks",
+			usage: "Usage: git-byline install-hooks [--agent droid|claude|all|none] [--git] [--user|--project]\n\n" +
+				"Merge managed hooks without replacing existing configuration.",
+			run: runInstallHooks,
+		},
+		{
+			name:  "uninstall",
+			short: "remove managed hooks",
+			usage: "Usage: git-byline uninstall [--agent droid|claude|all|none] [--git] [--user|--project]\n\n" +
+				"Remove only configuration managed by git-byline.",
+			run: runUninstall,
+		},
 		{
 			name:  "help",
 			short: "show help for a command",
@@ -80,10 +126,28 @@ func buildRootUsage() string {
 	b.WriteString("\n")
 	b.WriteString("Commands:\n")
 	for _, c := range commands() {
-		fmt.Fprintf(&b, "  %-9s %s\n", c.name, c.short)
+		fmt.Fprintf(&b, "  %-14s %s\n", c.name, c.short)
 	}
 	b.WriteString("\nRun 'git-byline help <command>' for details about a command.")
 	return b.String()
+}
+
+func (env *Env) workingDir() (string, error) {
+	if env.Dir != "" {
+		return env.Dir, nil
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("read working directory: %w", err)
+	}
+	return dir, nil
+}
+
+func (env *Env) now() time.Time {
+	if env.Now != nil {
+		return env.Now()
+	}
+	return time.Now()
 }
 
 // lookup returns the registered command with the given name, or nil.

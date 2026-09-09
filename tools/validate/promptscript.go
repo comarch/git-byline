@@ -1,6 +1,6 @@
-// promptscript.go guards the generated AGENTS.md: the PromptScript CLI is
-// pinned, the source must pass strict validation, and the committed
-// AGENTS.md must match what the source compiles to.
+// promptscript.go guards generated project instructions: the PromptScript
+// CLI is pinned, source must pass strict validation, and committed outputs
+// must match what the source compiles to.
 package main
 
 import (
@@ -15,12 +15,22 @@ import (
 
 // pinnedPromptScriptVersion is the PromptScript CLI version this
 // repository is validated against. Upgrade it deliberately: regenerate
-// AGENTS.md, review the output diff, and update the pin in the same
-// change.
+// all generated files, review the output diff, and update the pin in the
+// same change.
 const pinnedPromptScriptVersion = "1.18.1"
 
 // semverPattern matches a semantic version inside tool version output.
 var semverPattern = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+`)
+
+// generatedStampPattern removes the nondeterministic compile timestamp.
+var generatedStampPattern = regexp.MustCompile(`(?m)^# promptscript-generated: [^|\r\n]+ \|`)
+
+var promptScriptOutputs = []string{
+	"AGENTS.md",
+	filepath.Join(".factory", "droids", "code-reviewer.md"),
+	filepath.Join(".factory", "droids", "release-keeper.md"),
+	filepath.Join(".factory", "droids", "security-reviewer.md"),
+}
 
 // parseSemver extracts the first semantic version from text.
 func parseSemver(text string) string {
@@ -45,7 +55,7 @@ func checkPromptScript(root string) error {
 		return fmt.Errorf("promptscript --version output contains no version: %q", strings.TrimSpace(versionOut))
 	}
 	if got != pinnedPromptScriptVersion {
-		return fmt.Errorf("promptscript CLI version %s does not match the pinned %s; upgrade the pin deliberately and regenerate AGENTS.md", got, pinnedPromptScriptVersion)
+		return fmt.Errorf("promptscript CLI version %s does not match the pinned %s; upgrade the pin deliberately and regenerate project instructions", got, pinnedPromptScriptVersion)
 	}
 	if _, err := runCapture(bin, root, "validate", "--strict", ".promptscript/project.prs"); err != nil {
 		return fmt.Errorf("promptscript strict validation: %w", err)
@@ -66,9 +76,9 @@ func requirePromptScriptFiles(root string) error {
 	return nil
 }
 
-// checkDrift compiles the PromptScript source in an isolated copy and
-// compares the output with the committed AGENTS.md. The copy keeps the
-// repository untouched even when the committed file has drifted.
+// checkDrift compiles PromptScript source in an isolated copy and compares
+// all outputs with committed files. The copy keeps the repository untouched
+// even when a committed file has drifted.
 func checkDrift(bin, root string) error {
 	tmp, err := os.MkdirTemp("", "byline-drift-")
 	if err != nil {
@@ -80,9 +90,21 @@ func checkDrift(bin, root string) error {
 	if err := os.MkdirAll(srcDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", srcDir, err)
 	}
+	entries, err := os.ReadDir(filepath.Join(root, ".promptscript"))
+	if err != nil {
+		return fmt.Errorf("read PromptScript source directory: %w", err)
+	}
 	files := []struct{ src, dst string }{
-		{filepath.Join(root, ".promptscript", "project.prs"), filepath.Join(srcDir, "project.prs")},
 		{filepath.Join(root, "promptscript.yaml"), filepath.Join(tmp, "promptscript.yaml")},
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".prs" {
+			continue
+		}
+		files = append(files, struct{ src, dst string }{
+			src: filepath.Join(root, ".promptscript", entry.Name()),
+			dst: filepath.Join(srcDir, entry.Name()),
+		})
 	}
 	for _, f := range files {
 		data, err := os.ReadFile(f.src)
@@ -96,16 +118,20 @@ func checkDrift(bin, root string) error {
 	if _, err := runCapture(bin, tmp, "compile", "--all", "--force"); err != nil {
 		return fmt.Errorf("compile in isolated copy: %w", err)
 	}
-	generated, err := os.ReadFile(filepath.Join(tmp, "AGENTS.md"))
-	if err != nil {
-		return fmt.Errorf("read generated AGENTS.md: %w", err)
-	}
-	committed, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
-	if err != nil {
-		return fmt.Errorf("read committed AGENTS.md: %w", err)
-	}
-	if !bytes.Equal(generated, committed) {
-		return fmt.Errorf("AGENTS.md is out of sync with .promptscript/project.prs; run: promptscript compile --all --force")
+	for _, rel := range promptScriptOutputs {
+		generated, err := os.ReadFile(filepath.Join(tmp, rel))
+		if err != nil {
+			return fmt.Errorf("read generated %s: %w", rel, err)
+		}
+		committed, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			return fmt.Errorf("read committed %s: %w", rel, err)
+		}
+		generated = generatedStampPattern.ReplaceAll(generated, []byte("# promptscript-generated: <generated> |"))
+		committed = generatedStampPattern.ReplaceAll(committed, []byte("# promptscript-generated: <generated> |"))
+		if !bytes.Equal(generated, committed) {
+			return fmt.Errorf("%s is out of sync with .promptscript sources; run: promptscript compile --all --force", rel)
+		}
 	}
 	return nil
 }

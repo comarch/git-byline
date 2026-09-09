@@ -1,0 +1,47 @@
+name: PromptScript
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promptscript-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate PromptScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DO_NOT_TRACK: "1"
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+      NPM_CONFIG_IGNORE_SCRIPTS: "true"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Validate PromptScript
+        run: npm exec --yes --package @promptscript/cli@1.18.1 -- prs validate --strict
+
+      - name: Compile PromptScript
+        run: npm exec --yes --package @promptscript/cli@1.18.1 -- prs compile --all --force
+
+      - name: Check generated files
+        run: git diff --exit-code

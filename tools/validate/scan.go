@@ -53,6 +53,9 @@ var scanRuleSets = []ruleSet{
 	{kind: kindSecret, rules: []scanRule{
 		{"aws-access-key", regexp.MustCompile(`AKIA[0-9A-Z]{16}`)},
 		{"github-token", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36}\b`)},
+		{"github-fine-token", regexp.MustCompile(`\bgithub` + `_pat_[A-Za-z0-9_]{20,}\b`)},
+		{"gitlab-token", regexp.MustCompile(`\bgl` + `pat-[A-Za-z0-9_-]{20,}\b`)},
+		{"slack-token", regexp.MustCompile(`\bxo` + `x[baprs]-[A-Za-z0-9-]{10,}\b`)},
 		{"private-key", regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)},
 		{"credential-assignment", regexp.MustCompile(`(?i)\b(password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*["'][^"']{8,}["']`)},
 	}},
@@ -128,8 +131,8 @@ func scanRepo(root string) ([]finding, error) {
 
 // scanSkipDir reports whether the repository scan stays out of the
 // directory at rel, the path relative to the repository root. Hidden
-// directories at the repository root are skipped except .github and
-// .promptscript, which are repository content; local tool caches such as
+// directories at the repository root are skipped except .factory, .github,
+// and .promptscript, which are repository content; local tool caches such as
 // editor or review-tool directories stay out of the scan.
 func scanSkipDir(rel string) bool {
 	if rel == "." {
@@ -143,7 +146,8 @@ func scanSkipDir(rel string) bool {
 		return true // scanner fixtures: they carry the flagged patterns
 	}
 	rootDir, _, _ := strings.Cut(rel, string(filepath.Separator))
-	if strings.HasPrefix(rootDir, ".") && rootDir != ".github" && rootDir != ".promptscript" {
+	if strings.HasPrefix(rootDir, ".") &&
+		rootDir != ".factory" && rootDir != ".github" && rootDir != ".promptscript" {
 		return true
 	}
 	return false
@@ -151,6 +155,9 @@ func scanSkipDir(rel string) bool {
 
 // scanSkipFile reports whether the file at rel is not scanned.
 func scanSkipFile(rel string, info fs.FileInfo) bool {
+	if !info.Mode().IsRegular() {
+		return true
+	}
 	switch strings.ToLower(filepath.Ext(rel)) {
 	case ".test", ".out", ".exe", ".bin", ".png", ".jpg", ".jpeg", ".gif",
 		".ico", ".pdf", ".zip", ".gz", ".tar", ".dylib", ".a":
@@ -219,7 +226,11 @@ func checkScans(root string) error {
 	}
 	var b strings.Builder
 	for _, f := range findings {
-		fmt.Fprintf(&b, "  %s %s:%d [%s] %s\n", f.Kind, f.File, f.Line, f.Pattern, f.Text)
+		text := f.Text
+		if f.Kind == kindSecret || f.Kind == kindPrivatePath {
+			text = "[redacted]"
+		}
+		fmt.Fprintf(&b, "  %s %s:%d [%s] %s\n", f.Kind, f.File, f.Line, f.Pattern, text)
 	}
 	return fmt.Errorf("%d finding(s) in repository scan:\n%s", len(findings), b.String())
 }

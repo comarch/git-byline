@@ -1,0 +1,70 @@
+@workflows {
+  feature: {
+    description: "Implement a focused product change"
+    content: """
+      1. Read README, relevant docs, source, tests, and automation.
+      2. Identify the smallest correct package boundary.
+      3. Add focused tests before or with behavior.
+      4. Implement without widening unrelated behavior.
+      5. Update formats, docs, fixtures, and generated artifacts.
+      6. Run narrow checks, then `go run ./tools/validate`.
+      7. Review paths, privacy, persisted data, and release impact.
+      8. Stop before remote actions unless explicitly authorized.
+    """
+  }
+
+  bugfix: {
+    description: "Reproduce and fix a regression"
+    content: """
+      1. Create a minimal deterministic reproduction.
+      2. Add a failing regression test.
+      3. Find the first incorrect boundary or invariant.
+      4. Fix root cause without unrelated cleanup.
+      5. Run focused tests and complete validation.
+      6. Update compatibility or recovery docs when needed.
+    """
+  }
+
+  storage: {
+    description: "Change checkpoints, state, retention, or notes"
+    content: """
+      1. Review docs/ARCHITECTURE.md and docs/SECURITY_MODEL.md.
+      2. Preserve version tolerance, lock order, atomic state, and retry safety.
+      3. Add malformed, interrupted, concurrent, and recovery coverage.
+      4. Prove complete attribution and retained blob behavior.
+      5. Run full validation and aggressive Git GC scenarios.
+    """
+  }
+
+  hooks: {
+    description: "Change agent or Git hook integration"
+    content: """
+      1. Treat configuration and stdin as untrusted.
+      2. Preserve unrelated bytes or structure where practical.
+      3. Keep installation and removal idempotent.
+      4. Write backups before changing existing files.
+      5. Test absent, existing, malformed, custom-path, and repeated operations.
+    """
+  }
+
+  release: {
+    description: "Prepare and verify a release"
+    content: """
+      1. Follow docs/RELEASES.md.
+      2. Let Release Please own versions, changelog, release PR, and tag.
+      3. Run complete validation and a GoReleaser snapshot.
+      4. Verify six archives, checksums, SBOMs, allowlist, and version output.
+      5. Stop before publication unless explicitly authorized.
+    """
+  }
+
+  promptscript: {
+    description: "Change project instructions"
+    content: """
+      1. Edit modular `.promptscript` sources.
+      2. Run strict validation and compile all targets.
+      3. Review AGENTS.md drift for lost rules or private data.
+      4. Commit source and generated output together.
+    """
+  }
+}

@@ -19,7 +19,7 @@ type runCase struct {
 	noStderr bool   // stderr must be completely empty
 }
 
-// runCases covers the CLI dispatch contract of slice 0.1: exit codes,
+// runCases covers the CLI dispatch contract: exit codes,
 // stdout/stderr separation, and the exact version output.
 var runCases = []runCase{
 	{

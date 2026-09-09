@@ -1,0 +1,45 @@
+@context {
+  project: "git-byline"
+  purpose: "Local line-level human and AI authorship for Git"
+  language: "Go"
+  runtime: "Go 1.24+, Git 2.31+"
+  packageManager: "Go modules"
+
+  architecture: {
+    cli: "cmd/git-byline and internal/app"
+    git: "internal/gitcmd is the only Git subprocess boundary"
+    model: "internal/model owns versioned records and invariants"
+    storage: "internal/store and internal/lock own local durability"
+    engine: "internal/engine is pure attribution transformation"
+    notes: "internal/notes and internal/provenance own Git attribution notes"
+    hooks: "internal/preset and internal/hooks own agent integration"
+    validation: "tools/validate is the complete local gate"
+    automation: ".github/workflows owns CI, security, and release automation"
+    generated: "AGENTS.md and .factory/droids are compiled from .promptscript"
+  }
+
+  """
+  ## Runtime flow
+
+  Agent hooks send bounded JSON to `checkpoint`. Preset adapters validate the
+  event and paths. `internal/gitcmd` reads allowed worktree files and writes
+  snapshot blobs. Worktree-local state and a retention ref protect pending
+  provenance. After commit, `annotate` replays snapshots, validates complete
+  line coverage, writes canonical JSON to `refs/notes/byline`, advances state,
+  and compacts retention.
+
+  ## Data locations
+
+  - Worktree Git dir plus `byline/checkpoints.jsonl`
+  - Worktree Git dir plus `byline/state.json`
+  - Git object database for snapshot blobs
+  - `refs/worktree/byline/checkpoints` for local retention
+  - `refs/notes/byline` for per-commit attribution
+
+  ## Public commands
+
+  - `checkpoint`, `annotate`, `blame`, `status`
+  - `install-hooks`, `uninstall`
+  - `version`, `help`
+  """
+}

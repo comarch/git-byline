@@ -9,3 +9,10 @@ dist/
 *.test
 coverage.out
 coverage*.out
+
+# Local environment and hook backups
+.env
+.env.*
+!.env.example
+*.local
+*.git-byline.bak

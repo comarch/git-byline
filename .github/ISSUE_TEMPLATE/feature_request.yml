@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a user-centered improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should git-byline solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the behavior and one minimal example.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: What workarounds or alternatives exist?
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and privacy impact
+      description: Note effects on hooks, local data, git notes, or network access.

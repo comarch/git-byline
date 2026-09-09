@@ -1,0 +1,220 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.24.x"
+          cache: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install pinned PromptScript
+        run: npm install --global --ignore-scripts --no-audit --no-fund @promptscript/cli@1.18.1
+
+      - name: Validate repository
+        run: go run ./tools/validate
+
+      - name: Check working tree
+        run: git diff --exit-code
+
+  test:
+    name: Tests (${{ matrix.os }}, Go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            go: "1.24.x"
+          - os: ubuntu-latest
+            go: stable
+          - os: macos-latest
+            go: "1.24.x"
+          - os: windows-latest
+            go: "1.24.x"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+
+      - name: Run tests
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
+        run: go test ./...
+
+  release-snapshot:
+    name: Release snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.24.x"
+          cache: false
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+
+      - name: Build release snapshot
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.1
+          args: release --snapshot --clean
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
+
+      - name: Verify release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive_count="$(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l | tr -d ' ')"
+          sbom_count="$(find dist -maxdepth 1 -type f -name '*.sbom.spdx.json' | wc -l | tr -d ' ')"
+          test "$archive_count" -eq 6
+          test "$sbom_count" -eq 6
+          test -s dist/checksums.txt
+          (cd dist && sha256sum --check checksums.txt)
+          for suffix in \
+            linux_amd64.tar.gz linux_arm64.tar.gz \
+            macOS_amd64.tar.gz macOS_arm64.tar.gz \
+            windows_amd64.zip windows_arm64.zip
+          do
+            mapfile -t matches < <(find dist -maxdepth 1 -type f -name "git-byline_*_${suffix}")
+            test "${#matches[@]}" -eq 1
+            archive="${matches[0]}"
+            test -s "${archive}.sbom.spdx.json"
+
+            expected="$(mktemp)"
+            actual="$(mktemp)"
+            binary=git-byline
+            if [[ "$archive" == *.zip ]]; then
+              binary=git-byline.exe
+              unzip -Z1 "$archive" | sed 's#^\./##' | grep -v '/$' | sort > "$actual"
+            else
+              tar -tzf "$archive" | sed 's#^\./##' | grep -v '/$' | sort > "$actual"
+            fi
+            printf '%s\n' "$binary" LICENSE README.md SECURITY.md | sort > "$expected"
+            diff -u "$expected" "$actual"
+            rm -f "$expected" "$actual"
+          done
+
+          linux_archive="$(find dist -maxdepth 1 -type f -name 'git-byline_*_linux_amd64.tar.gz' -print -quit)"
+          snapshot_version="$(basename "$linux_archive")"
+          snapshot_version="${snapshot_version#git-byline_}"
+          snapshot_version="${snapshot_version%_linux_amd64.tar.gz}"
+          extract_dir="$(mktemp -d)"
+          tar -xzf "$linux_archive" -C "$extract_dir"
+          test "$("$extract_dir/git-byline" version)" = "git-byline v${snapshot_version}"
+          rm -rf "$extract_dir"
+
+      - name: Upload verified snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: git-byline-release-snapshot
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sbom.spdx.json
+            dist/checksums.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  quality:
+    name: Quality and build
+    if: always()
+    needs:
+      - test
+      - release-snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require tests and release snapshot
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          RELEASE_RESULT: ${{ needs.release-snapshot.result }}
+        run: |
+          test "$TEST_RESULT" = "success"
+          test "$RELEASE_RESULT" = "success"
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Generate coverage
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
+        run: go test ./... -covermode=count -coverprofile=coverage.out
+
+      - name: Require coverage floor
+        run: |
+          coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%", "", $3); print $3}')"
+          awk -v value="$coverage" 'BEGIN { exit !(value >= 80.0) }'
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: coverage.out
+          fail_ci_if_error: true
+          use_oidc: true
