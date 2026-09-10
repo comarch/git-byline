@@ -31,6 +31,15 @@ func TestValidateAttribution(t *testing.T) {
 	}
 }
 
+func TestCheckpointKinds(t *testing.T) {
+	t.Parallel()
+	if CheckpointKindEdit == CheckpointKindShellPre ||
+		CheckpointKindEdit == CheckpointKindShellPost ||
+		CheckpointKindShellPre == CheckpointKindShellPost {
+		t.Fatal("checkpoint kinds are not unique")
+	}
+}
+
 func TestValidateRanges(t *testing.T) {
 	t.Parallel()
 	human := Attribution{Author: AuthorHuman}

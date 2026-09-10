@@ -5,12 +5,22 @@
         "command": "git-byline checkpoint portable-windsurf --type human --hook-input stdin # promptscript-generated:windsurf-pre-edit",
         "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:windsurf-pre-edit",
         "working_directory": "."
+      },
+      {
+        "command": "git-byline checkpoint portable-windsurf --type human --hook-input stdin # promptscript-generated:windsurf-shell-pre",
+        "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:windsurf-shell-pre",
+        "working_directory": "."
       }
     ],
     "pre_write_code": [
       {
         "command": "git-byline checkpoint portable-windsurf --type human --hook-input stdin # promptscript-generated:windsurf-pre-edit",
         "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:windsurf-pre-edit",
+        "working_directory": "."
+      },
+      {
+        "command": "git-byline checkpoint portable-windsurf --type human --hook-input stdin # promptscript-generated:windsurf-shell-pre",
+        "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:windsurf-shell-pre",
         "working_directory": "."
       }
     ],
@@ -19,12 +29,22 @@
         "command": "git-byline checkpoint portable-windsurf --type human --hook-input stdin # promptscript-generated:windsurf-pre-edit",
         "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:windsurf-pre-edit",
         "working_directory": "."
+      },
+      {
+        "command": "git-byline checkpoint portable-windsurf --type human --hook-input stdin # promptscript-generated:windsurf-shell-pre",
+        "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:windsurf-shell-pre",
+        "working_directory": "."
       }
     ],
     "pre_mcp_tool_use": [
       {
         "command": "git-byline checkpoint portable-windsurf --type human --hook-input stdin # promptscript-generated:windsurf-pre-edit",
         "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:windsurf-pre-edit",
+        "working_directory": "."
+      },
+      {
+        "command": "git-byline checkpoint portable-windsurf --type human --hook-input stdin # promptscript-generated:windsurf-shell-pre",
+        "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:windsurf-shell-pre",
         "working_directory": "."
       }
     ],
@@ -33,12 +53,22 @@
         "command": "git-byline checkpoint portable-windsurf --type ai --hook-input stdin # promptscript-generated:windsurf-post-edit",
         "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:windsurf-post-edit",
         "working_directory": "."
+      },
+      {
+        "command": "git-byline checkpoint portable-windsurf --type ai --hook-input stdin # promptscript-generated:windsurf-shell-post",
+        "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:windsurf-shell-post",
+        "working_directory": "."
       }
     ],
     "post_write_code": [
       {
         "command": "git-byline checkpoint portable-windsurf --type ai --hook-input stdin # promptscript-generated:windsurf-post-edit",
         "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:windsurf-post-edit",
+        "working_directory": "."
+      },
+      {
+        "command": "git-byline checkpoint portable-windsurf --type ai --hook-input stdin # promptscript-generated:windsurf-shell-post",
+        "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:windsurf-shell-post",
         "working_directory": "."
       }
     ],
@@ -47,12 +77,22 @@
         "command": "git-byline checkpoint portable-windsurf --type ai --hook-input stdin # promptscript-generated:windsurf-post-edit",
         "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:windsurf-post-edit",
         "working_directory": "."
+      },
+      {
+        "command": "git-byline checkpoint portable-windsurf --type ai --hook-input stdin # promptscript-generated:windsurf-shell-post",
+        "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:windsurf-shell-post",
+        "working_directory": "."
       }
     ],
     "post_mcp_tool_use": [
       {
         "command": "git-byline checkpoint portable-windsurf --type ai --hook-input stdin # promptscript-generated:windsurf-post-edit",
         "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:windsurf-post-edit",
+        "working_directory": "."
+      },
+      {
+        "command": "git-byline checkpoint portable-windsurf --type ai --hook-input stdin # promptscript-generated:windsurf-shell-post",
+        "powershell": "& 'git-byline' 'checkpoint' 'portable-windsurf' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:windsurf-shell-post",
         "working_directory": "."
       }
     ]

@@ -149,8 +149,16 @@ func readCheckpointLine(reader *bufio.Reader) ([]byte, error) {
 }
 
 func validateCheckpoint(record model.Checkpoint) error {
-	if record.Kind != "edit" {
+	switch record.Kind {
+	case model.CheckpointKindEdit, model.CheckpointKindShellPre, model.CheckpointKindShellPost:
+	default:
 		return fmt.Errorf("unsupported kind %q", record.Kind)
+	}
+	if record.Kind == model.CheckpointKindShellPre && record.Type != model.AuthorHuman {
+		return errors.New("shell_pre checkpoint must be human")
+	}
+	if record.Kind == model.CheckpointKindShellPost && record.Type != model.AuthorAI {
+		return errors.New("shell_post checkpoint must be ai")
 	}
 	if record.Seq == 0 {
 		return errors.New("sequence must be positive")
@@ -174,7 +182,7 @@ func validateCheckpoint(record model.Checkpoint) error {
 	if _, err := time.Parse(time.RFC3339Nano, record.TS); err != nil {
 		return fmt.Errorf("timestamp is not RFC3339: %w", err)
 	}
-	if len(record.Files) == 0 {
+	if len(record.Files) == 0 && record.Kind == model.CheckpointKindEdit {
 		return errors.New("files are empty")
 	}
 	seen := map[string]bool{}

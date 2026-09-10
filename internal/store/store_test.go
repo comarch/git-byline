@@ -178,6 +178,19 @@ func TestCheckpointValidation(t *testing.T) {
 			value.Files = append(value.Files, value.Files[0])
 			return value
 		}(),
+		func() model.Checkpoint {
+			value := validCheckpoint(1)
+			value.Kind = model.CheckpointKindShellPre
+			value.Type = model.AuthorAI
+			value.Files = nil
+			return value
+		}(),
+		func() model.Checkpoint {
+			value := validCheckpoint(1)
+			value.Kind = model.CheckpointKindShellPost
+			value.Type = model.AuthorHuman
+			return value
+		}(),
 	}
 	for i, record := range tests {
 		if err := (New(t.TempDir())).AppendCheckpoint(record); err == nil {

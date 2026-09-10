@@ -19,6 +19,13 @@ const (
 	NoteVersion = 1
 	// MaxTextLines bounds attribution memory for one file.
 	MaxTextLines = 1_000_000
+
+	// CheckpointKindEdit records a file edit event.
+	CheckpointKindEdit = "edit"
+	// CheckpointKindShellPre records the state before a shell event.
+	CheckpointKindShellPre = "shell_pre"
+	// CheckpointKindShellPost records the changed state after a shell event.
+	CheckpointKindShellPost = "shell_post"
 )
 
 // Author identifies the source of one or more lines.

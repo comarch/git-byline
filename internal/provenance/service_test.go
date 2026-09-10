@@ -540,6 +540,112 @@ func TestCaptureSkipsUnsafePaths(t *testing.T) {
 	}
 }
 
+func TestShellCaptureUsesBlobDifferences(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "tracked.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+
+	write(t, root, "human.txt", "human\n")
+	if result, err := Capture(repo, preset.Event{
+		Kind: model.CheckpointKindShellPre, Type: model.AuthorHuman,
+	}, time.Now()); err != nil || result.Recorded != 1 {
+		t.Fatalf("Capture(shell_pre) = %+v, %v", result, err)
+	}
+	write(t, root, "human.txt", "human\n")
+	write(t, root, "agent.txt", "agent\n")
+	if result, err := Capture(repo, preset.Event{
+		Kind: model.CheckpointKindShellPost, Type: model.AuthorAI,
+		Agent: "claude", Model: "test-model", Session: "session-1",
+	}, time.Now()); err != nil || result.Recorded != 1 {
+		t.Fatalf("Capture(shell_post unchanged preexisting) = %+v, %v", result, err)
+	}
+
+	records, warnings, err := store.New(repo.GitDir).ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 || len(records) != 2 {
+		t.Fatalf("shell checkpoints = %d, warnings = %v", len(records), warnings)
+	}
+	if records[0].Kind != model.CheckpointKindShellPre || len(records[0].Files) != 1 ||
+		records[0].Files[0].Path != "human.txt" {
+		t.Fatalf("shell_pre record = %+v", records[0])
+	}
+	if records[1].Kind != model.CheckpointKindShellPost || len(records[1].Files) != 1 ||
+		records[1].Files[0].Path != "agent.txt" ||
+		records[1].Agent != "claude" || records[1].Model != "test-model" ||
+		records[1].Session != "session-1" {
+		t.Fatalf("shell_post record = %+v", records[1])
+	}
+}
+
+func TestShellCaptureRecordsChangedPreexistingPath(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "human\n")
+	if _, err := Capture(repo, preset.Event{
+		Kind: model.CheckpointKindShellPre, Type: model.AuthorHuman,
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "human\nagent\n")
+	if _, err := Capture(repo, preset.Event{
+		Kind: model.CheckpointKindShellPost, Type: model.AuthorAI,
+		Agent: "droid", Model: "model", Session: "session",
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	records, _, err := store.New(repo.GitDir).ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || len(records[1].Files) != 1 ||
+		records[1].Files[0].Path != "file.txt" || !records[1].Files[0].Exists {
+		t.Fatalf("shell changed path record = %+v", records)
+	}
+}
+
+func TestShellPostWithoutPreIsIgnored(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "content\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Capture(repo, preset.Event{
+		Kind: model.CheckpointKindShellPost, Type: model.AuthorAI,
+		Agent: "droid", Model: "model", Session: "session",
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Recorded != 0 || len(result.Warnings) != 1 {
+		t.Fatalf("Capture(shell_post) = %+v", result)
+	}
+	if records, _, err := store.New(repo.GitDir).ReadCheckpoints(); err != nil || len(records) != 0 {
+		t.Fatalf("ignored shell_post records = %v, error = %v", records, err)
+	}
+}
+
 func TestRenameDeleteAndUntrackedBlame(t *testing.T) {
 	t.Parallel()
 	root := testRepo(t)
