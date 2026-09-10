@@ -117,6 +117,9 @@ fi
 archive_files="$(
 	tar -tzf "$tmp/$archive" |
 		sed 's#^\./##' |
+		# AppleDouble metadata entries (._*) are tar-side effects of building
+		# on macOS; they carry no release content and are never extracted.
+		grep -v -E '^\._' |
 		grep -v '/$' |
 		sort
 )"
