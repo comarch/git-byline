@@ -47,6 +47,27 @@ func TestEncodeDecode(t *testing.T) {
 	}
 }
 
+func TestDecodeGoldenVersions(t *testing.T) {
+	t.Parallel()
+	for _, version := range []int{1, 2} {
+		data, err := os.ReadFile(filepath.Join("testdata", fmt.Sprintf("note-v%d.json", version)))
+		if err != nil {
+			t.Fatalf("read v%d fixture: %v", version, err)
+		}
+		note, err := Decode(data)
+		if err != nil {
+			t.Fatalf("Decode(v%d) = %v", version, err)
+		}
+		if note.Version != version || len(note.Files) != 1 {
+			t.Fatalf("Decode(v%d) = %+v", version, note)
+		}
+		file, ok := note.Files["src/example.go"]
+		if !ok || len(file.Ranges) != 1 || file.Ranges[0].Author != model.AuthorAI {
+			t.Fatalf("Decode(v%d) files = %+v", version, note.Files)
+		}
+	}
+}
+
 func TestEncodeDecodeErrors(t *testing.T) {
 	t.Parallel()
 	if _, err := Encode(model.Note{Version: 9}); err == nil {
@@ -62,6 +83,7 @@ func TestEncodeDecodeErrors(t *testing.T) {
 		`{`,
 		`{"version":9}`,
 		`{"version":1,"unknown":true}`,
+		`{"version":2,"sessions":[]}`,
 		`{"version":1,"files":{"file":{"blob":"bad"}}}`,
 		"{\"version\":1,\"files\":{\"bad\\npath\":{\"blob\":\"abcd\"}}}",
 		`{"version":1,"files":{"file":{"blob":"abcd","ranges":[{"start":2,"end":2,"author":"human"}]}}}`,

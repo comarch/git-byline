@@ -58,13 +58,27 @@ func Decode(data []byte) (model.Note, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return model.Note{}, fmt.Errorf("decode note header: %w", err)
 	}
-	if header.Version != model.NoteVersion {
+	if header.Version != 1 && header.Version != 2 {
 		return model.Note{}, fmt.Errorf("unsupported note version %d", header.Version)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	var note model.Note
-	if err := decoder.Decode(&note); err != nil {
+	var wire struct {
+		Version  int                       `json:"version"`
+		Files    map[string]model.NoteFile `json:"files"`
+		Sessions json.RawMessage           `json:"sessions"`
+	}
+	if header.Version == 1 {
+		var legacy struct {
+			Version int                       `json:"version"`
+			Files   map[string]model.NoteFile `json:"files"`
+		}
+		if err := decoder.Decode(&legacy); err != nil {
+			return model.Note{}, fmt.Errorf("decode note: %w", err)
+		}
+		wire.Version = legacy.Version
+		wire.Files = legacy.Files
+	} else if err := decoder.Decode(&wire); err != nil {
 		return model.Note{}, fmt.Errorf("decode note: %w", err)
 	}
 	var extra any
@@ -74,6 +88,16 @@ func Decode(data []byte) (model.Note, error) {
 		}
 		return model.Note{}, fmt.Errorf("decode note tail: %w", err)
 	}
+	if wire.Version != header.Version {
+		return model.Note{}, fmt.Errorf("note version changed during decode from %d to %d", header.Version, wire.Version)
+	}
+	if header.Version == 2 && len(wire.Sessions) > 0 && string(wire.Sessions) != "null" {
+		var sessions map[string]json.RawMessage
+		if err := json.Unmarshal(wire.Sessions, &sessions); err != nil {
+			return model.Note{}, fmt.Errorf("decode note sessions: %w", err)
+		}
+	}
+	note := model.Note{Version: wire.Version, Files: wire.Files}
 	if note.Files == nil {
 		note.Files = map[string]model.NoteFile{}
 	}

@@ -122,6 +122,33 @@ func TestUnknownModelGroupingAndEmptyFile(t *testing.T) {
 	}
 }
 
+func TestNonAIRemainderCountsAsUntracked(t *testing.T) {
+	t.Parallel()
+	view, err := buildView(Report{
+		Commit: "abcd1234",
+		Files: []provenance.BlameResult{{
+			Version: model.NoteVersion,
+			File:    "source",
+			Blob:    "beef1234",
+			Commit:  "abcd1234",
+			Lines: []provenance.BlameLine{
+				{Number: 1, Attribution: model.Attribution{Author: model.AuthorAI, Agent: "droid"}},
+				{Number: 2, Attribution: model.Attribution{}},
+				{Number: 3, Attribution: model.Attribution{Author: model.AuthorHuman}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.AILines != 1 || view.HumanLines != 1 || view.UntrackedLines != 1 {
+		t.Fatalf("totals = AI %d, human %d, untracked %d", view.AILines, view.HumanLines, view.UntrackedLines)
+	}
+	if view.Files[0].UntrackedLines != 1 || view.Files[0].HumanLines != 1 {
+		t.Fatalf("file totals = human %d, untracked %d", view.Files[0].HumanLines, view.Files[0].UntrackedLines)
+	}
+}
+
 func TestRenderEmptyCommitReport(t *testing.T) {
 	t.Parallel()
 	report := Report{

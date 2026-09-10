@@ -150,6 +150,7 @@ func buildView(report Report) (pageView, error) {
 			if line.Number != index+1 {
 				return pageView{}, fmt.Errorf("file %q line %d has number %d", file.File, index+1, line.Number)
 			}
+			line.Attribution = dashboardAttribution(line.Attribution)
 			if err := model.ValidateAttribution(line.Attribution); err != nil {
 				return pageView{}, fmt.Errorf("file %q line %d: %w", file.File, line.Number, err)
 			}
@@ -224,6 +225,7 @@ func buildView(report Report) (pageView, error) {
 		fileSources := map[string]*sourceCount{}
 		previous := ""
 		for _, line := range file.Lines {
+			line.Attribution = dashboardAttribution(line.Attribution)
 			key, label, kind := sourceOf(line.Attribution)
 			value := fileSources[key]
 			if value == nil {
@@ -257,7 +259,15 @@ func buildView(report Report) (pageView, error) {
 	return view, nil
 }
 
+func dashboardAttribution(value model.Attribution) model.Attribution {
+	if value.Author == "" {
+		return model.Attribution{Author: model.AuthorUntracked}
+	}
+	return value
+}
+
 func sourceOf(value model.Attribution) (key, label, kind string) {
+	value = dashboardAttribution(value)
 	kind = string(value.Author)
 	switch value.Author {
 	case model.AuthorAI:

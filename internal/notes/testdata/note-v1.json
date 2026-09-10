@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "files": {
+    "src/example.go": {
+      "blob": "abcd1234",
+      "ranges": [
+        {
+          "start": 1,
+          "end": 1,
+          "author": "ai",
+          "agent": "droid",
+          "model": "model",
+          "session": "session-1",
+          "ts": "2026-01-02T03:04:05Z"
+        }
+      ]
+    }
+  }
+}

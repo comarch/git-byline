@@ -24,6 +24,7 @@ const (
 	commandTimeout = 30 * time.Second
 	maxFileBytes   = 64 << 20
 	maxOutputBytes = maxFileBytes
+	bylineNotesRef = "refs/notes/byline"
 )
 
 // ErrOutputLimit reports Git output larger than the supported file bound.
@@ -209,6 +210,183 @@ func (repo *Repo) Changes(commit, parent string) ([]Change, error) {
 		i++
 	}
 	return changes, nil
+}
+
+// RevList returns first-parent commits in the requested range, newest first.
+func (repo *Repo) RevList(from, to string, limit int) ([]string, error) {
+	if limit < 0 {
+		return nil, errors.New("commit limit cannot be negative")
+	}
+	if from != "" {
+		if err := validateRevision(from, "from revision"); err != nil {
+			return nil, err
+		}
+	}
+	if to != "" {
+		if err := validateRevision(to, "to revision"); err != nil {
+			return nil, err
+		}
+	}
+	revision := to
+	switch {
+	case from != "" && to != "":
+		revision = from + ".." + to
+	case from != "":
+		revision = from + "..HEAD"
+	case to == "":
+		revision = "HEAD"
+	}
+	args := []string{"rev-list", "--first-parent"}
+	if limit > 0 {
+		args = append(args, "--max-count="+strconv.Itoa(limit))
+	}
+	args = append(args, revision)
+	out, err := repo.run("list commits", nil, args...)
+	if err != nil {
+		return nil, err
+	}
+	var commits []string
+	for _, value := range strings.Fields(string(out)) {
+		if !model.ValidObjectID(value) {
+			return nil, errors.New("git returned invalid commit object ID")
+		}
+		commits = append(commits, value)
+	}
+	return commits, nil
+}
+
+// PatchID returns the stable patch identifier for one commit.
+func (repo *Repo) PatchID(commit string) (string, error) {
+	if err := validateRevision(commit, "commit revision"); err != nil {
+		return "", err
+	}
+	diff, err := repo.run("read commit patch", nil, "diff-tree", "-p", "--root", "--no-commit-id", commit)
+	if err != nil {
+		return "", err
+	}
+	patchID, err := repo.run("calculate patch ID", bytes.NewReader(diff), "patch-id", "--stable")
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(string(patchID))
+	if len(fields) == 0 || !model.ValidObjectID(fields[0]) {
+		return "", errors.New("git returned invalid patch ID")
+	}
+	return fields[0], nil
+}
+
+// DirtyPaths returns normalized paths reported by Git as dirty.
+func (repo *Repo) DirtyPaths() ([]string, error) {
+	out, err := repo.run("list dirty paths", nil, "status", "--porcelain=v1", "-z", "-uall")
+	if err != nil {
+		return nil, err
+	}
+	entries := splitNUL(out)
+	seen := map[string]bool{}
+	var paths []string
+	for index := 0; index < len(entries); index++ {
+		entry := entries[index]
+		if len(entry) < 3 || entry[2] != ' ' {
+			return nil, errors.New("git returned invalid dirty path status")
+		}
+		status := entry[:2]
+		path, err := NormalizePath(entry[3:])
+		if err != nil {
+			return nil, fmt.Errorf("normalize dirty path: %w", err)
+		}
+		if !seen[path] {
+			seen[path] = true
+			paths = append(paths, path)
+		}
+		if strings.ContainsRune(status, 'R') || strings.ContainsRune(status, 'C') {
+			index++
+			if index >= len(entries) {
+				return nil, errors.New("git returned truncated dirty rename data")
+			}
+			renamed, err := NormalizePath(entries[index])
+			if err != nil {
+				return nil, fmt.Errorf("normalize dirty rename path: %w", err)
+			}
+			if !seen[renamed] {
+				seen[renamed] = true
+				paths = append(paths, renamed)
+			}
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// CommitTime returns the committer timestamp in RFC3339 format.
+func (repo *Repo) CommitTime(commit string) (string, error) {
+	if err := validateRevision(commit, "commit revision"); err != nil {
+		return "", err
+	}
+	out, err := repo.run("read commit time", nil, "show", "-s", "--format=%cI", commit)
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(string(out))
+	if value == "" {
+		return "", errors.New("git returned an empty commit timestamp")
+	}
+	if _, err := time.Parse(time.RFC3339, value); err != nil {
+		if _, nanoErr := time.Parse(time.RFC3339Nano, value); nanoErr != nil {
+			return "", errors.New("git returned an invalid commit timestamp")
+		}
+	}
+	return value, nil
+}
+
+// MergeBase returns the best common ancestor of two revisions.
+func (repo *Repo) MergeBase(a, b string) (string, error) {
+	if err := validateRevision(a, "first revision"); err != nil {
+		return "", err
+	}
+	if err := validateRevision(b, "second revision"); err != nil {
+		return "", err
+	}
+	out, err := repo.run("read merge base", nil, "merge-base", a, b)
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(string(out))
+	if !model.ValidObjectID(value) {
+		return "", errors.New("git returned invalid merge base object ID")
+	}
+	return value, nil
+}
+
+// NoteCommits returns commits carrying notes in ref.
+func (repo *Repo) NoteCommits(ref string) ([]string, error) {
+	if err := validateNoteRef(ref); err != nil {
+		return nil, err
+	}
+	out, err := repo.run("list attribution note commits", nil, "notes", "--ref="+ref, "list")
+	if err != nil {
+		var commandErr *CommandError
+		if errors.As(err, &commandErr) && commandErr.ExitCode == 1 {
+			return nil, nil
+		}
+		return nil, err
+	}
+	fields := strings.Fields(string(out))
+	if len(fields)%2 != 0 {
+		return nil, errors.New("git returned invalid note list")
+	}
+	commits := make([]string, 0, len(fields)/2)
+	seen := map[string]bool{}
+	for index := 0; index < len(fields); index += 2 {
+		if !model.ValidObjectID(fields[index]) || !model.ValidObjectID(fields[index+1]) {
+			return nil, errors.New("git returned invalid note object ID")
+		}
+		if !seen[fields[index+1]] {
+			seen[fields[index+1]] = true
+			commits = append(commits, fields[index+1])
+		}
+	}
+	sort.Strings(commits)
+	return commits, nil
 }
 
 // BlobID returns the blob object for path at revision.
@@ -428,12 +606,15 @@ func inside(root, path string) bool {
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
-// ReadNote reads a note for commit. Unknown or absent values are reported.
-func (repo *Repo) ReadNote(commit string) ([]byte, bool, error) {
+// ReadNoteRef reads a note for commit from ref.
+func (repo *Repo) ReadNoteRef(ref, commit string) ([]byte, bool, error) {
+	if err := validateNoteRef(ref); err != nil {
+		return nil, false, err
+	}
 	if !model.ValidObjectID(commit) {
 		return nil, false, errors.New("invalid commit object ID")
 	}
-	out, err := repo.run("read attribution note", nil, "notes", "--ref=refs/notes/byline", "show", commit)
+	out, err := repo.run("read attribution note", nil, "notes", "--ref="+ref, "show", commit)
 	if err == nil {
 		return out, true, nil
 	}
@@ -444,9 +625,20 @@ func (repo *Repo) ReadNote(commit string) ([]byte, bool, error) {
 	return nil, false, err
 }
 
-// WriteNote creates a note or accepts an existing byte-identical note.
-func (repo *Repo) WriteNote(commit string, data []byte) error {
-	existing, ok, err := repo.ReadNote(commit)
+// ReadNote reads a note for commit from the attribution ref.
+func (repo *Repo) ReadNote(commit string) ([]byte, bool, error) {
+	return repo.ReadNoteRef(bylineNotesRef, commit)
+}
+
+// WriteNoteRef creates a note or accepts an existing byte-identical note.
+func (repo *Repo) WriteNoteRef(ref, commit string, data []byte) error {
+	if err := validateNoteRef(ref); err != nil {
+		return err
+	}
+	if !model.ValidObjectID(commit) {
+		return errors.New("invalid commit object ID")
+	}
+	existing, ok, err := repo.ReadNoteRef(ref, commit)
 	if err != nil {
 		return err
 	}
@@ -461,8 +653,43 @@ func (repo *Repo) WriteNote(commit string, data []byte) error {
 		return err
 	}
 	defer os.Remove(path)
-	_, err = repo.run("write attribution note", nil, "notes", "--ref=refs/notes/byline", "add", "-F", path, commit)
+	_, err = repo.run("write attribution note", nil, "notes", "--ref="+ref, "add", "-F", path, commit)
 	return noteWriteError(err)
+}
+
+// WriteNote creates a note or accepts an existing byte-identical note.
+func (repo *Repo) WriteNote(commit string, data []byte) error {
+	return repo.WriteNoteRef(bylineNotesRef, commit, data)
+}
+
+func validateRevision(value, name string) error {
+	if value == "" {
+		return fmt.Errorf("%s is empty", name)
+	}
+	if strings.HasPrefix(value, "-") {
+		return fmt.Errorf("%s cannot start with '-'", name)
+	}
+	for _, char := range value {
+		if unicode.IsControl(char) || unicode.IsSpace(char) {
+			return fmt.Errorf("%s contains whitespace or a control character", name)
+		}
+	}
+	return nil
+}
+
+func validateNoteRef(ref string) error {
+	if ref == "" {
+		return errors.New("note ref is empty")
+	}
+	if strings.HasPrefix(ref, "-") {
+		return errors.New("note ref cannot start with '-'")
+	}
+	for _, char := range ref {
+		if unicode.IsControl(char) || unicode.IsSpace(char) {
+			return errors.New("note ref contains whitespace or a control character")
+		}
+	}
+	return nil
 }
 
 // noteWriteError annotates note write failures caused by a missing Git
@@ -632,6 +859,7 @@ func (repo *Repo) run(operation string, stdin io.Reader, args ...string) ([]byte
 	command.Env = append(gitEnvironment(),
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_BYLINE_NESTED=1",
 		"LC_ALL=C",
 	)
 	command.Stdin = stdin

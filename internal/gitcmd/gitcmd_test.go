@@ -2,9 +2,11 @@ package gitcmd
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -121,6 +123,107 @@ func TestRepositoryOperations(t *testing.T) {
 	if err != nil || len(changes) != 1 || changes[0].Status != 'R' ||
 		changes[0].OldPath != "a file.txt" || changes[0].Path != "renamed.txt" {
 		t.Fatalf("Changes(rename) = %+v, %v", changes, err)
+	}
+}
+
+func TestExtendedRepositoryOperations(t *testing.T) {
+	t.Parallel()
+	root := initRepository(t)
+	writeFile(t, root, "file.txt", "one\n")
+	first := commitAll(t, root, "first")
+	writeFile(t, root, "file.txt", "one\ntwo\n")
+	second := commitAll(t, root, "second")
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "rev-list",
+			run: func() error {
+				commits, err := repo.RevList(first, second, 10)
+				if err != nil {
+					return err
+				}
+				if len(commits) != 1 || commits[0] != second {
+					return fmt.Errorf("commits = %v", commits)
+				}
+				return nil
+			},
+		},
+		{
+			name: "patch-id",
+			run: func() error {
+				value, err := repo.PatchID(second)
+				if err != nil {
+					return err
+				}
+				if !model.ValidObjectID(value) {
+					return fmt.Errorf("patch ID = %q", value)
+				}
+				return nil
+			},
+		},
+		{
+			name: "commit-time",
+			run: func() error {
+				value, err := repo.CommitTime(second)
+				if err != nil {
+					return err
+				}
+				if !strings.Contains(value, "T") {
+					return fmt.Errorf("commit time = %q", value)
+				}
+				return nil
+			},
+		},
+		{
+			name: "merge-base",
+			run: func() error {
+				value, err := repo.MergeBase(first, second)
+				if err != nil {
+					return err
+				}
+				if value != first {
+					return fmt.Errorf("merge base = %q, want %q", value, first)
+				}
+				return nil
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.run(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+
+	note := []byte("{\"version\":1,\"files\":{}}\n")
+	if err := repo.WriteNoteRef("refs/notes/custom", second, note); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := repo.ReadNoteRef("refs/notes/custom", second); err != nil || !ok || string(got) != string(note) {
+		t.Fatalf("ReadNoteRef() = %q, %t, %v", got, ok, err)
+	}
+	commits, err := repo.NoteCommits("refs/notes/custom")
+	if err != nil || len(commits) != 1 || commits[0] != second {
+		t.Fatalf("NoteCommits() = %v, %v", commits, err)
+	}
+
+	writeFile(t, root, "z-dirty", "dirty\n")
+	writeFile(t, root, "a-dirty", "dirty\n")
+	paths, err := repo.DirtyPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(paths, []string{"a-dirty", "z-dirty"}) {
+		t.Fatalf("DirtyPaths() = %v", paths)
 	}
 }
 
