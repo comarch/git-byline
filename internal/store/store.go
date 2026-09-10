@@ -16,7 +16,15 @@ import (
 	"github.com/comarch/git-byline/internal/model"
 )
 
-const maxRecordBytes = 8 << 20
+const (
+	maxRecordBytes        = 8 << 20
+	maxCheckpointBytes    = 64 << 20
+	maxCheckpointRecords  = 100_000
+	maxStateBytes         = 64 << 20
+	checkpointBufferBytes = 64 << 10
+)
+
+var errCheckpointRecordLimit = errors.New("checkpoint record exceeds supported limit")
 
 // Store addresses worktree-specific git-byline data.
 type Store struct {
@@ -45,22 +53,43 @@ func (store Store) LockPath() string {
 
 // ReadCheckpoints reads supported records and skips unknown versions.
 func (store Store) ReadCheckpoints() ([]model.Checkpoint, []string, error) {
-	data, err := os.ReadFile(store.CheckpointPath())
+	file, err := os.Open(store.CheckpointPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("read checkpoint log: %w", err)
 	}
-	hasFinalNewline := len(data) == 0 || data[len(data)-1] == '\n'
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 64*1024), maxRecordBytes)
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, nil, fmt.Errorf("stat checkpoint log: %w", err)
+	}
+	if info.Size() > maxCheckpointBytes {
+		return nil, nil, fmt.Errorf("checkpoint log exceeds %d bytes", maxCheckpointBytes)
+	}
+	limited := &io.LimitedReader{R: file, N: maxCheckpointBytes + 1}
+	reader := bufio.NewReaderSize(limited, checkpointBufferBytes)
 	var records []model.Checkpoint
 	var warnings []string
 	line := 0
-	for scanner.Scan() {
+	for {
+		raw, readErr := readCheckpointLine(reader)
+		if len(raw) == 0 && errors.Is(readErr, io.EOF) {
+			break
+		}
 		line++
-		raw := scanner.Bytes()
+		if line > maxCheckpointRecords {
+			return nil, nil, fmt.Errorf("checkpoint log exceeds %d records", maxCheckpointRecords)
+		}
+		if errors.Is(readErr, errCheckpointRecordLimit) || len(bytes.TrimSuffix(raw, []byte{'\n'})) > maxRecordBytes {
+			return nil, nil, fmt.Errorf("checkpoint line %d exceeds %d bytes", line, maxRecordBytes)
+		}
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return nil, nil, fmt.Errorf("read checkpoint line %d: %w", line, readErr)
+		}
+		finalTruncated := errors.Is(readErr, io.EOF) && !bytes.HasSuffix(raw, []byte{'\n'})
+		raw = bytes.TrimSuffix(raw, []byte{'\n'})
 		if len(bytes.TrimSpace(raw)) == 0 {
 			return nil, nil, fmt.Errorf("checkpoint line %d is empty", line)
 		}
@@ -68,9 +97,9 @@ func (store Store) ReadCheckpoints() ([]model.Checkpoint, []string, error) {
 			Version int `json:"version"`
 		}
 		if err := json.Unmarshal(raw, &header); err != nil {
-			if !hasFinalNewline && scannerAtEnd(scanner, data, line) {
+			if finalTruncated {
 				warnings = append(warnings, fmt.Sprintf("ignored truncated final checkpoint line %d", line))
-				continue
+				break
 			}
 			return nil, nil, fmt.Errorf("decode checkpoint header line %d: %w", line, err)
 		}
@@ -80,9 +109,9 @@ func (store Store) ReadCheckpoints() ([]model.Checkpoint, []string, error) {
 		}
 		var record model.Checkpoint
 		if err := decodeStrict(raw, &record); err != nil {
-			if !hasFinalNewline && scannerAtEnd(scanner, data, line) {
+			if finalTruncated {
 				warnings = append(warnings, fmt.Sprintf("ignored truncated final checkpoint line %d", line))
-				continue
+				break
 			}
 			return nil, nil, fmt.Errorf("decode checkpoint line %d: %w", line, err)
 		}
@@ -93,15 +122,29 @@ func (store Store) ReadCheckpoints() ([]model.Checkpoint, []string, error) {
 			return nil, nil, fmt.Errorf("checkpoint line %d sequence %d is not increasing", line, record.Seq)
 		}
 		records = append(records, record)
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, nil, fmt.Errorf("scan checkpoint log: %w", err)
+	if limited.N <= 0 {
+		return nil, nil, fmt.Errorf("checkpoint log exceeds %d bytes", maxCheckpointBytes)
 	}
 	return records, warnings, nil
 }
 
-func scannerAtEnd(_ *bufio.Scanner, data []byte, line int) bool {
-	return line == bytes.Count(data, []byte{'\n'})+1
+func readCheckpointLine(reader *bufio.Reader) ([]byte, error) {
+	var result []byte
+	for {
+		part, err := reader.ReadSlice('\n')
+		if len(result)+len(part) > maxRecordBytes+1 {
+			return nil, errCheckpointRecordLimit
+		}
+		result = append(result, part...)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return result, err
+	}
 }
 
 func validateCheckpoint(record model.Checkpoint) error {
@@ -170,6 +213,13 @@ func (store Store) AppendCheckpoint(record model.Checkpoint) error {
 		return err
 	}
 	data = append(prefix, data...)
+	if info, err := os.Stat(store.CheckpointPath()); err == nil {
+		if info.Size()+int64(len(data)) > maxCheckpointBytes {
+			return fmt.Errorf("checkpoint log would exceed %d bytes", maxCheckpointBytes)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat checkpoint log: %w", err)
+	}
 	file, err := os.OpenFile(store.CheckpointPath(), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open checkpoint log: %w", err)
@@ -193,23 +243,53 @@ func (store Store) AppendCheckpoint(record model.Checkpoint) error {
 }
 
 func repairCheckpointTail(path string) ([]byte, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint tail: %w", err)
 	}
-	if len(data) == 0 || data[len(data)-1] == '\n' {
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat checkpoint log: %w", err)
+	}
+	if info.Size() > maxCheckpointBytes {
+		return nil, fmt.Errorf("checkpoint log exceeds %d bytes", maxCheckpointBytes)
+	}
+	if info.Size() == 0 {
 		return nil, nil
 	}
-	start := bytes.LastIndexByte(data, '\n') + 1
-	tail := data[start:]
+	last := []byte{0}
+	if _, err := file.ReadAt(last, info.Size()-1); err != nil {
+		return nil, fmt.Errorf("read checkpoint tail byte: %w", err)
+	}
+	if last[0] == '\n' {
+		return nil, nil
+	}
+	readSize := info.Size()
+	if readSize > maxRecordBytes+1 {
+		readSize = maxRecordBytes + 1
+	}
+	data := make([]byte, int(readSize))
+	if _, err := file.ReadAt(data, info.Size()-readSize); err != nil {
+		return nil, fmt.Errorf("read checkpoint tail: %w", err)
+	}
+	lastNewline := bytes.LastIndexByte(data, '\n')
+	if lastNewline < 0 && info.Size() > readSize {
+		return nil, fmt.Errorf("checkpoint tail exceeds %d bytes", maxRecordBytes)
+	}
+	start := info.Size() - readSize + int64(lastNewline+1)
+	tail := data[lastNewline+1:]
+	if len(tail) > maxRecordBytes {
+		return nil, fmt.Errorf("checkpoint tail exceeds %d bytes", maxRecordBytes)
+	}
 	var header struct {
 		Version int `json:"version"`
 	}
 	if err := json.Unmarshal(tail, &header); err != nil {
-		if err := os.Truncate(path, int64(start)); err != nil {
+		if err := file.Truncate(start); err != nil {
 			return nil, fmt.Errorf("truncate checkpoint tail: %w", err)
 		}
 		return nil, nil
@@ -228,7 +308,7 @@ func repairCheckpointTail(path string) ([]byte, error) {
 
 // ReadState reads state or returns a new empty state.
 func (store Store) ReadState() (model.State, error) {
-	data, err := os.ReadFile(store.StatePath())
+	data, err := readBoundedFile(store.StatePath(), maxStateBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return model.NewState(), nil
 	}
@@ -252,6 +332,30 @@ func (store Store) ReadState() (model.State, error) {
 		return model.State{}, fmt.Errorf("validate state: %w", err)
 	}
 	return state, nil
+}
+
+func readBoundedFile(path string, limit int64) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > limit {
+		return nil, fmt.Errorf("file exceeds %d bytes", limit)
+	}
+	reader := &io.LimitedReader{R: file, N: limit + 1}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	if reader.N <= 0 {
+		return nil, fmt.Errorf("file exceeds %d bytes", limit)
+	}
+	return data, nil
 }
 
 // WriteState atomically replaces state.

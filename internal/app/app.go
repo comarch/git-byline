@@ -80,10 +80,19 @@ func commands() []*command {
 			run: runStatus,
 		},
 		{
+			name:  "dashboard",
+			short: "generate a local HTML attribution report",
+			usage: "Usage: git-byline dashboard [--output FILE] [file]\n\n" +
+				"Generate a self-contained HTML report for one file or every\n" +
+				"file attributed on HEAD. Existing output files are not replaced.",
+			run: runDashboard,
+		},
+		{
 			name:  "install-hooks",
 			short: "install agent and Git hooks",
-			usage: "Usage: git-byline install-hooks [--agent droid|claude|all|none] [--git] [--user|--project]\n\n" +
-				"Merge managed hooks without replacing existing configuration.",
+			usage: "Usage: git-byline install-hooks [--agent droid|claude|all|none] [--git] [--local-notes] [--user|--project]\n\n" +
+				"Merge managed hooks without replacing existing configuration.\n" +
+				"Git hooks share attribution notes on push unless --local-notes is set.",
 			run: runInstallHooks,
 		},
 		{

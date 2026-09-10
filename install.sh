@@ -146,7 +146,7 @@ target="$bin_dir/git-byline"
 	printf 'install.sh: destination is a directory: %s\n' "$target" >&2
 	exit 1
 }
-staged="$bin_dir/.git-byline.$$"
+staged="$(mktemp "$bin_dir/.git-byline.XXXXXX")"
 trap 'rm -rf "$tmp"; rm -f "$staged"' EXIT HUP INT TERM
 cp "$tmp/git-byline" "$staged"
 chmod 0755 "$staged"

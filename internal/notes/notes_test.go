@@ -1,6 +1,7 @@
 package notes
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,12 +63,65 @@ func TestEncodeDecodeErrors(t *testing.T) {
 		`{"version":9}`,
 		`{"version":1,"unknown":true}`,
 		`{"version":1,"files":{"file":{"blob":"bad"}}}`,
+		"{\"version\":1,\"files\":{\"bad\\npath\":{\"blob\":\"abcd\"}}}",
 		`{"version":1,"files":{"file":{"blob":"abcd","ranges":[{"start":2,"end":2,"author":"human"}]}}}`,
 		"{\"version\":1}\n{}",
 	} {
 		if _, err := Decode([]byte(data)); err == nil {
 			t.Fatalf("Decode accepted %q", data)
 		}
+	}
+}
+
+func TestCheckFileCount(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{"version":1,"files":{"a":{"blob":"aaaa"},"b":{"blob":"bbbb"}}}`)
+	if err := CheckFileCount(data, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckFileCount(data, 1); err == nil {
+		t.Fatal("CheckFileCount accepted too many files")
+	}
+	for _, data := range [][]byte{
+		[]byte(`[]`),
+		[]byte(`{"files":[]}`),
+		[]byte(`{"files":{"a":`),
+	} {
+		if err := CheckFileCount(data, 2); err == nil {
+			t.Fatalf("CheckFileCount accepted %s", data)
+		}
+	}
+}
+
+func TestNoteLimits(t *testing.T) {
+	t.Parallel()
+	files := make(map[string]model.NoteFile, MaxFiles+1)
+	var encoded strings.Builder
+	encoded.WriteString(`{"version":1,"files":{`)
+	for index := 0; index <= MaxFiles; index++ {
+		path := fmt.Sprintf("file-%03d", index)
+		files[path] = model.NoteFile{Blob: "aaaa"}
+		if index > 0 {
+			encoded.WriteByte(',')
+		}
+		fmt.Fprintf(&encoded, "%q:{\"blob\":\"aaaa\"}", path)
+	}
+	encoded.WriteString("}}")
+	if _, err := Encode(model.Note{Version: model.NoteVersion, Files: files}); err == nil {
+		t.Fatal("Encode accepted too many files")
+	}
+	if _, err := Decode([]byte(encoded.String())); err == nil {
+		t.Fatal("Decode accepted too many files")
+	}
+	largePath := strings.Repeat("a", MaxEncodedBytes)
+	if _, err := Encode(model.Note{
+		Version: model.NoteVersion,
+		Files:   map[string]model.NoteFile{largePath: {Blob: "aaaa"}},
+	}); err == nil {
+		t.Fatal("Encode accepted an oversized note")
+	}
+	if _, err := Decode(make([]byte, MaxEncodedBytes+1)); err == nil {
+		t.Fatal("Decode accepted an oversized note")
 	}
 }
 

@@ -1,7 +1,8 @@
 # git-byline plugin
 
 Know which committed lines came from humans and AI without sending code,
-prompts, or attribution data to a service.
+prompts, or transcripts to a separate analytics service. Attribution notes
+follow ordinary pushes to the selected Git remote by default.
 
 This Factory plugin installs and configures git-byline without a manual binary
 installation step.
@@ -18,6 +19,7 @@ normally and inspect a committed file:
 
 ```sh
 git byline blame path/to/file
+git byline dashboard
 git byline status
 ```
 
@@ -27,11 +29,14 @@ git byline status
 - Release archives are verified against `checksums.txt`.
 - Binary version is checked before installation.
 - Local agent and Git hooks are activated without replacing unrelated config.
-- The `git-byline` skill documents status and blame workflows.
+- The `git-byline` skill documents status, blame, and local dashboard
+  workflows.
 
 The plugin setup installs a local runtime because Git hooks must keep working
 outside an active Factory session. No daemon, account, telemetry, or cloud
-storage is added.
+storage is added. Git hook installation publishes attribution notes on
+ordinary pushes by default. Use `--local-notes` when those notes must remain
+local.
 
 See the [product overview](https://github.com/comarch/git-byline),
 [installation guide](https://github.com/comarch/git-byline/blob/main/docs/INSTALL.md),

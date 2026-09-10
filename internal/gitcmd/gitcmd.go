@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/comarch/git-byline/internal/model"
@@ -250,6 +251,22 @@ func (repo *Repo) ReadBlob(oid string) ([]byte, error) {
 	return out, nil
 }
 
+// BlobSize returns the size of one validated blob without reading its content.
+func (repo *Repo) BlobSize(oid string) (int64, error) {
+	if !model.ValidObjectID(oid) {
+		return 0, errors.New("invalid blob object ID")
+	}
+	out, err := repo.run("read blob size", nil, "cat-file", "-s", oid)
+	if err != nil {
+		return 0, err
+	}
+	size, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil || size < 0 {
+		return 0, errors.New("git returned invalid blob size")
+	}
+	return size, nil
+}
+
 // HashBytes writes content to the Git object database.
 func (repo *Repo) HashBytes(content []byte) (string, error) {
 	out, err := repo.run("write blob", bytes.NewReader(content), "hash-object", "-w", "--stdin")
@@ -385,6 +402,11 @@ func (repo *Repo) Ignored(path string) (bool, error) {
 func NormalizePath(path string) (string, error) {
 	if path == "" || strings.ContainsRune(path, 0) {
 		return "", errors.New("path is empty or contains NUL")
+	}
+	for _, char := range path {
+		if unicode.IsControl(char) {
+			return "", errors.New("path contains a control character")
+		}
 	}
 	path = filepath.ToSlash(path)
 	if filepath.IsAbs(filepath.FromSlash(path)) || strings.HasPrefix(path, "/") {
@@ -555,6 +577,29 @@ func (repo *Repo) text(operation string, stdin io.Reader, args ...string) (strin
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// GitPath resolves one Git-managed path as an absolute path.
+func (repo *Repo) GitPath(name string) (string, error) {
+	if name == "" || strings.ContainsRune(name, 0) {
+		return "", errors.New("Git path name is empty or contains NUL")
+	}
+	out, err := repo.run(
+		"resolve Git path",
+		nil,
+		"rev-parse",
+		"--path-format=absolute",
+		"--git-path",
+		name,
+	)
+	if err != nil {
+		return "", err
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" || !filepath.IsAbs(path) {
+		return "", errors.New("Git returned a non-absolute managed path")
+	}
+	return filepath.Clean(path), nil
 }
 
 func (repo *Repo) run(operation string, stdin io.Reader, args ...string) ([]byte, error) {

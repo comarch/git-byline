@@ -43,8 +43,10 @@ installation, local checkpoint storage, Git object retention, and attribution
 notes are in scope.
 
 The production binary must never make network connections. Telemetry, update
-checks, remote lookups, downloads, and cloud synchronization are forbidden.
-Any such behavior is a security defect.
+checks, remote lookups, downloads, and cloud synchronization by the binary are
+forbidden. The managed `pre-push` hook may invoke Git to publish attribution
+notes unless installation used `--local-notes`. Any other network behavior is
+a security defect.
 
 Checkpoint metadata and notes must not contain raw hook input, prompts,
 transcripts, environment dumps, authorization data, or file content. Snapshot

@@ -10,7 +10,8 @@ git-byline closes that gap with a deliberately small product boundary:
 - observe supported agent edits through local hooks;
 - attach complete line ranges to commits through Git notes;
 - show `human`, `ai:<agent>/<model>`, or `untracked` for every text line;
-- keep source snapshots and attribution metadata local by default;
+- keep source snapshots local and share Git note metadata with normal pushes
+  after Git hooks are installed;
 - store no prompts, transcripts, raw hook payloads, or environment dumps.
 
 ## Business outcomes
@@ -30,10 +31,10 @@ regulated change processes, and AI adoption experiments.
 
 ### Smaller data boundary
 
-The production binary has no network path. It needs no account, API key,
-service, daemon, or telemetry endpoint. Prompts and transcripts stay outside
-the data model. Teams can add provenance without creating another copy of
-sensitive development context.
+The production binary opens no network connection. It needs no account, API
+key, service, daemon, or telemetry endpoint. Prompts and transcripts stay
+outside the data model. A managed pre-push hook uses Git to publish attribution
+notes by default; `--local-notes` disables that sharing.
 
 ### Tool choice without one analytics vendor
 
@@ -52,7 +53,7 @@ so verify linked vendor documentation before a procurement decision.
 | Commit trailers such as `Co-authored-by` or `Assisted-by` | Was AI involved in this commit? | Whole commit | Declared metadata | Team convention |
 | [GitHub Copilot usage metrics](https://docs.github.com/en/copilot/concepts/copilot-usage-metrics/copilot-metrics) and similar dashboards | How is an assistant used across a team? | User, organization, or aggregate events | Platform usage events | Vendor account, dashboard, or API |
 | [Git AI](https://github.com/git-ai-project/git-ai) and prompt-linked provenance tools | Which agent, model, and prompt produced code? | Line-level and lifecycle context | Hooks, checkpoints, Git metadata, prompt links | Broader provenance and observability workflow |
-| **git-byline** | Which committed lines were observed as human/default, AI, or unknown? | **Line-level** | **Local hooks, Git blobs, and Git notes** | **One local binary, no account, daemon, telemetry, prompts, or network** |
+| **git-byline** | Which committed lines were observed as human/default, AI, or unknown? | **Line-level** | **Local hooks, Git blobs, and Git notes** | **One binary, Git note sharing, no account, daemon, telemetry, or prompts** |
 
 ### Closest category peer: Git AI
 
@@ -61,7 +62,7 @@ provenance, and Git notes. Their product boundaries differ.
 
 Git AI presents prompt-linked provenance and prompt-to-production
 observability. git-byline intentionally excludes prompts, transcripts, cloud
-sync, hosted analytics, accounts, daemons, and runtime network calls. Choose
+sync, hosted analytics, accounts, daemons, and binary network calls. Choose
 the broader model when prompt context and lifecycle analytics are required.
 Choose git-byline when local operation, prompt exclusion, and a small trust
 boundary matter more.
@@ -90,7 +91,7 @@ git-byline stays narrow by design:
 - no prompt replay or semantic explanation of generated code;
 - no automatic reconstruction of old history;
 - no attribution for binary files or unsupported agent event surfaces;
-- no automatic sharing of Git notes between clones;
+- no automatic fetching of Git notes in another clone;
 - no proof that `human` lines were physically typed by a person.
 
 `human` means no supported agent checkpoint claimed the final transition.

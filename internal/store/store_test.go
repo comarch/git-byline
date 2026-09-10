@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -151,6 +152,48 @@ func TestCheckpointValidation(t *testing.T) {
 		if err := (New(t.TempDir())).AppendCheckpoint(record); err == nil {
 			t.Fatalf("case %d accepted invalid checkpoint", i)
 		}
+	}
+}
+
+func TestCheckpointAndStateReadLimits(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	if err := os.MkdirAll(value.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(value.CheckpointPath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(value.CheckpointPath(), maxCheckpointBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := value.ReadCheckpoints(); err == nil {
+		t.Fatal("ReadCheckpoints accepted oversized log")
+	}
+	if err := os.WriteFile(value.StatePath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(value.StatePath(), maxStateBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := value.ReadState(); err == nil {
+		t.Fatal("ReadState accepted oversized state")
+	}
+}
+
+func TestCheckpointRecordCountLimit(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	if err := os.MkdirAll(value.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record := []byte(`{"version":9}` + "\n")
+	data := bytes.Repeat(record, maxCheckpointRecords+1)
+	if err := os.WriteFile(value.CheckpointPath(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := value.ReadCheckpoints(); err == nil {
+		t.Fatal("ReadCheckpoints accepted excessive record count")
 	}
 }
 

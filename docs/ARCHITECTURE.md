@@ -15,6 +15,8 @@ flowchart LR
     P --> N[refs/notes/byline]
     N --> B[git byline blame]
     N --> J[Versioned JSON output]
+    N --> D[Self-contained HTML dashboard]
+    N -->|managed pre-push| X[Selected Git remote]
 ```
 
 Checkpoint and replay state is isolated per linked worktree. Attribution notes
@@ -34,10 +36,18 @@ do not transfer either worktree state or notes.
 | `internal/engine` | Pure line splitting, replay, projection, ranges |
 | `internal/notes` | Canonical note encoding and history lookup |
 | `internal/provenance` | Checkpoint, annotate, blame, and status workflows |
+| `internal/dashboard` | Deterministic self-contained HTML reports |
 | `internal/hooks` | Idempotent agent and Git hook mutation |
 
 Production code runs Git only through `internal/gitcmd`. The attribution engine
 does not access Git, files, JSON, clocks, subprocesses, or global state.
+
+The dashboard renderer consumes validated blame and status results. It embeds
+all styles, script, source lines, and metrics into one HTML file. The report
+uses a restrictive Content Security Policy and contains no external URLs or
+runtime network requests. It reads only paths from the attribution note
+attached directly to `HEAD`, with limits of 16 MiB for the note, 500 files,
+100,000 lines, and 16 MiB of committed source content.
 
 ## Runtime flow
 
@@ -51,6 +61,8 @@ does not access Git, files, JSON, clocks, subprocesses, or global state.
 7. Committed lines receive complete, ordered, non-overlapping ranges.
 8. Canonical note JSON is written to `refs/notes/byline`.
 9. State advances atomically, then the retention ref is compacted.
+10. Unless installed with `--local-notes`, a managed `pre-push` hook
+    publishes the notes ref before an ordinary branch push.
 
 If annotation starts after new edits already happened on the new `HEAD`,
 checkpoints based on that `HEAD` are carried into pending state for the next
@@ -69,6 +81,7 @@ One JSON object per line:
 Properties:
 
 - append-only except for truncated-tail recovery;
+- streamed with a 64 MiB total limit and 100,000-record limit;
 - sequence order is authoritative;
 - one truncated final line is ignored with a warning;
 - the next append removes that truncated tail before writing a record;
@@ -87,7 +100,7 @@ Path: worktree-specific Git directory plus `byline/state.json`.
 ```
 
 State uses a temporary file, file sync, and atomic rename. It advances only
-after the note write succeeds.
+after the note write succeeds. State reads are limited to 64 MiB.
 
 Pending files preserve attribution excluded by a partial commit. Their blobs
 remain reachable through `refs/worktree/byline/checkpoints`.
@@ -121,7 +134,8 @@ Ref: `refs/notes/byline`.
 ```
 
 Ranges are inclusive and one-based. Every line has exactly one range. Map keys
-and fields serialize deterministically with a trailing newline.
+and fields serialize deterministically with a trailing newline. Encoders and
+decoders reject notes above 500 files or 16 MiB.
 
 Readers accept only supported note versions. Unknown versions, missing notes,
 and blob mismatches produce warnings and `untracked` output instead of guessed
@@ -153,7 +167,30 @@ when a process exits.
 
 ## Sharing notes
 
-Normal clone, fetch, and push operations do not transfer
-`refs/notes/byline`. Sharing notes is an explicit Git action. Review note
-content before transfer because it can disclose paths, timestamps, agent and
-model names, and session identifiers.
+`install-hooks --git` installs a managed `pre-push` hook. Before an ordinary
+branch push, it sends `refs/notes/byline` to the same remote. The internal
+notes push uses `--no-verify` to avoid recursively running the hook. Unrelated
+`pre-push` checks still run once for the outer branch push. A notes failure
+stops the branch push, but a successful notes push cannot guarantee that the
+later branch update will be accepted.
+
+Use `--local-notes` to install `post-commit` annotation without the sharing
+hook. Fetch shared notes into another clone explicitly:
+
+```sh
+git fetch origin refs/notes/byline:refs/notes/byline
+```
+
+Concurrent clones can create divergent notes histories. The managed hook
+refuses a non-fast-forward notes update and stops the branch push. Merge the
+remote notes explicitly, review conflicts, then retry:
+
+```sh
+git fetch origin refs/notes/byline:refs/notes/byline-remote
+git notes --ref=refs/notes/byline merge refs/notes/byline-remote
+git update-ref -d refs/notes/byline-remote
+git push
+```
+
+Checkpoint logs, state files, retention refs, and generated HTML dashboards
+remain local. They are not included when attribution notes are pushed.

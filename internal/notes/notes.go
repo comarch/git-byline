@@ -13,6 +13,13 @@ import (
 	"github.com/comarch/git-byline/internal/model"
 )
 
+const (
+	// MaxEncodedBytes bounds note parsing before allocating the complete model.
+	MaxEncodedBytes = 16 << 20
+	// MaxFiles bounds file entries in one attribution note.
+	MaxFiles = 500
+)
+
 // Encode returns canonical JSON with a trailing newline.
 func Encode(note model.Note) ([]byte, error) {
 	if note.Version != model.NoteVersion {
@@ -21,6 +28,9 @@ func Encode(note model.Note) ([]byte, error) {
 	if note.Files == nil {
 		note.Files = map[string]model.NoteFile{}
 	}
+	if len(note.Files) > MaxFiles {
+		return nil, fmt.Errorf("note has more than %d files", MaxFiles)
+	}
 	if err := validateNote(note); err != nil {
 		return nil, err
 	}
@@ -28,11 +38,20 @@ func Encode(note model.Note) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode note: %w", err)
 	}
+	if len(data)+1 > MaxEncodedBytes {
+		return nil, fmt.Errorf("note exceeds %d bytes", MaxEncodedBytes)
+	}
 	return append(data, '\n'), nil
 }
 
 // Decode reads a supported note version.
 func Decode(data []byte) (model.Note, error) {
+	if len(data) > MaxEncodedBytes {
+		return model.Note{}, fmt.Errorf("note exceeds %d bytes", MaxEncodedBytes)
+	}
+	if err := CheckFileCount(data, MaxFiles); err != nil {
+		return model.Note{}, err
+	}
 	var header struct {
 		Version int `json:"version"`
 	}
@@ -64,6 +83,67 @@ func Decode(data []byte) (model.Note, error) {
 	return note, nil
 }
 
+// CheckFileCount rejects notes with more than limit file entries before the
+// complete map is decoded.
+func CheckFileCount(data []byte, limit int) error {
+	if limit < 0 {
+		return errors.New("note file limit is negative")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("decode note start: %w", err)
+	}
+	if token != json.Delim('{') {
+		return errors.New("note must be a JSON object")
+	}
+	count := 0
+	for decoder.More() {
+		nameToken, err := decoder.Token()
+		if err != nil {
+			return fmt.Errorf("decode note field: %w", err)
+		}
+		name, ok := nameToken.(string)
+		if !ok {
+			return errors.New("note field name is not a string")
+		}
+		if name != "files" {
+			var skipped json.RawMessage
+			if err := decoder.Decode(&skipped); err != nil {
+				return fmt.Errorf("decode note field %q: %w", name, err)
+			}
+			continue
+		}
+		token, err := decoder.Token()
+		if err != nil {
+			return fmt.Errorf("decode note files: %w", err)
+		}
+		if token != json.Delim('{') {
+			return errors.New("note files must be a JSON object")
+		}
+		for decoder.More() {
+			if _, err := decoder.Token(); err != nil {
+				return fmt.Errorf("decode note file name: %w", err)
+			}
+			count++
+			if count > limit {
+				return fmt.Errorf("note has more than %d files", limit)
+			}
+			var skipped json.RawMessage
+			if err := decoder.Decode(&skipped); err != nil {
+				return fmt.Errorf("decode note file: %w", err)
+			}
+		}
+		if _, err := decoder.Token(); err != nil {
+			return fmt.Errorf("decode note files end: %w", err)
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return fmt.Errorf("decode note end: %w", err)
+	}
+	return nil
+}
+
 func validateNote(note model.Note) error {
 	paths := make([]string, 0, len(note.Files))
 	for path := range note.Files {
@@ -72,8 +152,12 @@ func validateNote(note model.Note) error {
 	sort.Strings(paths)
 	for _, path := range paths {
 		file := note.Files[path]
-		if path == "" {
-			return errors.New("note file path is empty")
+		normalized, err := gitcmd.NormalizePath(path)
+		if err != nil {
+			return fmt.Errorf("note file path %q is invalid: %w", path, err)
+		}
+		if normalized != path {
+			return fmt.Errorf("note file path %q is not normalized", path)
 		}
 		if !model.ValidObjectID(file.Blob) {
 			return fmt.Errorf("note file %q has invalid blob", path)

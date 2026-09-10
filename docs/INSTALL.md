@@ -25,6 +25,15 @@ The plugin still installs a local executable. Git `post-commit` hooks must work
 when no AI agent session is running, so a plugin-only in-process runtime cannot
 provide complete attribution.
 
+Git hook installation also adds a managed `pre-push` hook. It publishes
+`refs/notes/byline` to the same remote before each ordinary push. Attribution
+notes contain repository paths, line ranges, agent and model names, session
+identifiers, timestamps, and blob IDs. To keep notes local:
+
+```sh
+git-byline install-hooks --agent none --git --project --local-notes
+```
+
 ## Linux and macOS
 
 Fast install:
@@ -118,10 +127,14 @@ needed. Repositories containing PromptScript-generated native hooks need only:
 git-byline install-hooks --agent none --git --project
 ```
 
+Add `--local-notes` when attribution metadata must not leave the repository.
+
 ## Security
 
 The short one-liners execute a mutable script from the protected `main`
 branch. Use the reviewed-script or checksum-first method when that trust model
 is not acceptable. Installers never use `sudo`, never disable TLS checks, and
 never execute a downloaded git-byline binary before its archive checksum is
-verified.
+verified. When run inside a Git worktree, installers enable automatic
+attribution-note sharing unless `--no-git-hook` is used and hooks are later
+installed with `--local-notes`.

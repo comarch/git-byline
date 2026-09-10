@@ -12,11 +12,12 @@
     storage: "internal/store and internal/lock own local durability"
     engine: "internal/engine is pure attribution transformation"
     notes: "internal/notes and internal/provenance own Git attribution notes"
-    hooks: "internal/preset and internal/hooks own agent integration"
+    dashboard: "internal/dashboard renders self-contained local HTML without network access"
+    hooks: "internal/preset and internal/hooks own agent integration, annotation, and default Git note sharing"
     validation: "tools/validate is the complete local gate"
     automation: ".github/workflows owns CI, security, and release automation"
     generated: "Native instructions, agents, workflows, and hooks for nine supported hook surfaces are compiled from .promptscript"
-    installation: "Factory users run /git-byline-setup from the marketplace plugin; other users install a checksum-verified release before starting an agent"
+    installation: "Factory users run /git-byline-setup from the marketplace plugin; other users install a checksum-verified release; Git hooks share attribution notes by default unless --local-notes is set"
   }
 
   """
@@ -27,7 +28,10 @@
   snapshot blobs. Worktree-local state and a retention ref protect pending
   provenance. After commit, `annotate` replays snapshots, validates complete
   line coverage, writes canonical JSON to `refs/notes/byline`, advances state,
-  and compacts retention.
+  and compacts retention. `dashboard` renders validated blame and status data
+  into one self-contained local HTML file without external resources. The
+  managed `pre-push` hook publishes attribution notes through Git by default;
+  `--local-notes` removes that sharing hook.
 
   ## Data locations
 
@@ -39,7 +43,7 @@
 
   ## Public commands
 
-  - `checkpoint`, `annotate`, `blame`, `status`
+  - `checkpoint`, `annotate`, `blame`, `status`, `dashboard`
   - `install-hooks`, `uninstall`
   - `version`, `help`
   """

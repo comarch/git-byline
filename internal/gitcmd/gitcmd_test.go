@@ -35,6 +35,12 @@ func TestRepositoryOperations(t *testing.T) {
 	if head, err := repo.Head(); err != nil || head != first {
 		t.Fatalf("Head() = %q, %v, want %q", head, err, first)
 	}
+	if path, err := repo.GitPath("hooks"); err != nil || !filepath.IsAbs(path) {
+		t.Fatalf("GitPath(hooks) = %q, %v", path, err)
+	}
+	if _, err := repo.GitPath(""); err == nil {
+		t.Fatal("GitPath accepted empty name")
+	}
 	if parent, err := repo.Parent(first); err != nil || parent != "" {
 		t.Fatalf("Parent(root) = %q, %v", parent, err)
 	}
@@ -47,6 +53,12 @@ func TestRepositoryOperations(t *testing.T) {
 	}
 	if data, err := repo.ReadBlob(blob); err != nil || string(data) != "one\n" {
 		t.Fatalf("ReadBlob() = %q, %v", data, err)
+	}
+	if size, err := repo.BlobSize(blob); err != nil || size != 4 {
+		t.Fatalf("BlobSize() = %d, %v", size, err)
+	}
+	if _, err := repo.BlobSize("bad"); err == nil {
+		t.Fatal("BlobSize accepted invalid object ID")
 	}
 	if _, exists, err := repo.BlobID(first, "missing"); err != nil || exists {
 		t.Fatalf("BlobID(missing) exists = %t, error = %v", exists, err)
@@ -127,7 +139,7 @@ func TestWorktreePathSafety(t *testing.T) {
 	if _, err := repo.NormalizeWorktreePath(filepath.Join(root, "file.go")); err != nil {
 		t.Fatalf("NormalizeWorktreePath absolute: %v", err)
 	}
-	for _, path := range []string{"", "../outside", ".git/config", ".GIT/config", "/outside"} {
+	for _, path := range []string{"", "../outside", ".git/config", ".GIT/config", "/outside", "bad\npath", "bad\x1bpath"} {
 		if _, err := repo.NormalizeWorktreePath(path); err == nil {
 			t.Fatalf("NormalizeWorktreePath accepted %q", path)
 		}
