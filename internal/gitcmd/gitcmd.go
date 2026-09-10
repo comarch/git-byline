@@ -462,13 +462,19 @@ func (repo *Repo) WriteNote(commit string, data []byte) error {
 	}
 	defer os.Remove(path)
 	_, err = repo.run("write attribution note", nil, "notes", "--ref=refs/notes/byline", "add", "-F", path, commit)
-	if err != nil {
-		var commandErr *CommandError
-		// The subprocess environment strips GIT_* variables, so the note
-		// writer identity can only come from Git configuration.
-		if errors.As(err, &commandErr) && isMissingIdentity(commandErr.Stderr) {
-			return fmt.Errorf("%w; set user.name and user.email with git config", err)
-		}
+	return noteWriteError(err)
+}
+
+// noteWriteError annotates note write failures caused by a missing Git
+// committer identity. The subprocess environment strips GIT_* variables, so
+// the note writer identity can only come from Git configuration.
+func noteWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var commandErr *CommandError
+	if errors.As(err, &commandErr) && isMissingIdentity(commandErr.Stderr) {
+		return fmt.Errorf("%w; set user.name and user.email with git config", err)
 	}
 	return err
 }

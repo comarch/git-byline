@@ -215,6 +215,36 @@ func TestDiscoverAndConfigErrors(t *testing.T) {
 	}
 }
 
+func TestNoteWriteError(t *testing.T) {
+	t.Parallel()
+	identity := &CommandError{
+		Operation: "write attribution note",
+		ExitCode:  128,
+		Stderr:    "Author identity unknown\n\n*** Please tell me who you are.",
+	}
+	other := &CommandError{
+		Operation: "write attribution note",
+		ExitCode:  128,
+		Stderr:    "fatal: bad object HEAD",
+	}
+	plain := errors.New("disk full")
+	if err := noteWriteError(nil); err != nil {
+		t.Fatalf("noteWriteError(nil) = %v", err)
+	}
+	wrapped := noteWriteError(identity)
+	if wrapped == identity || !strings.Contains(wrapped.Error(), "set user.name and user.email with git config") {
+		t.Fatalf("noteWriteError(identity) = %v", wrapped)
+	}
+	if !errors.Is(wrapped, identity) {
+		t.Fatalf("noteWriteError(identity) unwraps to %v", wrapped)
+	}
+	if err := noteWriteError(other); err != other {
+		t.Fatalf("noteWriteError(other) = %v", err)
+	}
+	if err := noteWriteError(plain); err != plain {
+		t.Fatalf("noteWriteError(plain) = %v", err)
+	}
+}
 func TestIsMissingIdentity(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
