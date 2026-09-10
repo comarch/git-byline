@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -158,6 +159,29 @@ func TestDashboardRefusesExistingOutput(t *testing.T) {
 	code, _, _, err = appRun(root, time.Time{}, nil, "dashboard", "--output", "-")
 	if code != ExitFailure || err == nil {
 		t.Fatalf("dashboard stdout output = %d, %v", code, err)
+	}
+}
+
+func TestDashboardTempOutputRemainsReserved(t *testing.T) {
+	t.Parallel()
+	file, path, err := createDashboardOutput(&Env{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+	other, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if other != nil {
+		_ = other.Close()
+	}
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("second create error = %v, want file exists", err)
+	}
+	if err := writeDashboard(file, path, []byte("report")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "report" {
+		t.Fatalf("dashboard data = %q, %v", data, err)
 	}
 }
 

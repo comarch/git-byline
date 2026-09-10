@@ -180,6 +180,12 @@ func TestRenderValidation(t *testing.T) {
 		{"status mismatch", func(value *Report) { value.Status.Head = "deadbeef" }},
 		{"too many lines", func(value *Report) {
 			value.Files[0].Lines = make([]provenance.BlameLine, maxLines+1)
+			for index := range value.Files[0].Lines {
+				value.Files[0].Lines[index] = provenance.BlameLine{
+					Number:      index + 1,
+					Attribution: model.Attribution{Author: model.AuthorHuman},
+				}
+			}
 		}},
 		{"too much source", func(value *Report) {
 			value.Files[0].Lines[0].Content = strings.Repeat("x", maxSourceBytes+1)

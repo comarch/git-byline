@@ -33,7 +33,7 @@ and Gemini CLI adapters.
 | --- | --- |
 | Faster code review | Reviewers can locate agent-edited ranges instead of treating a mixed commit as one opaque change. |
 | Local provenance evidence | Versioned line ranges, agent, model, session, and timestamp metadata live in Git objects and notes. |
-| Private repository support | No code, prompt, or transcript is sent to a separate service. Note metadata follows the selected Git remote unless `--local-notes` is used. |
+| Private repository support | No code, prompt, or transcript is sent to a separate service. Note metadata follows the selected Git remote unless automatic sharing is disabled with `--local-notes`. |
 | Honest unknowns | Legacy and ambiguous provenance becomes `untracked`, never a confident guess. |
 | Automation | Text for people and versioned JSON for local tools and policy checks. |
 
@@ -291,7 +291,7 @@ Fetch notes explicitly in another clone:
 git fetch origin refs/notes/byline:refs/notes/byline
 ```
 
-Keep notes local by reinstalling Git hooks with:
+Disable automatic note sharing by reinstalling Git hooks with:
 
 ```sh
 git byline install-hooks --agent none --git --local-notes

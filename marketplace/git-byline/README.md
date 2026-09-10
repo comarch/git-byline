@@ -35,8 +35,8 @@ git byline status
 The plugin setup installs a local runtime because Git hooks must keep working
 outside an active Factory session. No daemon, account, telemetry, or cloud
 storage is added. Git hook installation publishes attribution notes on
-ordinary pushes by default. Use `--local-notes` when those notes must remain
-local.
+ordinary pushes by default. Use `--local-notes` to disable automatic note
+sharing. Users can still push the notes ref explicitly.
 
 See the [product overview](https://github.com/comarch/git-byline),
 [installation guide](https://github.com/comarch/git-byline/blob/main/docs/INSTALL.md),

@@ -20,8 +20,9 @@ flowchart LR
 ```
 
 Checkpoint and replay state is isolated per linked worktree. Attribution notes
-are shared by commit inside the common repository. Normal Git push and fetch
-do not transfer either worktree state or notes.
+are shared by commit inside the common repository. Normal Git never transfers
+worktree state. Push and fetch do not transfer notes unless a managed hook or
+explicit refspec publishes them.
 
 ## Boundaries
 

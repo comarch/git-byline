@@ -197,28 +197,20 @@ func validateCheckpoint(record model.Checkpoint) error {
 
 // AppendCheckpoint durably appends one record.
 func (store Store) AppendCheckpoint(record model.Checkpoint) error {
-	if err := validateCheckpoint(record); err != nil {
-		return fmt.Errorf("validate checkpoint: %w", err)
+	records, warnings, err := store.ReadCheckpoints()
+	if err != nil {
+		return err
+	}
+	data, err := store.checkCheckpointAppend(record, len(records)+len(warnings))
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(store.Dir, 0o700); err != nil {
 		return fmt.Errorf("create store directory: %w", err)
 	}
-	data, err := json.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("encode checkpoint: %w", err)
-	}
-	data = append(data, '\n')
-	prefix, err := repairCheckpointTail(store.CheckpointPath())
+	_, _, _, err = inspectCheckpointTail(store.CheckpointPath(), true)
 	if err != nil {
 		return err
-	}
-	data = append(prefix, data...)
-	if info, err := os.Stat(store.CheckpointPath()); err == nil {
-		if info.Size()+int64(len(data)) > maxCheckpointBytes {
-			return fmt.Errorf("checkpoint log would exceed %d bytes", maxCheckpointBytes)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat checkpoint log: %w", err)
 	}
 	file, err := os.OpenFile(store.CheckpointPath(), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
@@ -242,31 +234,74 @@ func (store Store) AppendCheckpoint(record model.Checkpoint) error {
 	return nil
 }
 
-func repairCheckpointTail(path string) ([]byte, error) {
-	file, err := os.OpenFile(path, os.O_RDWR, 0)
+// CheckCheckpointAppend validates an append without changing the log.
+// existingRecords includes decoded and warned lines from ReadCheckpoints.
+func (store Store) CheckCheckpointAppend(record model.Checkpoint, existingRecords int) error {
+	_, err := store.checkCheckpointAppend(record, existingRecords)
+	return err
+}
+
+func (store Store) checkCheckpointAppend(record model.Checkpoint, existingRecords int) ([]byte, error) {
+	if err := validateCheckpoint(record); err != nil {
+		return nil, fmt.Errorf("validate checkpoint: %w", err)
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return nil, fmt.Errorf("encode checkpoint: %w", err)
+	}
+	if len(data) > maxRecordBytes {
+		return nil, fmt.Errorf("checkpoint record exceeds %d bytes", maxRecordBytes)
+	}
+	data = append(data, '\n')
+	if existingRecords < 0 {
+		return nil, errors.New("checkpoint record count is negative")
+	}
+	prefix, keptSize, droppedRecord, err := inspectCheckpointTail(store.CheckpointPath(), false)
+	if err != nil {
+		return nil, err
+	}
+	if droppedRecord && existingRecords > 0 {
+		existingRecords--
+	}
+	if existingRecords >= maxCheckpointRecords {
+		return nil, fmt.Errorf("checkpoint log would exceed %d records", maxCheckpointRecords)
+	}
+	data = append(prefix, data...)
+	if keptSize+int64(len(data)) > maxCheckpointBytes {
+		return nil, fmt.Errorf("checkpoint log would exceed %d bytes", maxCheckpointBytes)
+	}
+	return data, nil
+}
+
+func inspectCheckpointTail(path string, repair bool) ([]byte, int64, bool, error) {
+	flag := os.O_RDONLY
+	if repair {
+		flag = os.O_RDWR
+	}
+	file, err := os.OpenFile(path, flag, 0)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, 0, false, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read checkpoint tail: %w", err)
+		return nil, 0, false, fmt.Errorf("read checkpoint tail: %w", err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("stat checkpoint log: %w", err)
+		return nil, 0, false, fmt.Errorf("stat checkpoint log: %w", err)
 	}
 	if info.Size() > maxCheckpointBytes {
-		return nil, fmt.Errorf("checkpoint log exceeds %d bytes", maxCheckpointBytes)
+		return nil, 0, false, fmt.Errorf("checkpoint log exceeds %d bytes", maxCheckpointBytes)
 	}
 	if info.Size() == 0 {
-		return nil, nil
+		return nil, 0, false, nil
 	}
 	last := []byte{0}
 	if _, err := file.ReadAt(last, info.Size()-1); err != nil {
-		return nil, fmt.Errorf("read checkpoint tail byte: %w", err)
+		return nil, 0, false, fmt.Errorf("read checkpoint tail byte: %w", err)
 	}
 	if last[0] == '\n' {
-		return nil, nil
+		return nil, info.Size(), false, nil
 	}
 	readSize := info.Size()
 	if readSize > maxRecordBytes+1 {
@@ -274,36 +309,38 @@ func repairCheckpointTail(path string) ([]byte, error) {
 	}
 	data := make([]byte, int(readSize))
 	if _, err := file.ReadAt(data, info.Size()-readSize); err != nil {
-		return nil, fmt.Errorf("read checkpoint tail: %w", err)
+		return nil, 0, false, fmt.Errorf("read checkpoint tail: %w", err)
 	}
 	lastNewline := bytes.LastIndexByte(data, '\n')
 	if lastNewline < 0 && info.Size() > readSize {
-		return nil, fmt.Errorf("checkpoint tail exceeds %d bytes", maxRecordBytes)
+		return nil, 0, false, fmt.Errorf("checkpoint tail exceeds %d bytes", maxRecordBytes)
 	}
 	start := info.Size() - readSize + int64(lastNewline+1)
 	tail := data[lastNewline+1:]
 	if len(tail) > maxRecordBytes {
-		return nil, fmt.Errorf("checkpoint tail exceeds %d bytes", maxRecordBytes)
+		return nil, 0, false, fmt.Errorf("checkpoint tail exceeds %d bytes", maxRecordBytes)
 	}
 	var header struct {
 		Version int `json:"version"`
 	}
 	if err := json.Unmarshal(tail, &header); err != nil {
-		if err := file.Truncate(start); err != nil {
-			return nil, fmt.Errorf("truncate checkpoint tail: %w", err)
+		if repair {
+			if err := file.Truncate(start); err != nil {
+				return nil, 0, false, fmt.Errorf("truncate checkpoint tail: %w", err)
+			}
 		}
-		return nil, nil
+		return nil, start, true, nil
 	}
 	if header.Version == model.CheckpointVersion {
 		var record model.Checkpoint
 		if err := decodeStrict(tail, &record); err != nil {
-			return nil, fmt.Errorf("decode checkpoint tail: %w", err)
+			return nil, 0, false, fmt.Errorf("decode checkpoint tail: %w", err)
 		}
 		if err := validateCheckpoint(record); err != nil {
-			return nil, fmt.Errorf("validate checkpoint tail: %w", err)
+			return nil, 0, false, fmt.Errorf("validate checkpoint tail: %w", err)
 		}
 	}
-	return []byte{'\n'}, nil
+	return []byte{'\n'}, info.Size(), false, nil
 }
 
 // ReadState reads state or returns a new empty state.
@@ -360,17 +397,10 @@ func readBoundedFile(path string, limit int64) ([]byte, error) {
 
 // WriteState atomically replaces state.
 func (store Store) WriteState(state model.State) error {
-	if state.Pending.Files == nil {
-		state.Pending.Files = map[string]model.PendingFile{}
-	}
-	if err := validateState(state); err != nil {
-		return fmt.Errorf("validate state: %w", err)
-	}
-	data, err := json.Marshal(state)
+	data, err := encodeState(state)
 	if err != nil {
-		return fmt.Errorf("encode state: %w", err)
+		return err
 	}
-	data = append(data, '\n')
 	if err := os.MkdirAll(store.Dir, 0o700); err != nil {
 		return fmt.Errorf("create store directory: %w", err)
 	}
@@ -399,6 +429,30 @@ func (store Store) WriteState(state model.State) error {
 		return fmt.Errorf("replace state: %w", err)
 	}
 	return nil
+}
+
+// CheckStateWrite validates a state write without changing the state file.
+func (store Store) CheckStateWrite(state model.State) error {
+	_, err := encodeState(state)
+	return err
+}
+
+func encodeState(state model.State) ([]byte, error) {
+	if state.Pending.Files == nil {
+		state.Pending.Files = map[string]model.PendingFile{}
+	}
+	if err := validateState(state); err != nil {
+		return nil, fmt.Errorf("validate state: %w", err)
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		return nil, fmt.Errorf("encode state: %w", err)
+	}
+	data = append(data, '\n')
+	if len(data) > maxStateBytes {
+		return nil, fmt.Errorf("state exceeds %d bytes", maxStateBytes)
+	}
+	return data, nil
 }
 
 func validateState(state model.State) error {

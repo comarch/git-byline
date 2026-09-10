@@ -100,6 +100,16 @@ func TestAppendRepairsTruncatedCheckpointTail(t *testing.T) {
 	if err := os.WriteFile(value.CheckpointPath(), []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	prefix, keptSize, dropped, err := inspectCheckpointTail(value.CheckpointPath(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prefix) != 0 || keptSize != int64(len(mustJSON(validCheckpoint(1)))+1) || !dropped {
+		t.Fatalf("tail plan = %q, %d, %t", prefix, keptSize, dropped)
+	}
+	if current, err := os.ReadFile(value.CheckpointPath()); err != nil || string(current) != data {
+		t.Fatalf("tail inspection changed log to %q, %v", current, err)
+	}
 	if err := value.AppendCheckpoint(validCheckpoint(2)); err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +191,42 @@ func TestCheckpointAndStateReadLimits(t *testing.T) {
 	}
 }
 
+func TestCheckpointAndStateWriteLimits(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	if err := os.MkdirAll(value.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const truncated = `{"version":1`
+	if err := os.WriteFile(value.CheckpointPath(), []byte(truncated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := validCheckpoint(1)
+	checkpoint.Files[0].Path = strings.Repeat("x", maxRecordBytes)
+	if err := value.AppendCheckpoint(checkpoint); err == nil {
+		t.Fatal("AppendCheckpoint accepted oversized record")
+	}
+	if data, err := os.ReadFile(value.CheckpointPath()); err != nil || string(data) != truncated {
+		t.Fatalf("checkpoint changed to %q, %v", data, err)
+	}
+
+	state := model.NewState()
+	if err := value.WriteState(state); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(value.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Pending.Files[strings.Repeat("x", maxStateBytes)] = model.PendingFile{Blob: "abcd1234"}
+	if err := value.WriteState(state); err == nil {
+		t.Fatal("WriteState accepted oversized state")
+	}
+	if data, err := os.ReadFile(value.StatePath()); err != nil || !bytes.Equal(data, original) {
+		t.Fatalf("state changed after oversized write: %v", err)
+	}
+}
+
 func TestCheckpointRecordCountLimit(t *testing.T) {
 	t.Parallel()
 	value := New(t.TempDir())
@@ -188,8 +234,18 @@ func TestCheckpointRecordCountLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := []byte(`{"version":9}` + "\n")
-	data := bytes.Repeat(record, maxCheckpointRecords+1)
+	data := bytes.Repeat(record, maxCheckpointRecords)
 	if err := os.WriteFile(value.CheckpointPath(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := value.AppendCheckpoint(validCheckpoint(1)); err == nil {
+		t.Fatal("AppendCheckpoint accepted excessive record count")
+	}
+	got, err := os.ReadFile(value.CheckpointPath())
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("checkpoint log changed after rejected append: %v", err)
+	}
+	if err := os.WriteFile(value.CheckpointPath(), append(data, record...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := value.ReadCheckpoints(); err == nil {

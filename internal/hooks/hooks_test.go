@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,6 +227,37 @@ func TestUninstallPreservesCustomHooksInManagedEntry(t *testing.T) {
 	}
 }
 
+func TestUninstallPreservesManagedEntryMetadata(t *testing.T) {
+	t.Parallel()
+	root := hookRepo(t)
+	path := filepath.Join(root, ".factory", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"]
+	config := map[string]any{
+		"PreToolUse": []any{map[string]any{
+			"matcher":      spec.matcher,
+			"commandRegex": "^edit",
+			"hooks":        []any{map[string]any{"type": "command", "command": spec.command}},
+		}},
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Uninstall(root, Options{Agent: "droid"}); err != nil {
+		t.Fatal(err)
+	}
+	entry := readObject(t, path)["PreToolUse"].([]any)[0].(map[string]any)
+	if entry["commandRegex"] != "^edit" || len(entry["hooks"].([]any)) != 0 {
+		t.Fatalf("matcher metadata changed: %+v", entry)
+	}
+}
+
 func TestUninstallPreservesDifferentMatcher(t *testing.T) {
 	t.Parallel()
 	root := hookRepo(t)
@@ -253,7 +285,23 @@ func TestUninstallPreservesDifferentMatcher(t *testing.T) {
 	}
 }
 
-func TestInstallDroidNestedSchema(t *testing.T) {
+func TestInstallDroidUsesRootSchema(t *testing.T) {
+	t.Parallel()
+	root := hookRepo(t)
+	path := filepath.Join(root, ".factory", "hooks.json")
+	if _, err := Install(root, Options{Agent: "droid"}); err != nil {
+		t.Fatal(err)
+	}
+	config := readObject(t, path)
+	if _, nested := config["hooks"]; nested {
+		t.Fatalf("Droid hooks unexpectedly nested: %+v", config)
+	}
+	if len(config["PreToolUse"].([]any)) != 1 || len(config["PostToolUse"].([]any)) != 1 {
+		t.Fatalf("root Droid hooks missing: %+v", config)
+	}
+}
+
+func TestInstallDroidPreservesNestedValues(t *testing.T) {
 	t.Parallel()
 	root := hookRepo(t)
 	path := filepath.Join(root, ".factory", "hooks.json")
@@ -267,12 +315,45 @@ func TestInstallDroidNestedSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := readObject(t, path)
-	if _, rootEvent := config["PreToolUse"]; rootEvent {
-		t.Fatalf("Droid event written at root: %+v", config)
+	if len(config["PreToolUse"].([]any)) != 1 || len(config["PostToolUse"].([]any)) != 1 {
+		t.Fatalf("root Droid hooks missing: %+v", config)
 	}
 	nested, ok := config["hooks"].(map[string]any)
-	if !ok || nested["custom"] != true || len(nested["PreToolUse"].([]any)) != 1 {
-		t.Fatalf("nested Droid hooks missing: %+v", config)
+	if !ok || nested["custom"] != true || len(nested) != 1 {
+		t.Fatalf("nested values changed: %+v", config)
+	}
+}
+
+func TestUninstallRemovesLegacyNestedDroidHooks(t *testing.T) {
+	t.Parallel()
+	root := hookRepo(t)
+	path := filepath.Join(root, ".factory", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"]
+	config := map[string]any{
+		"hooks": map[string]any{
+			"custom": true,
+			"PreToolUse": []any{map[string]any{
+				"matcher": spec.matcher,
+				"hooks":   []any{map[string]any{"type": "command", "command": spec.command}},
+			}},
+		},
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Uninstall(root, Options{Agent: "droid"}); err != nil {
+		t.Fatal(err)
+	}
+	nested := readObject(t, path)["hooks"].(map[string]any)
+	if nested["custom"] != true || len(nested) != 1 {
+		t.Fatalf("legacy nested hooks not cleaned: %+v", nested)
 	}
 }
 
@@ -392,6 +473,7 @@ func TestSingleExecutableCommandRecognition(t *testing.T) {
 	}{
 		{`'/path with space/git-byline'` + signature, true},
 		{`"C:\Program Files\git-byline.exe"` + signature, true},
+		{`'/path/audit-wrapper'` + signature, true},
 		{`audit-wrapper && '/path/git-byline'` + signature, false},
 		{`'/path/git-byline'; echo unsafe` + signature, false},
 	}
@@ -399,6 +481,19 @@ func TestSingleExecutableCommandRecognition(t *testing.T) {
 		if got := commandHasSingleExecutable(test.command, signature); got != test.want {
 			t.Errorf("commandHasSingleExecutable(%q) = %t, want %t", test.command, got, test.want)
 		}
+	}
+}
+
+func TestManagedAgentCommandRequiresMarkerOrBinary(t *testing.T) {
+	t.Parallel()
+	spec := agentSpecs("droid", "/old/git-byline")["PostToolUse"]
+	signature := spec.command[strings.Index(spec.command, " checkpoint "):]
+	legacy := strings.Replace(signature, " --managed-by git-byline", "", 1)
+	if managedAgentCommand(`'/path/audit-wrapper'`+legacy, spec) {
+		t.Fatal("managedAgentCommand accepted unmarked custom executable")
+	}
+	if !managedAgentCommand(`'/path/audit-wrapper'`+signature, spec) {
+		t.Fatal("managedAgentCommand rejected explicit ownership marker")
 	}
 }
 
@@ -439,11 +534,30 @@ func TestHookFailuresAndGitOnly(t *testing.T) {
 	if _, err := Uninstall(root, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
+	for _, path := range []string{hook, pushHook} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("uninstalled hook %s still exists: %v", path, err)
+		}
+	}
 	if err := os.WriteFile(hook, []byte("#!/bin/sh\n"+blockStart+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Install(root, Options{Agent: "none", Git: true}); err == nil {
 		t.Fatal("Install accepted incomplete managed block")
+	}
+	for _, content := range []string{
+		"#!/bin/sh\n" + blockStart + "\necho custom\n" + blockEnd + "\n",
+		"#!/bin/sh\n" + blockEnd + "\n" + blockStart + "\n",
+	} {
+		if err := os.WriteFile(hook, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Install(root, Options{Agent: "none", Git: true}); err == nil {
+			t.Fatalf("Install accepted unrecognized managed block %q", content)
+		}
+		if got := string(mustRead(t, hook)); got != content {
+			t.Fatalf("unrecognized managed block changed to %q", got)
+		}
 	}
 
 	configPath := filepath.Join(root, ".factory", "hooks.json")
@@ -483,12 +597,8 @@ func TestLocalNotesOptOut(t *testing.T) {
 	if result, err := Install(root, local); err != nil || len(result.Changed) != 1 {
 		t.Fatalf("Install(local) = %+v, %v", result, err)
 	}
-	data, err := os.ReadFile(prePush)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), blockStart) {
-		t.Fatalf("local notes left managed pre-push hook: %q", data)
+	if _, err := os.Stat(prePush); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("local notes left pre-push hook: %v", err)
 	}
 	if result, err := Install(root, local); err != nil || len(result.Changed) != 0 {
 		t.Fatalf("second Install(local) = %+v, %v", result, err)
@@ -502,7 +612,7 @@ func TestInstallUpdatesManagedGitHook(t *testing.T) {
 	t.Parallel()
 	root := hookRepo(t)
 	path := filepath.Join(root, ".git", "hooks", "pre-push")
-	stale := "#!/bin/sh\nexit 0\n\n" + blockStart + "\necho stale\n" + blockEnd + "\n"
+	stale := "#!/bin/sh\nexit 0\n\n" + blockStart + "\n" + notesPushCommand() + "\n" + blockEnd + "\n"
 	if err := os.WriteFile(path, []byte(stale), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -517,8 +627,7 @@ func TestInstallUpdatesManagedGitHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "echo stale") ||
-		!strings.HasPrefix(string(data), "#!/bin/sh\n"+blockStart) ||
+	if !strings.HasPrefix(string(data), "#!/bin/sh\n"+blockStart) ||
 		!strings.Contains(string(data), notesPushCommand()) ||
 		!strings.Contains(string(data), "exit 0") {
 		t.Fatalf("updated hook = %q", data)
@@ -542,6 +651,23 @@ func TestGitHookSafetyAndLinkedWorktree(t *testing.T) {
 		}
 		if got := string(mustRead(t, path)); got != original {
 			t.Fatalf("non-shell hook changed to %q", got)
+		}
+	})
+	t.Run("pre-existing shell stub", func(t *testing.T) {
+		root := hookRepo(t)
+		path := filepath.Join(root, ".git", "hooks", "post-commit")
+		original := "#!/bin/sh\n"
+		if err := os.WriteFile(path, []byte(original), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Uninstall(root, Options{Agent: "none", Git: true}); err != nil {
+			t.Fatal(err)
+		}
+		if got := string(mustRead(t, path)); got != original {
+			t.Fatalf("pre-existing hook changed to %q", got)
 		}
 	})
 	t.Run("unmanaged non-shell uninstall", func(t *testing.T) {

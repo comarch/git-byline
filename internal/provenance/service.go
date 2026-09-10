@@ -52,10 +52,11 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 	}
 	defer held.Release()
 
-	records, warnings, err := dataStore.ReadCheckpoints()
+	records, logWarnings, err := dataStore.ReadCheckpoints()
 	if err != nil {
 		return CaptureResult{}, err
 	}
+	warnings := append([]string(nil), logWarnings...)
 	state, err := dataStore.ReadState()
 	if err != nil {
 		return CaptureResult{}, err
@@ -104,6 +105,9 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 		record.Agent = event.Agent
 		record.Model = event.Model
 		record.Session = event.Session
+	}
+	if err := dataStore.CheckCheckpointAppend(record, len(records)+len(logWarnings)); err != nil {
+		return CaptureResult{}, err
 	}
 	retained := retainedBlobs(records, state, record)
 	if err := repo.ProtectBlobs(retained); err != nil {
@@ -331,16 +335,20 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	if err != nil {
 		return AnnotateResult{}, err
 	}
+	nextState := state
+	nextState.LastAnnotatedCommit = head
+	nextState.LastCheckpointSeq = lastSeq
+	nextState.Pending = model.PendingState{BaseCommit: head, Files: nextPending}
+	if err := dataStore.CheckStateWrite(nextState); err != nil {
+		return AnnotateResult{}, err
+	}
 	if err := repo.WriteNote(head, data); err != nil {
 		return AnnotateResult{}, err
 	}
-	state.LastAnnotatedCommit = head
-	state.LastCheckpointSeq = lastSeq
-	state.Pending = model.PendingState{BaseCommit: head, Files: nextPending}
-	if err := dataStore.WriteState(state); err != nil {
+	if err := dataStore.WriteState(nextState); err != nil {
 		return AnnotateResult{}, err
 	}
-	if err := repo.ProtectBlobs(pendingBlobs(state)); err != nil {
+	if err := repo.ProtectBlobs(pendingBlobs(nextState)); err != nil {
 		return AnnotateResult{}, fmt.Errorf("compact retained snapshots: %w", err)
 	}
 	return AnnotateResult{
@@ -556,12 +564,13 @@ func BlameHead(repo *gitcmd.Repo) (BlameCollection, error) {
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	if err := preflightBlameFiles(repo, head, paths, note); err != nil {
+	blobs, err := preflightBlameFiles(repo, head, paths, note)
+	if err != nil {
 		return BlameCollection{}, err
 	}
 	result := BlameCollection{Commit: head}
-	for _, path := range paths {
-		file, err := blameNotedFile(repo, head, path, note.Files[path])
+	for index, path := range paths {
+		file, err := blameNotedFile(repo, head, path, blobs[index], note.Files[path])
 		if err != nil {
 			return BlameCollection{}, fmt.Errorf("blame %q: %w", path, err)
 		}
@@ -584,10 +593,11 @@ func BlameHeadFile(repo *gitcmd.Repo, path string) (BlameResult, error) {
 	if !found {
 		return BlameResult{}, fmt.Errorf("file %q is not attributed on HEAD", path)
 	}
-	if err := preflightBlameFiles(repo, head, []string{path}, note); err != nil {
+	blobs, err := preflightBlameFiles(repo, head, []string{path}, note)
+	if err != nil {
 		return BlameResult{}, err
 	}
-	result, err := blameNotedFile(repo, head, path, file)
+	result, err := blameNotedFile(repo, head, path, blobs[0], file)
 	if err != nil {
 		return BlameResult{}, fmt.Errorf("blame %q: %w", path, err)
 	}
@@ -616,28 +626,30 @@ func headNote(repo *gitcmd.Repo) (string, model.Note, error) {
 	return head, note, nil
 }
 
-func preflightBlameFiles(repo *gitcmd.Repo, head string, paths []string, note model.Note) error {
+func preflightBlameFiles(repo *gitcmd.Repo, head string, paths []string, note model.Note) ([]string, error) {
 	totalLines := 0
 	var totalBytes int64
+	blobs := make([]string, 0, len(paths))
 	for _, path := range paths {
 		file := note.Files[path]
 		blob, exists, err := repo.BlobID(head, path)
 		if err != nil {
-			return fmt.Errorf("inspect %q: %w", path, err)
+			return nil, fmt.Errorf("inspect %q: %w", path, err)
 		}
 		if !exists {
-			return fmt.Errorf("attributed path %q is missing from HEAD", path)
+			return nil, fmt.Errorf("attributed path %q is missing from HEAD", path)
 		}
 		if blob != file.Blob {
-			return fmt.Errorf("attribution blob for %q does not match HEAD", path)
+			return nil, fmt.Errorf("attribution blob for %q does not match HEAD", path)
 		}
+		blobs = append(blobs, blob)
 		size, err := repo.BlobSize(blob)
 		if err != nil {
-			return fmt.Errorf("inspect %q: %w", path, err)
+			return nil, fmt.Errorf("inspect %q: %w", path, err)
 		}
 		totalBytes += size
 		if totalBytes > maxBlameCollectionBytes {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"HEAD attribution content exceeds %d bytes",
 				maxBlameCollectionBytes,
 			)
@@ -646,32 +658,22 @@ func preflightBlameFiles(repo *gitcmd.Repo, head string, paths []string, note mo
 			totalLines += file.Ranges[len(file.Ranges)-1].End
 		}
 		if totalLines > maxBlameCollectionLines {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"HEAD attribution has more than %d lines",
 				maxBlameCollectionLines,
 			)
 		}
 	}
-	return nil
+	return blobs, nil
 }
 
-func blameNotedFile(repo *gitcmd.Repo, head, path string, file model.NoteFile) (BlameResult, error) {
+func blameNotedFile(repo *gitcmd.Repo, head, path, blob string, file model.NoteFile) (BlameResult, error) {
 	normalized, err := repo.NormalizeWorktreePath(path)
 	if err != nil {
 		return BlameResult{}, err
 	}
 	if normalized != path {
 		return BlameResult{}, fmt.Errorf("attribution path %q is not normalized", path)
-	}
-	blob, exists, err := repo.BlobID(head, path)
-	if err != nil {
-		return BlameResult{}, err
-	}
-	if !exists {
-		return BlameResult{}, errors.New("attributed path is missing from HEAD")
-	}
-	if blob != file.Blob {
-		return BlameResult{}, errors.New("attribution blob does not match HEAD")
 	}
 	content, err := repo.ReadBlob(blob)
 	if err != nil {

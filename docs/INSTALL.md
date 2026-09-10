@@ -28,7 +28,7 @@ provide complete attribution.
 Git hook installation also adds a managed `pre-push` hook. It publishes
 `refs/notes/byline` to the same remote before each ordinary push. Attribution
 notes contain repository paths, line ranges, agent and model names, session
-identifiers, timestamps, and blob IDs. To keep notes local:
+identifiers, timestamps, and blob IDs. To disable automatic note sharing:
 
 ```sh
 git-byline install-hooks --agent none --git --project --local-notes
@@ -127,7 +127,8 @@ needed. Repositories containing PromptScript-generated native hooks need only:
 git-byline install-hooks --agent none --git --project
 ```
 
-Add `--local-notes` when attribution metadata must not leave the repository.
+Add `--local-notes` to disable managed pre-push publication. Users can still
+push `refs/notes/byline` explicitly.
 
 ## Security
 

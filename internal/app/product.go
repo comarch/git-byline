@@ -111,59 +111,54 @@ func runDashboard(env *Env, command *command, args []string) (int, error) {
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
-	path, err := dashboardOutputPath(env, *outputPath)
+	file, path, err := createDashboardOutput(env, *outputPath)
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
-	if err := writeNewDashboard(path, data); err != nil {
+	if err := writeDashboard(file, path, data); err != nil {
 		return operationalError(env, command.name, err)
 	}
 	fmt.Fprintln(env.Stdout, path)
 	return ExitSuccess, nil
 }
 
-func dashboardOutputPath(env *Env, requested string) (string, error) {
+func createDashboardOutput(env *Env, requested string) (*os.File, string, error) {
 	if requested == "" {
 		file, err := os.CreateTemp("", "git-byline-dashboard-*.html")
 		if err != nil {
-			return "", fmt.Errorf("create dashboard temp file: %w", err)
+			return nil, "", fmt.Errorf("create dashboard temp file: %w", err)
 		}
-		path := file.Name()
-		if err := file.Close(); err != nil {
-			_ = os.Remove(path)
-			return "", fmt.Errorf("close dashboard temp file: %w", err)
-		}
-		if err := os.Remove(path); err != nil {
-			return "", fmt.Errorf("prepare dashboard temp file: %w", err)
-		}
-		return path, nil
+		return file, file.Name(), nil
 	}
 	if requested == "-" {
-		return "", errors.New("dashboard output must be a file")
+		return nil, "", errors.New("dashboard output must be a file")
 	}
 	if strings.ContainsRune(requested, 0) {
-		return "", errors.New("dashboard output path contains NUL")
+		return nil, "", errors.New("dashboard output path contains NUL")
 	}
 	for _, char := range requested {
 		if unicode.IsControl(char) {
-			return "", errors.New("dashboard output path contains a control character")
+			return nil, "", errors.New("dashboard output path contains a control character")
 		}
 	}
+	var path string
 	if filepath.IsAbs(requested) {
-		return filepath.Clean(requested), nil
+		path = filepath.Clean(requested)
+	} else {
+		dir, err := env.workingDir()
+		if err != nil {
+			return nil, "", err
+		}
+		path = filepath.Join(dir, filepath.Clean(requested))
 	}
-	dir, err := env.workingDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, filepath.Clean(requested)), nil
-}
-
-func writeNewDashboard(path string, data []byte) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return fmt.Errorf("create dashboard %s: %w", path, err)
+		return nil, "", fmt.Errorf("create dashboard %s: %w", path, err)
 	}
+	return file, path, nil
+}
+
+func writeDashboard(file *os.File, path string, data []byte) error {
 	success := false
 	defer func() {
 		_ = file.Close()
@@ -340,7 +335,7 @@ func parseHookOptions(command *command, args []string) (hooks.Options, error) {
 	flags.SetOutput(new(strings.Builder))
 	agent := flags.String("agent", "all", "droid, claude, all, or none")
 	gitHook := flags.Bool("git", false, "manage Git attribution hooks")
-	localNotes := flags.Bool("local-notes", false, "keep attribution notes local")
+	localNotes := flags.Bool("local-notes", false, "disable automatic attribution note sharing")
 	user := flags.Bool("user", false, "use user agent configuration")
 	project := flags.Bool("project", false, "use project agent configuration")
 	if err := flags.Parse(args); err != nil {
