@@ -158,6 +158,26 @@ func TestScanSkipFileSymlink(t *testing.T) {
 	}
 }
 
+// TestScanRepoSkipsWorktreePointer proves a linked-worktree .git pointer
+// file is not scanned: its gitdir content carries an absolute private path
+// that is VCS metadata, not project source.
+func TestScanRepoSkipsWorktreePointer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	pointer := filepath.Join(root, ".git")
+	content := "gitdir: " + filepath.ToSlash(root) + "/../repo/.git/worktrees/S1\n"
+	if err := os.WriteFile(pointer, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := scanRepo(root)
+	if err != nil {
+		t.Fatalf("scanRepo: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Errorf("scanRepo(worktree pointer) = %v, want no findings", findings)
+	}
+}
+
 // TestScanRepoFindsPlantedFindings walks the fixture tree directly (so the
 // skip rules do not apply) and verifies the planted findings are really
 // detectable.

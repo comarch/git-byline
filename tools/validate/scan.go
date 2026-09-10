@@ -170,6 +170,12 @@ var agentConfigDirs = []string{
 
 // scanSkipFile reports whether the file at rel is not scanned.
 func scanSkipFile(rel string, info fs.FileInfo) bool {
+	rel = path.Clean(strings.ReplaceAll(filepath.ToSlash(rel), `\`, "/"))
+	// A .git regular file is a linked-worktree pointer: VCS metadata,
+	// never project source.
+	if rel == ".git" {
+		return true
+	}
 	if !info.Mode().IsRegular() {
 		return true
 	}
