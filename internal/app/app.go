@@ -88,6 +88,20 @@ func commands() []*command {
 			run: runDashboard,
 		},
 		{
+			name:  "export",
+			short: "export attribution to an interop format",
+			usage: "Usage: git-byline export --format gitai|agent-trace [--commit REV] [--output FILE]\n\n" +
+				"Export the selected commit's attribution without replacing output files.",
+			run: runExport,
+		},
+		{
+			name:  "import",
+			short: "import Git AI attribution notes",
+			usage: "Usage: git-byline import --format gitai [--range REV-RANGE] [--dry-run]\n\n" +
+				"Import Git AI notes without replacing different byline notes.",
+			run: runImport,
+		},
+		{
 			name:  "install-hooks",
 			short: "install agent and Git hooks",
 			usage: "Usage: git-byline install-hooks [--agent droid|claude|all|none] [--git] [--local-notes] [--user|--project]\n\n" +
