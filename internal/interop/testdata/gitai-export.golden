@@ -1,0 +1,8 @@
+a.go
+  s_58b12a0f30f017::t_661df9ba1b7b4e 1
+  h_6e3b111ed570c7 2
+z.go
+  h_6e3b111ed570c7 1
+  s_58b12a0f30f017::t_661df9ba1b7b4e 2
+---
+{"schema_version":"authorship/3.0.0","base_commit_sha":"c05c0f64344d2623364cc3e5ab272f02c56f7536","prompts":{},"sessions":{"s_58b12a0f30f017":{"agent_id":{"tool":"cursor","id":"conversation","model":"model"}}},"humans":{"h_6e3b111ed570c7":{"author":"git-byline"}}}

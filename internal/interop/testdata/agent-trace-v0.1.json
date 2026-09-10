@@ -1,0 +1,31 @@
+{
+  "version": "0.1.0",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": "2026-01-23T14:30:00Z",
+  "vcs": {
+    "type": "git",
+    "revision": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "tool": {
+    "name": "git-byline"
+  },
+  "files": [
+    {
+      "path": "src/example.go",
+      "conversations": [
+        {
+          "contributor": {
+            "type": "ai",
+            "model_id": "anthropic/claude-opus"
+          },
+          "ranges": [
+            {
+              "start_line": 1,
+              "end_line": 2
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

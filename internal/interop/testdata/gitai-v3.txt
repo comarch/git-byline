@@ -1,0 +1,36 @@
+src/example.go
+  s_0123456789abcd::t_abcdef01234567 1-2
+  h_89abcdef012345 4
+  0123456789abcdef 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "0123456789abcdef0123456789abcdef01234567",
+  "prompts": {
+    "0123456789abcdef": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "conversation-legacy",
+        "model": "anthropic/claude-sonnet"
+      },
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_0123456789abcd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "conversation-session",
+        "model": "anthropic/claude-opus"
+      }
+    }
+  },
+  "humans": {
+    "h_89abcdef012345": {
+      "author": "Developer <developer@example.invalid>"
+    }
+  }
+}
