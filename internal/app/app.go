@@ -69,7 +69,7 @@ func commands() []*command {
 			name:  "blame",
 			short: "show line-level attribution",
 			usage: "Usage: git-byline blame [--json] <file>\n\n" +
-				"Show human, AI, or untracked attribution for every line at HEAD.",
+				"Show human, AI, human-override, or untracked attribution for every line at HEAD.",
 			run: runBlame,
 		},
 		{

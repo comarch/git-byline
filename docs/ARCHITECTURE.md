@@ -97,7 +97,7 @@ Properties:
 Path: worktree-specific Git directory plus `byline/state.json`.
 
 ```json
-{"version":1,"last_annotated_commit":"def456","last_checkpoint_seq":42,"notes_version":1,"pending":{"base_commit":"def456","files":{}}}
+{"version":1,"last_annotated_commit":"def456","last_checkpoint_seq":42,"notes_version":2,"pending":{"base_commit":"def456","files":{}}}
 ```
 
 State uses a temporary file, file sync, and atomic rename. It advances only
@@ -112,7 +112,7 @@ Ref: `refs/notes/byline`.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "files": {
     "src/example.go": {
       "blob": "abc123",
@@ -127,8 +127,29 @@ Ref: `refs/notes/byline`.
           "session": "session-1",
           "ts": "2026-01-02T03:04:05Z"
         },
-        {"start": 8, "end": 11, "author": "untracked"}
+        {
+          "start": 8,
+          "end": 9,
+          "author": "human-override",
+          "agent": "droid",
+          "model": "model-name",
+          "session": "session-1",
+          "ts": "2026-01-02T03:04:05Z"
+        },
+        {"start": 10, "end": 11, "author": "untracked"}
       ]
+    }
+  },
+  "sessions": {
+    "session-1": {
+      "agent": "droid",
+      "model": "model-name",
+      "first_ts": "2026-01-02T03:04:05Z",
+      "last_ts": "2026-01-02T03:04:05Z",
+      "added": 4,
+      "deleted": 1,
+      "accepted": 3,
+      "overridden": 1
     }
   }
 }
@@ -136,7 +157,11 @@ Ref: `refs/notes/byline`.
 
 Ranges are inclusive and one-based. Every line has exactly one range. Map keys
 and fields serialize deterministically with a trailing newline. Encoders and
-decoders reject notes above 500 files or 16 MiB.
+decoders reject notes above 500 files or 16 MiB. Readers accept note versions 1
+and 2. Writers emit version 2. Version 2 adds the per-session metrics map;
+version 1 notes have no session map.
+Sessions whose output does not survive the commit remain listed with zero
+counters.
 
 Readers accept only supported note versions. Unknown versions, missing notes,
 and blob mismatches produce warnings and `untracked` output instead of guessed
@@ -144,11 +169,21 @@ attribution.
 
 ## Attribution
 
-Line splitting retains `LF`, `CRLF`, and absent final terminators. Equal lines
-keep existing attribution. Inserted or replaced lines receive the transition
-author. Content entering the committed blob after the final checkpoint
-defaults to `human`.
+Line splitting retains `LF`, `CRLF`, and absent final terminators. Exact equal
+lines keep existing attribution. Between two exact matched anchors,
+the second matching layer pairs only still-unmatched lines whose keys are equal
+after leading and trailing whitespace is removed. It preserves order and makes
+formatter-only indentation changes carry attribution. It does not tokenize,
+use similarity, or compare semantics. Matching stops outside matched anchors
+and after whitespace-only equality. Anything beyond that stays untracked or
+uses the documented transition fallback only for lines introduced by a
+transition; the matcher never guesses.
 
+Inserted or replaced lines receive the transition author. When an AI snapshot
+is followed by a human snapshot, an unmatched human line in a gap containing
+lines from the most recent AI transition becomes `human-override` and carries
+that AI transition's agent, model, session, and timestamp. Content entering the
+committed blob after the final checkpoint defaults to `human`.
 The engine uses deterministic longest-common-subsequence alignment for normal
 files. A bounded greedy alignment prevents quadratic memory use on large line
 sets. Duplicate lines use stable positional tie-breaking.

@@ -272,7 +272,8 @@ func runBlame(env *Env, command *command, args []string) (int, error) {
 	writeWarnings(env, result.Warnings)
 	for _, line := range result.Lines {
 		source := string(line.Attribution.Author)
-		if line.Attribution.Author == model.AuthorAI {
+		if line.Attribution.Author == model.AuthorAI ||
+			line.Attribution.Author == model.AuthorHumanOverride {
 			source += ":" + line.Attribution.Agent
 			if line.Attribution.Model != "" {
 				source += "/" + line.Attribution.Model

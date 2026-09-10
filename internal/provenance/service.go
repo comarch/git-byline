@@ -40,6 +40,9 @@ type CaptureResult struct {
 
 // Capture records one normalized agent event.
 func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResult, error) {
+	if event.Type != model.AuthorHuman && event.Type != model.AuthorAI {
+		return CaptureResult{}, fmt.Errorf("unsupported event author %q", event.Type)
+	}
 	kind := event.Kind
 	if kind == "" {
 		kind = model.CheckpointKindEdit
@@ -333,6 +336,8 @@ type AnnotateResult struct {
 	Warnings []string
 }
 
+type sessionMetrics map[string]*model.NoteSession
+
 // Annotate writes deterministic attribution for HEAD.
 func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	dataStore := store.New(repo.GitDir)
@@ -404,7 +409,11 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	allRecords = append(allRecords, active...)
 	allRecords = append(allRecords, carry...)
 	paths := collectPaths(allRecords, state, changedByPath)
-	note := model.Note{Version: model.NoteVersion, Files: map[string]model.NoteFile{}}
+	note := model.Note{
+		Version: model.NoteVersion,
+		Files:   map[string]model.NoteFile{},
+	}
+	sessions := sessionMetrics{}
 	nextPending := map[string]model.PendingFile{}
 	mergeFallback := model.Attribution{Author: model.AuthorHuman}
 	if len(parents) > 1 {
@@ -435,10 +444,11 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 		if err != nil {
 			return AnnotateResult{}, fmt.Errorf("replay %s: %w", path, err)
 		}
-		replayed, err := engine.Replay(initial, transitions)
+		replayed, transitionStats, err := engine.ReplayWithStats(initial, transitions)
 		if err != nil {
 			return AnnotateResult{}, fmt.Errorf("replay %s: %w", path, err)
 		}
+		addTransitionSessionMetrics(sessions, transitionStats)
 
 		committed := replayed
 		if changed {
@@ -469,6 +479,7 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 						return AnnotateResult{}, err
 					}
 					note.Files[path] = model.NoteFile{Blob: blob, Ranges: ranges}
+					addCommittedSessionMetrics(sessions, committed)
 				}
 			}
 		}
@@ -514,6 +525,7 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 		nextPending[normalized] = model.PendingFile{Blob: oid, Ranges: ranges}
 	}
 
+	note.Sessions = materializeSessionMetrics(sessions)
 	data, err := notes.Encode(note)
 	if err != nil {
 		return AnnotateResult{}, err
@@ -641,6 +653,9 @@ func initialSnapshot(repo *gitcmd.Repo, state model.State, parent, path string) 
 func transitionsFor(repo *gitcmd.Repo, records []model.Checkpoint, sourcePath, targetPath string) ([]engine.Transition, error) {
 	var transitions []engine.Transition
 	for _, record := range records {
+		if record.Type != model.AuthorHuman && record.Type != model.AuthorAI {
+			return nil, fmt.Errorf("checkpoint %d has unsupported author %q", record.Seq, record.Type)
+		}
 		var selected *model.Snapshot
 		for _, file := range record.Files {
 			if file.Path == targetPath {
@@ -674,6 +689,76 @@ func transitionsFor(repo *gitcmd.Repo, records []model.Checkpoint, sourcePath, t
 		transitions = append(transitions, engine.Transition{Content: content, Attribution: attr})
 	}
 	return transitions, nil
+}
+
+func addTransitionSessionMetrics(sessions sessionMetrics, stats []engine.TransitionStats) {
+	for _, value := range stats {
+		if value.Attribution.Author != model.AuthorAI || value.Attribution.Session == "" {
+			continue
+		}
+		session := ensureSession(sessions, value.Attribution)
+		session.Added += value.Added
+		session.Deleted += value.Deleted
+	}
+}
+
+func addCommittedSessionMetrics(sessions sessionMetrics, snapshot engine.Snapshot) {
+	for _, attribution := range snapshot.Attributions {
+		if attribution.Session == "" {
+			continue
+		}
+		switch attribution.Author {
+		case model.AuthorAI:
+			ensureSession(sessions, attribution).Accepted++
+		case model.AuthorHumanOverride:
+			ensureSession(sessions, attribution).Overridden++
+		}
+	}
+}
+
+func ensureSession(sessions sessionMetrics, attribution model.Attribution) *model.NoteSession {
+	session := sessions[attribution.Session]
+	if session == nil {
+		session = &model.NoteSession{}
+	}
+	if session.Agent == "" {
+		session.Agent = attribution.Agent
+	}
+	if session.Model == "" {
+		session.Model = attribution.Model
+	}
+	if attribution.TS != "" {
+		if session.FirstTS == "" || timestampBefore(attribution.TS, session.FirstTS) {
+			session.FirstTS = attribution.TS
+		}
+		if session.LastTS == "" || timestampBefore(session.LastTS, attribution.TS) {
+			session.LastTS = attribution.TS
+		}
+	}
+	sessions[attribution.Session] = session
+	return session
+}
+
+func timestampBefore(left, right string) bool {
+	leftTime, leftErr := time.Parse(time.RFC3339Nano, left)
+	rightTime, rightErr := time.Parse(time.RFC3339Nano, right)
+	if leftErr != nil || rightErr != nil {
+		return left < right
+	}
+	return leftTime.Before(rightTime)
+}
+
+func materializeSessionMetrics(sessions sessionMetrics) map[string]model.NoteSession {
+	result := make(map[string]model.NoteSession, len(sessions))
+	for key, value := range sessions {
+		session := *value
+		if session.Accepted == 0 && session.Overridden == 0 {
+			session.Added = 0
+			session.Deleted = 0
+		}
+		result[key] = session
+	}
+	return result
 }
 
 func snapshotsEqual(left, right engine.Snapshot) bool {

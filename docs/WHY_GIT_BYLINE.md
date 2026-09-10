@@ -9,7 +9,8 @@ git-byline closes that gap with a deliberately small product boundary:
 
 - observe supported agent edits through local hooks;
 - attach complete line ranges to commits through Git notes;
-- show `human`, `ai:<agent>/<model>`, or `untracked` for every text line;
+- show `human`, `ai:<agent>/<model>`, `human-override:<agent>/<model>`, or
+  `untracked` for every text line;
 - keep source snapshots local and share Git note metadata with normal pushes
   after Git hooks are installed;
 - store no prompts, transcripts, raw hook payloads, or environment dumps.
@@ -83,6 +84,15 @@ git-byline records the transition when an edit happens:
 
 No content-based classifier is involved.
 
+Exact lines retain attribution. Between two already matched exact anchors,
+git-byline also pairs still-unmatched lines when their leading and trailing
+whitespace-stripped keys are equal. This second layer handles formatter-only
+indentation changes while preserving order. It stops outside those anchors.
+There is no tokenization, similarity threshold, or semantic comparison.
+Anything beyond whitespace-only equality between matched anchors remains
+untracked. An explicit transition fallback applies only to lines introduced by
+that transition. The matcher does not guess.
+
 ## Honest trade-offs
 
 git-byline stays narrow by design:
@@ -96,8 +106,10 @@ git-byline stays narrow by design:
 
 `human` means no supported agent checkpoint claimed the final transition.
 `ai` means a supported hook observed an agent edit. `untracked` means evidence
-was missing or ambiguous. These are provenance states, not legal conclusions
-or cryptographic identity proofs.
+was missing or ambiguous. `human-override` means a human snapshot replaced
+lines from the most recent AI transition, so it carries that AI agent, model,
+session, and timestamp metadata. These are provenance states, not legal
+conclusions or cryptographic identity proofs.
 
 ## Good fit
 

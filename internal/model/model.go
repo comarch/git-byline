@@ -16,7 +16,7 @@ const (
 	// StateVersion is the supported state file format.
 	StateVersion = 1
 	// NoteVersion is the supported git note format.
-	NoteVersion = 1
+	NoteVersion = 2
 	// MaxTextLines bounds attribution memory for one file.
 	MaxTextLines = 1_000_000
 
@@ -32,9 +32,10 @@ const (
 type Author string
 
 const (
-	AuthorHuman     Author = "human"
-	AuthorAI        Author = "ai"
-	AuthorUntracked Author = "untracked"
+	AuthorHuman         Author = "human"
+	AuthorAI            Author = "ai"
+	AuthorUntracked     Author = "untracked"
+	AuthorHumanOverride Author = "human-override"
 )
 
 // Attribution records line authorship and optional agent metadata.
@@ -102,10 +103,23 @@ type NoteFile struct {
 	Ranges []Range `json:"ranges"`
 }
 
+// NoteSession stores session-level attribution metrics for one note.
+type NoteSession struct {
+	Agent      string `json:"agent"`
+	Model      string `json:"model"`
+	FirstTS    string `json:"first_ts"`
+	LastTS     string `json:"last_ts"`
+	Added      int    `json:"added"`
+	Deleted    int    `json:"deleted"`
+	Accepted   int    `json:"accepted"`
+	Overridden int    `json:"overridden"`
+}
+
 // Note is the versioned value stored in refs/notes/byline.
 type Note struct {
-	Version int                 `json:"version"`
-	Files   map[string]NoteFile `json:"files"`
+	Version  int                    `json:"version"`
+	Files    map[string]NoteFile    `json:"files"`
+	Sessions map[string]NoteSession `json:"sessions"`
 }
 
 var objectIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{4,128}$`)
@@ -124,39 +138,44 @@ func ValidateAttribution(value Attribution) error {
 		if value.Agent != "" || value.Model != "" || value.Session != "" || value.TS != "" {
 			return fmt.Errorf("%s attribution contains agent metadata", value.Author)
 		}
-	case AuthorAI:
+	case AuthorAI, AuthorHumanOverride:
 		if value.Agent == "" {
-			return errors.New("ai attribution requires agent")
+			return fmt.Errorf("%s attribution requires agent", value.Author)
 		}
-		for _, field := range []struct {
-			name  string
-			value string
-		}{
-			{"agent", value.Agent},
-			{"model", value.Model},
-			{"session", value.Session},
-			{"timestamp", value.TS},
-		} {
-			name, metadata := field.name, field.value
-			if len(metadata) > maxAttributionValueBytes {
-				return fmt.Errorf("ai attribution %s exceeds %d bytes", name, maxAttributionValueBytes)
-			}
-			if !utf8.ValidString(metadata) {
-				return fmt.Errorf("ai attribution %s is not valid UTF-8", name)
-			}
-			for _, char := range metadata {
-				if unicode.IsControl(char) {
-					return fmt.Errorf("ai attribution %s contains a control character", name)
-				}
-			}
-		}
-		if value.TS != "" {
-			if _, err := time.Parse(time.RFC3339Nano, value.TS); err != nil {
-				return fmt.Errorf("ai attribution timestamp is not RFC3339: %w", err)
-			}
-		}
+		return validateAgentMetadata(value)
 	default:
 		return fmt.Errorf("unknown author %q", value.Author)
+	}
+	return nil
+}
+
+func validateAgentMetadata(value Attribution) error {
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{"agent", value.Agent},
+		{"model", value.Model},
+		{"session", value.Session},
+		{"timestamp", value.TS},
+	} {
+		name, metadata := field.name, field.value
+		if len(metadata) > maxAttributionValueBytes {
+			return fmt.Errorf("%s attribution %s exceeds %d bytes", value.Author, name, maxAttributionValueBytes)
+		}
+		if !utf8.ValidString(metadata) {
+			return fmt.Errorf("%s attribution %s is not valid UTF-8", value.Author, name)
+		}
+		for _, char := range metadata {
+			if unicode.IsControl(char) {
+				return fmt.Errorf("%s attribution %s contains a control character", value.Author, name)
+			}
+		}
+	}
+	if value.TS != "" {
+		if _, err := time.Parse(time.RFC3339Nano, value.TS); err != nil {
+			return fmt.Errorf("%s attribution timestamp is not RFC3339: %w", value.Author, err)
+		}
 	}
 	return nil
 }

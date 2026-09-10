@@ -12,11 +12,16 @@ func TestValidateAttribution(t *testing.T) {
 		{"human", Attribution{Author: AuthorHuman}, true},
 		{"untracked", Attribution{Author: AuthorUntracked}, true},
 		{"ai", Attribution{Author: AuthorAI, Agent: "droid"}, true},
+		{"human override", Attribution{Author: AuthorHumanOverride, Agent: "droid"}, true},
 		{"ai missing agent", Attribution{Author: AuthorAI}, false},
+		{"human override missing agent", Attribution{Author: AuthorHumanOverride}, false},
 		{"ai control character", Attribution{Author: AuthorAI, Agent: "droid\nother"}, false},
 		{"ai oversized model", Attribution{Author: AuthorAI, Agent: "droid", Model: string(make([]byte, maxAttributionValueBytes+1))}, false},
 		{"ai invalid timestamp", Attribution{Author: AuthorAI, Agent: "droid", TS: "invalid"}, false},
 		{"human metadata", Attribution{Author: AuthorHuman, Agent: "droid"}, false},
+		{"human override timestamp", Attribution{
+			Author: AuthorHumanOverride, Agent: "droid", TS: "2026-01-02T03:04:05Z",
+		}, true},
 		{"unknown", Attribution{Author: "other"}, false},
 	}
 	for _, test := range tests {
@@ -43,6 +48,7 @@ func TestCheckpointKinds(t *testing.T) {
 func TestValidateRanges(t *testing.T) {
 	t.Parallel()
 	human := Attribution{Author: AuthorHuman}
+	override := Attribution{Author: AuthorHumanOverride, Agent: "droid", Model: "model"}
 	tests := []struct {
 		name      string
 		ranges    []Range
@@ -55,6 +61,7 @@ func TestValidateRanges(t *testing.T) {
 			{Start: 1, End: 1, Attribution: human},
 			{Start: 2, End: 2, Attribution: Attribution{Author: AuthorUntracked}},
 		}, 2, true},
+		{"human override", []Range{{Start: 1, End: 1, Attribution: override}}, 1, true},
 		{"range on empty", []Range{{Start: 1, End: 1, Attribution: human}}, 0, false},
 		{"missing", nil, 1, false},
 		{"gap", []Range{{Start: 2, End: 2, Attribution: human}}, 2, false},

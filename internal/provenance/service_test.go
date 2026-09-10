@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comarch/git-byline/internal/engine"
 	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/notes"
@@ -111,6 +112,104 @@ func TestEndToEndAttributionAndPartialCommit(t *testing.T) {
 	}
 	if result, err := Annotate(repo); err != nil || !result.Noop {
 		t.Fatalf("idempotent Annotate() = %+v, %v", result, err)
+	}
+}
+
+func TestAnnotateRecordsHumanOverrideSessionMetrics(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if _, err := Capture(repo, preset.Event{
+		Type: model.AuthorHuman, Paths: []string{"file.txt"},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "base\nagent\nkept\n")
+	if _, err := Capture(repo, preset.Event{
+		Type: model.AuthorAI, Agent: "droid", Model: "model",
+		Session: "session-1", Paths: []string{"file.txt"},
+	}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "base\nhuman\nkept\n")
+	if _, err := Capture(repo, preset.Event{
+		Type: model.AuthorHuman, Paths: []string{"file.txt"},
+	}, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	head := commit(t, root, "override")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	data, found, err := repo.ReadNote(head)
+	if err != nil || !found {
+		t.Fatalf("ReadNote() = %t, %v", found, err)
+	}
+	note, err := notes.Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranges := note.Files["file.txt"].Ranges
+	if len(ranges) != 3 || ranges[1].Author != model.AuthorHumanOverride ||
+		ranges[1].Agent != "droid" || ranges[1].Model != "model" ||
+		ranges[1].Session != "session-1" || ranges[2].Author != model.AuthorAI {
+		t.Fatalf("override ranges = %+v", ranges)
+	}
+	session := note.Sessions["session-1"]
+	if session.Agent != "droid" || session.Model != "model" ||
+		session.Added != 2 || session.Deleted != 0 ||
+		session.Accepted != 1 || session.Overridden != 1 ||
+		session.FirstTS != now.Add(time.Second).Format(time.RFC3339Nano) ||
+		session.LastTS != now.Add(time.Second).Format(time.RFC3339Nano) {
+		t.Fatalf("session metrics = %+v", session)
+	}
+}
+
+func TestSessionMetricTimestampsUseChronologicalBounds(t *testing.T) {
+	t.Parallel()
+	sessions := sessionMetrics{}
+	addTransitionSessionMetrics(sessions, []engine.TransitionStats{
+		{
+			Attribution: model.Attribution{
+				Author: model.AuthorAI, Agent: "droid", Model: "model",
+				Session: "session-1", TS: "2026-01-02T03:04:06Z",
+			},
+		},
+		{
+			Attribution: model.Attribution{
+				Author: model.AuthorAI, Agent: "droid", Model: "model",
+				Session: "session-1", TS: "2026-01-02T03:04:05Z",
+			},
+		},
+	})
+	got := materializeSessionMetrics(sessions)["session-1"]
+	if got.FirstTS != "2026-01-02T03:04:05Z" || got.LastTS != "2026-01-02T03:04:06Z" {
+		t.Fatalf("session timestamps = %+v", got)
+	}
+}
+
+func TestSessionWithoutSurvivingOutputUsesZeroCounters(t *testing.T) {
+	t.Parallel()
+	sessions := sessionMetrics{
+		"session-1": {
+			Agent: "droid", Model: "model",
+			FirstTS: "2026-01-02T03:04:05Z", LastTS: "2026-01-02T03:04:06Z",
+			Added: 3, Deleted: 2,
+		},
+	}
+	got := materializeSessionMetrics(sessions)["session-1"]
+	if got.Added != 0 || got.Deleted != 0 || got.Accepted != 0 || got.Overridden != 0 ||
+		got.Agent != "droid" || got.Model != "model" {
+		t.Fatalf("session counters = %+v", got)
 	}
 }
 
@@ -537,6 +636,21 @@ func TestCaptureSkipsUnsafePaths(t *testing.T) {
 	}
 	if result.Recorded != 0 || len(result.Warnings) != 2 {
 		t.Fatalf("Capture() = %+v", result)
+	}
+}
+
+func TestCaptureRejectsHumanOverrideEvents(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Capture(repo, preset.Event{
+		Type: model.AuthorHumanOverride, Agent: "droid", Paths: []string{"file.txt"},
+	}, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "unsupported event author") {
+		t.Fatalf("Capture() error = %v", err)
 	}
 }
 

@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
@@ -20,16 +23,7 @@ const (
 	MaxFiles = 500
 )
 
-type noteSession struct {
-	Agent      string `json:"agent"`
-	Model      string `json:"model"`
-	FirstTS    string `json:"first_ts"`
-	LastTS     string `json:"last_ts"`
-	Added      int    `json:"added"`
-	Deleted    int    `json:"deleted"`
-	Accepted   int    `json:"accepted"`
-	Overridden int    `json:"overridden"`
-}
+type noteSession = model.NoteSession
 
 // Encode returns canonical JSON with a trailing newline.
 func Encode(note model.Note) ([]byte, error) {
@@ -38,6 +32,9 @@ func Encode(note model.Note) ([]byte, error) {
 	}
 	if note.Files == nil {
 		note.Files = map[string]model.NoteFile{}
+	}
+	if note.Sessions == nil {
+		note.Sessions = map[string]model.NoteSession{}
 	}
 	if len(note.Files) > MaxFiles {
 		return nil, fmt.Errorf("note has more than %d files", MaxFiles)
@@ -108,6 +105,15 @@ func Decode(data []byte) (model.Note, error) {
 		}
 	}
 	note := model.Note{Version: wire.Version, Files: wire.Files}
+	if wire.Version == 2 {
+		note.Sessions = make(map[string]model.NoteSession, len(wire.Sessions))
+		for name, session := range wire.Sessions {
+			if err := validateSession(name, *session); err != nil {
+				return model.Note{}, err
+			}
+			note.Sessions[name] = *session
+		}
+	}
 	if note.Files == nil {
 		note.Files = map[string]model.NoteFile{}
 	}
@@ -179,6 +185,14 @@ func CheckFileCount(data []byte, limit int) error {
 }
 
 func validateNote(note model.Note) error {
+	if note.Version != 2 && len(note.Sessions) > 0 {
+		return errors.New("note sessions require version 2")
+	}
+	for name, session := range note.Sessions {
+		if err := validateSession(name, session); err != nil {
+			return err
+		}
+	}
 	paths := make([]string, 0, len(note.Files))
 	for path := range note.Files {
 		paths = append(paths, path)
@@ -202,6 +216,70 @@ func validateNote(note model.Note) error {
 		}
 		if err := model.ValidateRanges(file.Ranges, lineCount); err != nil {
 			return fmt.Errorf("note file %q: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func validateSession(name string, session model.NoteSession) error {
+	if name == "" {
+		return errors.New("note session name must not be empty")
+	}
+	if len(name) > 1024 || !utf8.ValidString(name) {
+		return fmt.Errorf("note session %q has invalid name", name)
+	}
+	for _, char := range name {
+		if unicode.IsControl(char) {
+			return fmt.Errorf("note session %q has invalid name", name)
+		}
+	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{"agent", session.Agent},
+		{"model", session.Model},
+		{"first_ts", session.FirstTS},
+		{"last_ts", session.LastTS},
+	} {
+		fieldName, value := field.name, field.value
+		if len(value) > 1024 {
+			return fmt.Errorf("note session %q %s exceeds 1024 bytes", name, fieldName)
+		}
+		if !utf8.ValidString(value) {
+			return fmt.Errorf("note session %q %s is not valid UTF-8", name, fieldName)
+		}
+		for _, char := range value {
+			if unicode.IsControl(char) {
+				return fmt.Errorf("note session %q %s contains a control character", name, fieldName)
+			}
+		}
+	}
+	for _, field := range []struct {
+		name  string
+		value int
+	}{
+		{"added", session.Added},
+		{"deleted", session.Deleted},
+		{"accepted", session.Accepted},
+		{"overridden", session.Overridden},
+	} {
+		if field.value < 0 {
+			return fmt.Errorf("note session %q %s is negative", name, field.name)
+		}
+	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{"first_ts", session.FirstTS},
+		{"last_ts", session.LastTS},
+	} {
+		if field.value == "" {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339Nano, field.value); err != nil {
+			return fmt.Errorf("note session %q %s is not RFC3339: %w", name, field.name, err)
 		}
 	}
 	return nil

@@ -82,6 +82,47 @@ func TestCollectAggregatesNotesWithoutBlobReads(t *testing.T) {
 	}
 }
 
+func TestCollectCountsHumanOverrideSeparately(t *testing.T) {
+	t.Parallel()
+	root := reportTestRepository(t)
+	writeReportFile(t, root, "file", "line\n")
+	head := reportCommit(t, root, "override")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReportNote(t, repo, head, model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file": {
+				Blob: "abcd1234",
+				Ranges: []model.Range{{
+					Start: 1, End: 1,
+					Attribution: model.Attribution{
+						Author: model.AuthorHumanOverride,
+						Agent:  "droid", Model: "model", Session: "session-1",
+					},
+				}},
+			},
+		},
+	})
+	got, err := Collect(repo, "", head, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Totals.Lines != 1 || got.Totals.Human != 0 ||
+		got.Totals.HumanOverride != 1 || got.Totals.AI != 0 {
+		t.Fatalf("totals = %+v", got.Totals)
+	}
+	if len(got.Agents) != 1 || got.Agents[0].Agent != "droid" ||
+		got.Agents[0].HumanOverride != 1 || got.Agents[0].Human != 0 {
+		t.Fatalf("agents = %+v", got.Agents)
+	}
+	if len(got.Sessions) != 1 || got.Sessions[0].HumanOverride != 1 {
+		t.Fatalf("sessions = %+v", got.Sessions)
+	}
+}
+
 func TestCollectRangeLimitIsActionable(t *testing.T) {
 	t.Parallel()
 	root := reportTestRepository(t)

@@ -19,8 +19,6 @@ const (
 
 const attributionNotesRef = "refs/notes/byline"
 
-const authorHumanOverride model.Author = "human-override"
-
 // Totals counts lines by attribution class.
 type Totals struct {
 	Human         int `json:"human"`
@@ -250,7 +248,7 @@ func addTotals(totals *Totals, attribution model.Attribution, count int) error {
 		category = &totals.AI
 	case model.AuthorUntracked:
 		category = &totals.Untracked
-	case authorHumanOverride:
+	case model.AuthorHumanOverride:
 		category = &totals.HumanOverride
 	default:
 		return fmt.Errorf("unsupported author %q", attribution.Author)
@@ -286,7 +284,7 @@ func addAgentTotals(
 	attribution model.Attribution,
 	count int,
 ) error {
-	if attribution.Author != model.AuthorAI && attribution.Author != authorHumanOverride {
+	if attribution.Author != model.AuthorAI && attribution.Author != model.AuthorHumanOverride {
 		return nil
 	}
 	agent := agents[attribution.Agent]

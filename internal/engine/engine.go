@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/comarch/git-byline/internal/model"
@@ -19,6 +20,13 @@ const (
 type Transition struct {
 	Content     []byte
 	Attribution model.Attribution
+}
+
+// TransitionStats reports line changes caused by one transition.
+type TransitionStats struct {
+	Attribution model.Attribution
+	Added       int
+	Deleted     int
 }
 
 // Snapshot is content split into lines with one attribution per line.
@@ -94,21 +102,44 @@ func UniformRanges(content []byte, attr model.Attribution) ([]model.Range, error
 
 // Replay applies observed transitions to an initial snapshot.
 func Replay(initial Snapshot, transitions []Transition) (Snapshot, error) {
+	current, _, err := ReplayWithStats(initial, transitions)
+	return current, err
+}
+
+// ReplayWithStats applies transitions and reports their line changes.
+func ReplayWithStats(initial Snapshot, transitions []Transition) (Snapshot, []TransitionStats, error) {
 	current := initial
 	if len(current.Lines) != len(current.Attributions) {
-		return Snapshot{}, errors.New("initial snapshot line and attribution counts differ")
+		return Snapshot{}, nil, errors.New("initial snapshot line and attribution counts differ")
 	}
+	var latestAI model.Attribution
+	hasLatestAI := false
+	stats := make([]TransitionStats, 0, len(transitions))
 	for i, transition := range transitions {
 		if err := model.ValidateAttribution(transition.Attribution); err != nil {
-			return Snapshot{}, fmt.Errorf("transition %d attribution: %w", i, err)
+			return Snapshot{}, nil, fmt.Errorf("transition %d attribution: %w", i, err)
 		}
 		nextLines, err := SplitLines(transition.Content)
 		if err != nil {
-			return Snapshot{}, fmt.Errorf("transition %d content: %w", i, err)
+			return Snapshot{}, nil, fmt.Errorf("transition %d content: %w", i, err)
 		}
-		current = projectLines(current, nextLines, transition.Attribution)
+		pairs := equalPairs(current.Lines, nextLines)
+		stats = append(stats, TransitionStats{
+			Attribution: transition.Attribution,
+			Added:       len(nextLines) - len(pairs),
+			Deleted:     len(current.Lines) - len(pairs),
+		})
+		var override model.Attribution
+		if transition.Attribution.Author == model.AuthorHuman && hasLatestAI {
+			override = latestAI
+		}
+		current = projectLinesWithOverrideAndPairs(current, nextLines, transition.Attribution, override, pairs)
+		if transition.Attribution.Author == model.AuthorAI {
+			latestAI = transition.Attribution
+			hasLatestAI = true
+		}
 	}
-	return current, nil
+	return current, stats, nil
 }
 
 // Project maps a replayed snapshot onto target content.
@@ -127,14 +158,90 @@ func Project(source Snapshot, target []byte, fallback model.Attribution) (Snapsh
 }
 
 func projectLines(source Snapshot, target []string, fallback model.Attribution) Snapshot {
+	return projectLinesWithOverride(source, target, fallback, model.Attribution{})
+}
+
+func projectLinesWithOverride(
+	source Snapshot,
+	target []string,
+	fallback model.Attribution,
+	override model.Attribution,
+) Snapshot {
+	pairs := equalPairs(source.Lines, target)
+	return projectLinesWithOverrideAndPairs(source, target, fallback, override, pairs)
+}
+
+func projectLinesWithOverrideAndPairs(
+	source Snapshot,
+	target []string,
+	fallback model.Attribution,
+	override model.Attribution,
+	pairs []linePair,
+) Snapshot {
 	attrs := make([]model.Attribution, len(target))
 	for i := range attrs {
 		attrs[i] = fallback
 	}
-	for _, pair := range equalPairs(source.Lines, target) {
+	for _, pair := range pairs {
 		attrs[pair.new] = source.Attributions[pair.old]
 	}
+	if override.Author == model.AuthorAI {
+		for _, gap := range unmatchedGaps(len(source.Lines), len(target), pairs) {
+			hasOverride := false
+			for oldIndex := gap.oldStart; oldIndex < gap.oldEnd; oldIndex++ {
+				if source.Attributions[oldIndex] == override {
+					hasOverride = true
+					break
+				}
+			}
+			if !hasOverride {
+				continue
+			}
+			for newIndex := gap.newStart; newIndex < gap.newEnd; newIndex++ {
+				attrs[newIndex] = model.Attribution{
+					Author:  model.AuthorHumanOverride,
+					Agent:   override.Agent,
+					Model:   override.Model,
+					Session: override.Session,
+					TS:      override.TS,
+				}
+			}
+		}
+	}
 	return Snapshot{Lines: target, Attributions: attrs}
+}
+
+type lineGap struct {
+	oldStart int
+	oldEnd   int
+	newStart int
+	newEnd   int
+}
+
+func unmatchedGaps(oldCount, newCount int, pairs []linePair) []lineGap {
+	gaps := make([]lineGap, 0, len(pairs)+1)
+	oldStart, newStart := 0, 0
+	for _, pair := range pairs {
+		if oldStart < pair.old || newStart < pair.new {
+			gaps = append(gaps, lineGap{
+				oldStart: oldStart,
+				oldEnd:   pair.old,
+				newStart: newStart,
+				newEnd:   pair.new,
+			})
+		}
+		oldStart = pair.old + 1
+		newStart = pair.new + 1
+	}
+	if oldStart < oldCount || newStart < newCount {
+		gaps = append(gaps, lineGap{
+			oldStart: oldStart,
+			oldEnd:   oldCount,
+			newStart: newStart,
+			newEnd:   newCount,
+		})
+	}
+	return gaps
 }
 
 // Ranges merges adjacent lines carrying identical attribution.
@@ -170,6 +277,24 @@ type linePair struct {
 }
 
 func equalPairs(oldLines, newLines []string) []linePair {
+	pairs := exactPairs(oldLines, newLines)
+	if len(pairs) < 2 {
+		return pairs
+	}
+	result := make([]linePair, 0, len(pairs))
+	previous := pairs[0]
+	result = append(result, previous)
+	for _, anchor := range pairs[1:] {
+		oldGap := oldLines[previous.old+1 : anchor.old]
+		newGap := newLines[previous.new+1 : anchor.new]
+		result = append(result, whitespacePairs(oldGap, newGap, previous.old+1, previous.new+1)...)
+		result = append(result, anchor)
+		previous = anchor
+	}
+	return result
+}
+
+func exactPairs(oldLines, newLines []string) []linePair {
 	prefix := 0
 	for prefix < len(oldLines) && prefix < len(newLines) && oldLines[prefix] == newLines[prefix] {
 		prefix++
@@ -200,6 +325,31 @@ func equalPairs(oldLines, newLines []string) []linePair {
 	suffix := len(oldLines) - oldEnd
 	for i := 0; i < suffix; i++ {
 		pairs = append(pairs, linePair{old: oldEnd + i, new: newEnd + i})
+	}
+	return pairs
+}
+
+func whitespacePairs(oldLines, newLines []string, oldOffset, newOffset int) []linePair {
+	if len(oldLines) == 0 || len(newLines) == 0 {
+		return nil
+	}
+	oldKeys := make([]string, len(oldLines))
+	newKeys := make([]string, len(newLines))
+	for i, line := range oldLines {
+		oldKeys[i] = strings.TrimSpace(line)
+	}
+	for i, line := range newLines {
+		newKeys[i] = strings.TrimSpace(line)
+	}
+	var pairs []linePair
+	if len(oldLines) <= maxLCSCells/len(newLines) {
+		pairs = lcsPairs(oldKeys, newKeys)
+	} else {
+		pairs = greedyPairs(oldKeys, newKeys)
+	}
+	for i := range pairs {
+		pairs[i].old += oldOffset
+		pairs[i].new += newOffset
 	}
 	return pairs
 }

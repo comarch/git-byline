@@ -88,6 +88,87 @@ func TestReplayAndProject(t *testing.T) {
 	}
 }
 
+func TestReplayMarksHumanReplacementAsOverride(t *testing.T) {
+	t.Parallel()
+	ai := model.Attribution{
+		Author:  model.AuthorAI,
+		Agent:   "droid",
+		Model:   "model",
+		Session: "session-1",
+		TS:      "2026-01-02T03:04:05Z",
+	}
+	replayed, err := Replay(Snapshot{}, []Transition{
+		{Content: []byte("agent line\nkept\n"), Attribution: ai},
+		{Content: []byte("human line\nkept\n"), Attribution: model.Attribution{Author: model.AuthorHuman}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []model.Attribution{
+		{
+			Author:  model.AuthorHumanOverride,
+			Agent:   ai.Agent,
+			Model:   ai.Model,
+			Session: ai.Session,
+			TS:      ai.TS,
+		},
+		ai,
+	}
+	if !reflect.DeepEqual(replayed.Attributions, want) {
+		t.Fatalf("Replay() attributions = %+v, want %+v", replayed.Attributions, want)
+	}
+	ranges, err := replayed.Ranges()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := model.ValidateRanges(ranges, len(replayed.Lines)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReplayWithStatsReportsTransitionLineChanges(t *testing.T) {
+	t.Parallel()
+	ai := model.Attribution{Author: model.AuthorAI, Agent: "droid"}
+	_, stats, err := ReplayWithStats(Snapshot{}, []Transition{
+		{Content: []byte("agent line\nkept\n"), Attribution: ai},
+		{Content: []byte("human line\nkept\n"), Attribution: model.Attribution{Author: model.AuthorHuman}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 2 || stats[0].Added != 2 || stats[0].Deleted != 0 ||
+		stats[1].Added != 1 || stats[1].Deleted != 1 {
+		t.Fatalf("ReplayWithStats() = %+v", stats)
+	}
+}
+
+func TestReplayDoesNotGuessHumanLinesOutsideAITransitionGap(t *testing.T) {
+	t.Parallel()
+	replayed, err := Replay(Snapshot{}, []Transition{
+		{
+			Content: []byte("agent line\n"),
+			Attribution: model.Attribution{
+				Author: model.AuthorAI, Agent: "droid",
+			},
+		},
+		{
+			Content:     []byte("human line\n"),
+			Attribution: model.Attribution{Author: model.AuthorHuman},
+		},
+		{
+			Content:     []byte("human line\nnew line\n"),
+			Attribution: model.Attribution{Author: model.AuthorHuman},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Attributions[0].Author != model.AuthorHumanOverride ||
+		replayed.Attributions[1].Author != model.AuthorHuman {
+		t.Fatalf("Replay() guessed attribution = %+v", replayed.Attributions)
+	}
+}
+
 func TestReplayErrors(t *testing.T) {
 	t.Parallel()
 	if _, err := Replay(Snapshot{Lines: []string{"a"}}, nil); err == nil {
@@ -116,6 +197,95 @@ func TestDuplicateLinesAreDeterministic(t *testing.T) {
 		if got := equalPairs(old, newLines); !reflect.DeepEqual(got, first) {
 			t.Fatalf("equalPairs run %d = %+v, want %+v", i, got, first)
 		}
+	}
+}
+
+func TestWhitespaceMatchingStaysBetweenExactAnchors(t *testing.T) {
+	t.Parallel()
+	oldLines := []string{
+		"package example\n",
+		"func value() {\n",
+		"\tfirst := 1\n",
+		"\tsecond := 2\n",
+		"}\n",
+	}
+	newLines := []string{
+		"package example\n",
+		"func value() {\n",
+		"  first := 1\n",
+		"  second := 2\n",
+		"}\n",
+	}
+	got := equalPairs(oldLines, newLines)
+	want := []linePair{
+		{old: 0, new: 0},
+		{old: 1, new: 1},
+		{old: 2, new: 2},
+		{old: 3, new: 3},
+		{old: 4, new: 4},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("equalPairs() = %+v, want %+v", got, want)
+	}
+}
+
+func TestWhitespaceMatchingDoesNotGuessReflow(t *testing.T) {
+	t.Parallel()
+	oldLines := []string{
+		"const value = {\n",
+		"  first: 1,\n",
+		"  second: 2,\n",
+		"};\n",
+	}
+	newLines := []string{
+		"const value = {\n",
+		"  first: 1, second: 2,\n",
+		"};\n",
+	}
+	got := equalPairs(oldLines, newLines)
+	want := []linePair{{old: 0, new: 0}, {old: 3, new: 2}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("equalPairs() = %+v, want %+v", got, want)
+	}
+}
+
+func TestLayeredMatchingGoldenContract(t *testing.T) {
+	t.Parallel()
+	source := Snapshot{
+		Lines: []string{
+			"start\n",
+			"\tfirst\n",
+			"\tsecond\n",
+			"end\n",
+		},
+		Attributions: []model.Attribution{
+			{Author: model.AuthorHuman},
+			{Author: model.AuthorAI, Agent: "droid", Model: "model"},
+			{Author: model.AuthorAI, Agent: "droid", Model: "model"},
+			{Author: model.AuthorHuman},
+		},
+	}
+	target := []byte("start\n  first\n  second\nnew\nend\n")
+	projected, err := Project(source, target, model.Attribution{Author: model.AuthorHuman})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []model.Attribution{
+		{Author: model.AuthorHuman},
+		{Author: model.AuthorAI, Agent: "droid", Model: "model"},
+		{Author: model.AuthorAI, Agent: "droid", Model: "model"},
+		{Author: model.AuthorHuman},
+		{Author: model.AuthorHuman},
+	}
+	if !reflect.DeepEqual(projected.Attributions, want) {
+		t.Fatalf("Project() attributions = %+v, want %+v", projected.Attributions, want)
+	}
+	ranges, err := projected.Ranges()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := model.ValidateRanges(ranges, len(projected.Lines)); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -190,6 +360,56 @@ func FuzzSplitLines(f *testing.F) {
 		}
 		if strings.Join(lines, "") != string(value) {
 			t.Fatalf("joined lines differ from input")
+		}
+	})
+}
+
+func FuzzLayeredMatcher(f *testing.F) {
+	for _, seed := range [][2]string{
+		{"a\n\tb\nc\n", "a\n  b\nc\n"},
+		{"start\none\ntwo\nend\n", "start\n  one\n  two\nend\n"},
+		{"one\ntwo\n", "one\ntwo\nthree\n"},
+	} {
+		f.Add(seed[0], seed[1])
+	}
+	f.Fuzz(func(t *testing.T, oldText, newText string) {
+		if len(oldText) > 64<<10 || len(newText) > 64<<10 {
+			return
+		}
+		oldLines, err := SplitLines([]byte(oldText))
+		if err != nil {
+			return
+		}
+		newLines, err := SplitLines([]byte(newText))
+		if err != nil {
+			return
+		}
+		first := equalPairs(oldLines, newLines)
+		for i := 0; i < 3; i++ {
+			if got := equalPairs(oldLines, newLines); !reflect.DeepEqual(got, first) {
+				t.Fatalf("equalPairs run %d = %+v, want %+v", i, got, first)
+			}
+		}
+		source := Snapshot{
+			Lines:        oldLines,
+			Attributions: make([]model.Attribution, len(oldLines)),
+		}
+		for i := range source.Attributions {
+			source.Attributions[i] = model.Attribution{Author: model.AuthorUntracked}
+		}
+		projected, err := Project(source, []byte(newText), model.Attribution{Author: model.AuthorHuman})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(projected.Lines) != len(projected.Attributions) {
+			t.Fatalf("line coverage length = %d/%d", len(projected.Lines), len(projected.Attributions))
+		}
+		ranges, err := projected.Ranges()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := model.ValidateRanges(ranges, len(projected.Lines)); err != nil {
+			t.Fatalf("ValidateRanges() = %v", err)
 		}
 	})
 }

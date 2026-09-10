@@ -78,6 +78,24 @@ Track native support in
 - Partial commits preserve excluded provenance for the next commit.
 - Renames preserve provenance through Git rename detection.
 
+## Attribution matching
+
+The matcher first pairs exact equal lines. A second layer runs only between
+already matched anchors and only on still-unmatched lines. It compares line
+keys after removing leading and trailing whitespace, preserves order, and
+handles formatter-only indentation changes.
+
+The second layer does not tokenize, use a similarity threshold, or compare
+meaning. It does not run before the first anchor or after the last anchor.
+Anything beyond whitespace-only equality between matched anchors stays
+untracked. An explicit transition fallback applies only to lines introduced by
+that transition, never to guessed semantic equivalence.
+
+`human-override` is a fourth line state. It marks a human replacement of
+content from the most recent AI transition and carries that transition's
+agent, model, session, and timestamp. `human` and `untracked` cannot carry
+agent metadata.
+
 ## Unsupported behavior
 
 - Git older than 2.31.

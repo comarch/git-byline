@@ -41,41 +41,47 @@ type Report struct {
 }
 
 type pageView struct {
-	Commit           string
-	CommitShort      string
-	Files            []fileView
-	Sources          []sourceView
-	TotalLines       int
-	AILines          int
-	HumanLines       int
-	UntrackedLines   int
-	AIPercent        float64
-	AIGap            float64
-	HumanPercent     float64
-	HumanGap         float64
-	UntrackedPercent float64
-	UntrackedGap     float64
-	UntrackedOffset  float64
-	AIOffset         float64
-	FileCount        int
-	ModelCount       int
-	Status           provenance.StatusResult
-	Warnings         []string
+	Commit               string
+	CommitShort          string
+	Files                []fileView
+	Sources              []sourceView
+	TotalLines           int
+	AILines              int
+	HumanLines           int
+	HumanOverrideLines   int
+	UntrackedLines       int
+	AIPercent            float64
+	AIGap                float64
+	HumanPercent         float64
+	HumanGap             float64
+	HumanOverridePercent float64
+	HumanOverrideGap     float64
+	UntrackedPercent     float64
+	UntrackedGap         float64
+	HumanOverrideOffset  float64
+	UntrackedOffset      float64
+	AIOffset             float64
+	FileCount            int
+	ModelCount           int
+	Status               provenance.StatusResult
+	Warnings             []string
 }
 
 type fileView struct {
-	ID             string
-	Active         bool
-	Path           string
-	BlobShort      string
-	Lines          []lineView
-	Sources        []sourceView
-	TotalLines     int
-	AILines        int
-	HumanLines     int
-	UntrackedLines int
-	AIPercent      float64
-	Warnings       []string
+	ID                   string
+	Active               bool
+	Path                 string
+	BlobShort            string
+	Lines                []lineView
+	Sources              []sourceView
+	TotalLines           int
+	AILines              int
+	HumanLines           int
+	HumanOverrideLines   int
+	UntrackedLines       int
+	AIPercent            float64
+	HumanOverridePercent float64
+	Warnings             []string
 }
 
 type lineView struct {
@@ -201,18 +207,23 @@ func buildView(report Report) (pageView, error) {
 			view.AILines += source.Lines
 		case string(model.AuthorHuman):
 			view.HumanLines += source.Lines
+		case string(model.AuthorHumanOverride):
+			view.HumanOverrideLines += source.Lines
 		case string(model.AuthorUntracked):
 			view.UntrackedLines += source.Lines
 		}
 	}
 	view.AIPercent = percent(view.AILines, totalLines)
 	view.HumanPercent = percent(view.HumanLines, totalLines)
+	view.HumanOverridePercent = percent(view.HumanOverrideLines, totalLines)
 	view.UntrackedPercent = percent(view.UntrackedLines, totalLines)
 	view.AIGap = 100 - view.AIPercent
 	view.HumanGap = 100 - view.HumanPercent
+	view.HumanOverrideGap = 100 - view.HumanOverridePercent
 	view.UntrackedGap = 100 - view.UntrackedPercent
-	view.UntrackedOffset = -view.HumanPercent
-	view.AIOffset = -(view.HumanPercent + view.UntrackedPercent)
+	view.HumanOverrideOffset = -view.HumanPercent
+	view.UntrackedOffset = -(view.HumanPercent + view.HumanOverridePercent)
+	view.AIOffset = -(view.HumanPercent + view.HumanOverridePercent + view.UntrackedPercent)
 	for index, file := range files {
 		item := fileView{
 			ID:         fmt.Sprintf("file-%d", index),
@@ -249,11 +260,14 @@ func buildView(report Report) (pageView, error) {
 				item.AILines += source.Lines
 			case string(model.AuthorHuman):
 				item.HumanLines += source.Lines
+			case string(model.AuthorHumanOverride):
+				item.HumanOverrideLines += source.Lines
 			case string(model.AuthorUntracked):
 				item.UntrackedLines += source.Lines
 			}
 		}
 		item.AIPercent = percent(item.AILines, item.TotalLines)
+		item.HumanOverridePercent = percent(item.HumanOverrideLines, item.TotalLines)
 		view.Files = append(view.Files, item)
 	}
 	return view, nil
@@ -270,13 +284,16 @@ func sourceOf(value model.Attribution) (key, label, kind string) {
 	value = dashboardAttribution(value)
 	kind = string(value.Author)
 	switch value.Author {
-	case model.AuthorAI:
+	case model.AuthorAI, model.AuthorHumanOverride:
 		modelName := value.Model
 		if modelName == "" {
 			modelName = "unknown"
 		}
 		key = kind + "\x00" + value.Agent + "\x00" + modelName
 		label = value.Agent + "/" + modelName
+		if value.Author == model.AuthorHumanOverride {
+			label = "human-override:" + label
+		}
 	case model.AuthorHuman:
 		key = kind
 		label = "human/default"
@@ -297,6 +314,8 @@ func assignTones(values map[string]*sourceCount) map[string]string {
 		switch value.kind {
 		case string(model.AuthorHuman):
 			result[value.key] = "tone-human"
+		case string(model.AuthorHumanOverride):
+			result[value.key] = "tone-human-override"
 		case string(model.AuthorUntracked):
 			result[value.key] = "tone-untracked"
 		default:
@@ -373,10 +392,12 @@ func sourceRank(kind string) int {
 	switch kind {
 	case string(model.AuthorHuman):
 		return 0
-	case string(model.AuthorAI):
+	case string(model.AuthorHumanOverride):
 		return 1
-	case string(model.AuthorUntracked):
+	case string(model.AuthorAI):
 		return 2
+	case string(model.AuthorUntracked):
+		return 3
 	default:
 		return 3
 	}
@@ -430,6 +451,7 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
       --faint: #60738d;
       --green: #22c55e;
       --human: #60a5fa;
+      --human-override: #f59e0b;
       --untracked: #94a3b8;
       --orange: #f97316;
     }
@@ -498,6 +520,7 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
     .donut circle { fill: none; stroke-width: 10; }
     .donut .track { stroke: #19283d; }
     .donut .human { stroke: var(--human); }
+    .donut .human-override { stroke: var(--human-override); }
     .donut .untracked { stroke: var(--untracked); }
     .donut .ai { stroke: #c084fc; stroke-linecap: round; }
     .donut-label { position: absolute; text-align: center; pointer-events: none; }
@@ -548,6 +571,7 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
     .line-label { width: 13rem; padding: 0.22rem 0.8rem; color: currentColor; white-space: nowrap; }
     footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 1.5rem; color: var(--faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
     .tone-human { color: #60a5fa; }
+    .tone-human-override { color: #f59e0b; }
     .tone-untracked { color: #94a3b8; }
     .tone-orange { color: #f97316; }
     .tone-coral { color: #e98163; }
@@ -602,12 +626,13 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
 
     <section class="overview">
       <div class="card panel">
-        <h2>Human vs AI</h2>
+        <h2>Attribution classes</h2>
         <div class="donut-wrap">
           <div class="donut-box">
             <svg class="donut" viewBox="0 0 42 42" role="img" aria-label="{{printf "%.1f" .AIPercent}} percent AI observed">
               <circle class="track" cx="21" cy="21" r="15.9155"></circle>
               <circle class="human" cx="21" cy="21" r="15.9155" pathLength="100" stroke-dasharray="{{printf "%.1f" .HumanPercent}} {{printf "%.1f" .HumanGap}}"></circle>
+              <circle class="human-override" cx="21" cy="21" r="15.9155" pathLength="100" stroke-dasharray="{{printf "%.1f" .HumanOverridePercent}} {{printf "%.1f" .HumanOverrideGap}}" stroke-dashoffset="{{printf "%.1f" .HumanOverrideOffset}}"></circle>
               <circle class="untracked" cx="21" cy="21" r="15.9155" pathLength="100" stroke-dasharray="{{printf "%.1f" .UntrackedPercent}} {{printf "%.1f" .UntrackedGap}}" stroke-dashoffset="{{printf "%.1f" .UntrackedOffset}}"></circle>
               <circle class="ai" cx="21" cy="21" r="15.9155" pathLength="100" stroke-dasharray="{{printf "%.1f" .AIPercent}} {{printf "%.1f" .AIGap}}" stroke-dashoffset="{{printf "%.1f" .AIOffset}}"></circle>
             </svg>
@@ -616,6 +641,7 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
           <div class="legend">
             <div class="legend-row tone-purple"><span class="dot"></span><span>AI observed</span><strong>{{.AILines}}</strong></div>
             <div class="legend-row tone-human"><span class="dot"></span><span>human/default</span><strong>{{.HumanLines}}</strong></div>
+            <div class="legend-row tone-human-override"><span class="dot"></span><span>human override</span><strong>{{.HumanOverrideLines}}</strong></div>
             <div class="legend-row tone-untracked"><span class="dot"></span><span>untracked</span><strong>{{.UntrackedLines}}</strong></div>
           </div>
         </div>
@@ -667,7 +693,7 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
         {{range .Warnings}}<div class="warning">{{.}}</div>{{end}}
       </aside>
       <div class="card code-card">
-        <div class="code-head"><code>{{.Path}}</code><span>human / agent / model</span></div>
+        <div class="code-head"><code>{{.Path}}</code><span>human / human override / agent / model</span></div>
         <div class="code-scroll">
           <table aria-label="Line attribution for {{.Path}}">
             <tbody>

@@ -149,6 +149,52 @@ func TestNonAIRemainderCountsAsUntracked(t *testing.T) {
 	}
 }
 
+func TestHumanOverrideIsFourthDashboardClass(t *testing.T) {
+	t.Parallel()
+	report := Report{
+		Commit: "abcd1234",
+		Status: provenance.StatusResult{Head: "abcd1234"},
+		Files: []provenance.BlameResult{{
+			Version: model.NoteVersion,
+			File:    "source",
+			Blob:    "beef1234",
+			Commit:  "abcd1234",
+			Lines: []provenance.BlameLine{
+				{Number: 1, Attribution: model.Attribution{Author: model.AuthorHuman}},
+				{Number: 2, Attribution: model.Attribution{
+					Author: model.AuthorHumanOverride, Agent: "droid", Model: "model",
+				}},
+				{Number: 3, Attribution: model.Attribution{Author: model.AuthorAI, Agent: "droid", Model: "model"}},
+				{Number: 4, Attribution: model.Attribution{Author: model.AuthorUntracked}},
+			},
+		}},
+	}
+	view, err := buildView(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.HumanOverrideLines != 1 || view.Files[0].HumanOverrideLines != 1 {
+		t.Fatalf("human override totals = %d/%d", view.HumanOverrideLines, view.Files[0].HumanOverrideLines)
+	}
+	found := false
+	for _, source := range view.Sources {
+		if source.Kind == string(model.AuthorHumanOverride) {
+			found = source.Label == "human-override:droid/model" && source.Tone == "tone-human-override"
+		}
+	}
+	if !found {
+		t.Fatalf("sources = %+v", view.Sources)
+	}
+	data, err := Render(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("human override")) ||
+		!bytes.Contains(data, []byte("human-override:droid/model")) {
+		t.Fatalf("rendered dashboard omits human override")
+	}
+}
+
 func TestRenderEmptyCommitReport(t *testing.T) {
 	t.Parallel()
 	report := Report{

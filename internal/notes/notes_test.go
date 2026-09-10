@@ -1,6 +1,8 @@
 package notes
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +25,13 @@ func TestEncodeDecode(t *testing.T) {
 			}}},
 			"a.go": {Blob: "aaaa"},
 		},
+		Sessions: map[string]model.NoteSession{
+			"session-1": {
+				Agent: "droid", Model: "model",
+				FirstTS: "2026-01-02T03:04:05Z", LastTS: "2026-01-02T03:04:06Z",
+				Added: 2, Deleted: 1, Accepted: 1, Overridden: 1,
+			},
+		},
 	}
 	first, err := Encode(note)
 	if err != nil {
@@ -42,7 +51,7 @@ func TestEncodeDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Version != note.Version || len(got.Files) != 2 {
+	if got.Version != note.Version || len(got.Files) != 2 || len(got.Sessions) != 1 {
 		t.Fatalf("Decode() = %+v", got)
 	}
 }
@@ -65,6 +74,34 @@ func TestDecodeGoldenVersions(t *testing.T) {
 		if !ok || len(file.Ranges) != 1 || file.Ranges[0].Author != model.AuthorAI {
 			t.Fatalf("Decode(v%d) files = %+v", version, note.Files)
 		}
+		if version == 2 && note.Sessions["session-1"].Accepted != 1 {
+			t.Fatalf("Decode(v2) sessions = %+v", note.Sessions)
+		}
+	}
+}
+
+func TestEncodeV2Golden(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join("testdata", "note-v2.json")
+	fixture, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := Decode(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := Encode(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compactFixture bytes.Buffer
+	if err := json.Compact(&compactFixture, fixture); err != nil {
+		t.Fatal(err)
+	}
+	compactFixture.WriteByte('\n')
+	if string(encoded) != compactFixture.String() {
+		t.Fatalf("Encode() differs from %s:\n%s", path, encoded)
 	}
 }
 
@@ -94,6 +131,11 @@ func TestDecodeV2Sessions(t *testing.T) {
 			name: "valid session",
 			data: `{"version":2,"files":{},"sessions":{"session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":1,"deleted":0,"accepted":1,"overridden":0}}}`,
 		},
+		{
+			name: "negative counter",
+			data: `{"version":2,"files":{},"sessions":{"session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":-1,"deleted":0,"accepted":1,"overridden":0}}}`,
+			err:  true,
+		},
 	}
 	for _, test := range tests {
 		test := test
@@ -122,6 +164,7 @@ func TestEncodeDecodeErrors(t *testing.T) {
 		`{"version":9}`,
 		`{"version":1,"unknown":true}`,
 		`{"version":2,"sessions":[]}`,
+		`{"version":2,"files":{},"sessions":{"":{"agent":"droid","model":"","first_ts":"","last_ts":"","added":0,"deleted":0,"accepted":0,"overridden":0}}}`,
 		`{"version":1,"files":{"file":{"blob":"bad"}}}`,
 		"{\"version\":1,\"files\":{\"bad\\npath\":{\"blob\":\"abcd\"}}}",
 		`{"version":1,"files":{"file":{"blob":"abcd","ranges":[{"start":2,"end":2,"author":"human"}]}}}`,

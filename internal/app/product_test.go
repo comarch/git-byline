@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
+	"github.com/comarch/git-byline/internal/notes"
 	"github.com/comarch/git-byline/internal/provenance"
 )
 
@@ -159,6 +161,47 @@ func TestDashboardRefusesExistingOutput(t *testing.T) {
 	code, _, _, err = appRun(root, time.Time{}, nil, "dashboard", "--output", "-")
 	if code != ExitFailure || err == nil {
 		t.Fatalf("dashboard stdout output = %d, %v", code, err)
+	}
+}
+
+func TestBlameTextRendersHumanOverrideMetadata(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "human replacement\n")
+	appCommit(t, root, "override")
+	head := strings.TrimSpace(appGit(t, root, "rev-parse", "HEAD"))
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(head, "file.txt")
+	if err != nil || !exists {
+		t.Fatalf("BlobID() = %q, %t, %v", blob, exists, err)
+	}
+	data, err := notes.Encode(model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file.txt": {
+				Blob: blob,
+				Ranges: []model.Range{{
+					Start: 1, End: 1,
+					Attribution: model.Attribution{
+						Author: model.AuthorHumanOverride, Agent: "droid", Model: "model",
+					},
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(head, data); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr, err := appRun(root, time.Time{}, nil, "blame", "file.txt")
+	if code != ExitSuccess || err != nil || stderr != "" ||
+		!strings.Contains(stdout, "human-override:droid/model") {
+		t.Fatalf("blame = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
 }
 
