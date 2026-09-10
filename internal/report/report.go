@@ -12,7 +12,10 @@ import (
 	"github.com/comarch/git-byline/internal/notes"
 )
 
-const maxAggregateCommits = 10_000
+const (
+	maxAggregateCommits   = 10_000
+	maxAggregateFileLines = 100_000
+)
 
 const attributionNotesRef = "refs/notes/byline"
 
@@ -168,9 +171,9 @@ func Collect(repo *gitcmd.Repo, from, to string, limit int) (Aggregate, error) {
 				files[path] = value
 			}
 			for _, item := range file.Ranges {
-				count := item.End - item.Start + 1
-				if count <= 0 {
-					return Aggregate{}, fmt.Errorf("attribution note on %s has invalid range for %s", commit, path)
+				count, err := rangeLineCount(item)
+				if err != nil {
+					return Aggregate{}, fmt.Errorf("aggregate %s %s: %w", commit, path, err)
 				}
 				if err := addTotals(&result.Totals, item.Attribution, count); err != nil {
 					return Aggregate{}, fmt.Errorf("aggregate %s %s: %w", commit, path, err)
@@ -181,7 +184,9 @@ func Collect(repo *gitcmd.Repo, from, to string, limit int) (Aggregate, error) {
 				if err := addTotals(&commitTotals.Totals, item.Attribution, count); err != nil {
 					return Aggregate{}, fmt.Errorf("aggregate %s %s: %w", commit, path, err)
 				}
-				addAgentTotals(agents, models, sessions, item.Attribution, count)
+				if err := addAgentTotals(agents, models, sessions, item.Attribution, count); err != nil {
+					return Aggregate{}, fmt.Errorf("aggregate %s %s: %w", commit, path, err)
+				}
 			}
 		}
 		result.Commit = append(result.Commit, commitTotals)
@@ -199,21 +204,52 @@ func Collect(repo *gitcmd.Repo, from, to string, limit int) (Aggregate, error) {
 	return result, nil
 }
 
+func rangeLineCount(value model.Range) (int, error) {
+	if value.Start < 1 || value.End < value.Start {
+		return 0, errors.New("invalid range bounds")
+	}
+	if value.End > maxAggregateFileLines {
+		return 0, fmt.Errorf("range endpoint %d exceeds %d-line limit", value.End, maxAggregateFileLines)
+	}
+	return value.End - value.Start + 1, nil
+}
+
 func addTotals(totals *Totals, attribution model.Attribution, count int) error {
-	totals.Lines += count
+	var category *int
 	switch attribution.Author {
 	case model.AuthorHuman:
-		totals.Human += count
+		category = &totals.Human
 	case model.AuthorAI:
-		totals.AI += count
+		category = &totals.AI
 	case model.AuthorUntracked:
-		totals.Untracked += count
+		category = &totals.Untracked
 	case authorHumanOverride:
-		totals.HumanOverride += count
+		category = &totals.HumanOverride
 	default:
 		return fmt.Errorf("unsupported author %q", attribution.Author)
 	}
+	lines, err := checkedAdd(totals.Lines, count)
+	if err != nil {
+		return err
+	}
+	classTotal, err := checkedAdd(*category, count)
+	if err != nil {
+		return err
+	}
+	totals.Lines = lines
+	*category = classTotal
 	return nil
+}
+
+func checkedAdd(current, value int) (int, error) {
+	if current < 0 || value < 0 {
+		return 0, errors.New("line total cannot be negative")
+	}
+	maxInt := int(^uint(0) >> 1)
+	if current > maxInt-value {
+		return 0, errors.New("line total overflows int")
+	}
+	return current + value, nil
 }
 
 func addAgentTotals(
@@ -222,9 +258,9 @@ func addAgentTotals(
 	sessions map[string]*SessionTotals,
 	attribution model.Attribution,
 	count int,
-) {
+) error {
 	if attribution.Author != model.AuthorAI && attribution.Author != authorHumanOverride {
-		return
+		return nil
 	}
 	agent := agents[attribution.Agent]
 	if agent == nil {
@@ -232,7 +268,9 @@ func addAgentTotals(
 		agents[attribution.Agent] = agent
 		models[attribution.Agent] = map[string]*ModelTotals{}
 	}
-	_ = addTotals(&agent.Totals, attribution, count)
+	if err := addTotals(&agent.Totals, attribution, count); err != nil {
+		return err
+	}
 	modelName := attribution.Model
 	if modelName == "" {
 		modelName = "unknown"
@@ -242,9 +280,11 @@ func addAgentTotals(
 		modelTotals = &ModelTotals{Model: modelName}
 		models[attribution.Agent][modelName] = modelTotals
 	}
-	_ = addTotals(&modelTotals.Totals, attribution, count)
+	if err := addTotals(&modelTotals.Totals, attribution, count); err != nil {
+		return err
+	}
 	if attribution.Session == "" {
-		return
+		return nil
 	}
 	key := attribution.Session + "\x00" + attribution.Agent + "\x00" + modelName
 	session := sessions[key]
@@ -256,7 +296,7 @@ func addAgentTotals(
 		}
 		sessions[key] = session
 	}
-	_ = addTotals(&session.Totals, attribution, count)
+	return addTotals(&session.Totals, attribution, count)
 }
 
 func sortedAgents(values map[string]*AgentTotals, models map[string]map[string]*ModelTotals) []AgentTotals {

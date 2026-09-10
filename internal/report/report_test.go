@@ -1,6 +1,7 @@
 package report
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,6 +118,51 @@ func TestCollectRejectsInvalidCoverage(t *testing.T) {
 	}
 	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "ignored attribution note") {
 		t.Fatalf("warnings = %v", got.Warnings)
+	}
+}
+
+func TestCollectRangeCounts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		end       int
+		wantLines int
+		wantErr   bool
+	}{
+		{name: "normal", end: 2, wantLines: 2},
+		{name: "absurd endpoint", end: int(^uint(0) >> 1), wantErr: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			root := reportTestRepository(t)
+			writeReportFile(t, root, "file", "one\ntwo\n")
+			head := reportCommit(t, root, test.name)
+			repo, err := gitcmd.Discover(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := []byte(fmt.Sprintf(
+				`{"version":1,"files":{"file":{"blob":"abcd","ranges":[{"start":1,"end":%d,"author":"human"}]}}}`,
+				test.end,
+			))
+			if err := repo.WriteNote(head, data); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Collect(repo, "", head, 0)
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), head) || !strings.Contains(err.Error(), "file") {
+					t.Fatalf("Collect() error = %v, want commit and file context", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Totals.Lines != test.wantLines || got.Totals.Human != test.wantLines {
+				t.Fatalf("totals = %+v, want %d human lines", got.Totals, test.wantLines)
+			}
+		})
 	}
 }
 

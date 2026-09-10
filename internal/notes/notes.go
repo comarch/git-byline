@@ -20,6 +20,17 @@ const (
 	MaxFiles = 500
 )
 
+type noteSession struct {
+	Agent      string `json:"agent"`
+	Model      string `json:"model"`
+	FirstTS    string `json:"first_ts"`
+	LastTS     string `json:"last_ts"`
+	Added      int    `json:"added"`
+	Deleted    int    `json:"deleted"`
+	Accepted   int    `json:"accepted"`
+	Overridden int    `json:"overridden"`
+}
+
 // Encode returns canonical JSON with a trailing newline.
 func Encode(note model.Note) ([]byte, error) {
 	if note.Version != model.NoteVersion {
@@ -66,7 +77,7 @@ func Decode(data []byte) (model.Note, error) {
 	var wire struct {
 		Version  int                       `json:"version"`
 		Files    map[string]model.NoteFile `json:"files"`
-		Sessions json.RawMessage           `json:"sessions"`
+		Sessions map[string]*noteSession   `json:"sessions"`
 	}
 	if header.Version == 1 {
 		var legacy struct {
@@ -91,10 +102,9 @@ func Decode(data []byte) (model.Note, error) {
 	if wire.Version != header.Version {
 		return model.Note{}, fmt.Errorf("note version changed during decode from %d to %d", header.Version, wire.Version)
 	}
-	if header.Version == 2 && len(wire.Sessions) > 0 && string(wire.Sessions) != "null" {
-		var sessions map[string]json.RawMessage
-		if err := json.Unmarshal(wire.Sessions, &sessions); err != nil {
-			return model.Note{}, fmt.Errorf("decode note sessions: %w", err)
+	for name, session := range wire.Sessions {
+		if session == nil {
+			return model.Note{}, fmt.Errorf("decode note session %q: session must be an object", name)
 		}
 	}
 	note := model.Note{Version: wire.Version, Files: wire.Files}

@@ -681,12 +681,25 @@ func validateNoteRef(ref string) error {
 	if ref == "" {
 		return errors.New("note ref is empty")
 	}
-	if strings.HasPrefix(ref, "-") {
-		return errors.New("note ref cannot start with '-'")
+	if ref != "refs/notes" && !strings.HasPrefix(ref, "refs/notes/") {
+		return errors.New("note ref must be under refs/notes")
 	}
 	for _, char := range ref {
-		if unicode.IsControl(char) || unicode.IsSpace(char) {
-			return errors.New("note ref contains whitespace or a control character")
+		if unicode.IsControl(char) || unicode.IsSpace(char) ||
+			strings.ContainsRune("~^:?*[\\", char) {
+			return errors.New("note ref contains an invalid ref-format character")
+		}
+	}
+	if ref == "@" || strings.Contains(ref, "..") || strings.Contains(ref, "@{") ||
+		strings.HasPrefix(ref, "/") || strings.HasSuffix(ref, "/") ||
+		strings.HasSuffix(ref, ".") || strings.Contains(ref, "//") {
+		return errors.New("note ref is not a valid Git ref")
+	}
+	for _, component := range strings.Split(ref, "/") {
+		if component == "" || component == "." || component == ".." ||
+			strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".") ||
+			strings.HasSuffix(component, ".lock") {
+			return errors.New("note ref is not a valid Git ref")
 		}
 	}
 	return nil

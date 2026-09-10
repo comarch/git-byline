@@ -348,6 +348,39 @@ func TestNoteWriteError(t *testing.T) {
 		t.Fatalf("noteWriteError(plain) = %v", err)
 	}
 }
+
+func TestValidateNoteRef(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		ref string
+		err bool
+	}{
+		{ref: "refs/notes"},
+		{ref: "refs/notes/byline"},
+		{ref: "refs/notes/team/byline"},
+		{ref: "refs/heads/main", err: true},
+		{ref: "refs/tags/v1", err: true},
+		{ref: "refs/remotes/origin/main", err: true},
+		{ref: "refs/notes/../../heads/main", err: true},
+		{ref: "refs/notes/feature/../main", err: true},
+		{ref: "refs/notes/", err: true},
+		{ref: "refs/notes/foo bar", err: true},
+		{ref: "refs/notes/foo~bar", err: true},
+		{ref: "refs/notes/foo..bar", err: true},
+		{ref: "refs/notes/foo@{bar}", err: true},
+		{ref: "refs/notes//nested", err: true},
+		{ref: "refs/notes/foo.lock", err: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.ref, func(t *testing.T) {
+			if err := validateNoteRef(test.ref); (err != nil) != test.err {
+				t.Fatalf("validateNoteRef(%q) error = %v, want error: %t", test.ref, err, test.err)
+			}
+		})
+	}
+}
+
 func TestIsMissingIdentity(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

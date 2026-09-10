@@ -68,6 +68,44 @@ func TestDecodeGoldenVersions(t *testing.T) {
 	}
 }
 
+func TestDecodeV2Sessions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		data string
+		err  bool
+	}{
+		{
+			name: "unknown field",
+			data: `{"version":2,"files":{},"sessions":{"session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":1,"deleted":0,"accepted":1,"overridden":0,"extra":true}}}`,
+			err:  true,
+		},
+		{
+			name: "wrong field type",
+			data: `{"version":2,"files":{},"sessions":{"session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":"one","deleted":0,"accepted":1,"overridden":0}}}`,
+			err:  true,
+		},
+		{
+			name: "null session",
+			data: `{"version":2,"files":{},"sessions":{"session-1":null}}`,
+			err:  true,
+		},
+		{
+			name: "valid session",
+			data: `{"version":2,"files":{},"sessions":{"session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":1,"deleted":0,"accepted":1,"overridden":0}}}`,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Decode([]byte(test.data))
+			if (err != nil) != test.err {
+				t.Fatalf("Decode() error = %v, want error: %t", err, test.err)
+			}
+		})
+	}
+}
+
 func TestEncodeDecodeErrors(t *testing.T) {
 	t.Parallel()
 	if _, err := Encode(model.Note{Version: 9}); err == nil {
