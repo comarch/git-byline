@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/comarch/git-byline/internal/model"
 )
@@ -113,6 +114,9 @@ func TestRepositoryOperations(t *testing.T) {
 	major, minor, err := repo.Version()
 	if err != nil || major < 2 || minor < 0 {
 		t.Fatalf("Version() = %d.%d, %v", major, minor, err)
+	}
+	if major == 0 && minor == 0 {
+		t.Fatal("Version() returned an empty version")
 	}
 
 	if err := os.Rename(filepath.Join(root, "a file.txt"), filepath.Join(root, "renamed.txt")); err != nil {
@@ -224,6 +228,126 @@ func TestExtendedRepositoryOperations(t *testing.T) {
 	}
 	if !reflect.DeepEqual(paths, []string{"a-dirty", "z-dirty"}) {
 		t.Fatalf("DirtyPaths() = %v", paths)
+	}
+}
+
+func TestRepositoryBoundaryOperations(t *testing.T) {
+	t.Parallel()
+	root := initRepository(t)
+	writeFile(t, root, "file.txt", "one\n")
+	first := commitAll(t, root, "first")
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("patch IDs distinguish commits", func(t *testing.T) {
+		same, err := repo.PatchID(first)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, root, "file.txt", "one\ntwo\n")
+		second := commitAll(t, root, "second")
+		different, err := repo.PatchID(second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if same == different || !model.ValidObjectID(same) || !model.ValidObjectID(different) {
+			t.Fatalf("PatchID() = %q, %q", same, different)
+		}
+		identical, err := repo.PatchID(second)
+		if err != nil || identical != different {
+			t.Fatalf("repeated PatchID() = %q, %v; want %q", identical, err, different)
+		}
+	})
+
+	t.Run("commit time and merge base", func(t *testing.T) {
+		value, err := repo.CommitTime(first)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := time.Parse(time.RFC3339, value); err != nil {
+			if _, nanoErr := time.Parse(time.RFC3339Nano, value); nanoErr != nil {
+				t.Fatalf("CommitTime() = %q, %v", value, err)
+			}
+		}
+		if base, err := repo.MergeBase(first, first); err != nil || base != first {
+			t.Fatalf("MergeBase(same) = %q, %v", base, err)
+		}
+		otherRoot := initRepository(t)
+		writeFile(t, otherRoot, "other.txt", "other\n")
+		other := commitAll(t, otherRoot, "other")
+		if _, err := repo.MergeBase(first, other); err == nil {
+			t.Fatal("MergeBase accepted unrelated histories")
+		}
+	})
+
+	t.Run("note commits empty and populated", func(t *testing.T) {
+		empty, err := repo.NoteCommits("refs/notes/empty")
+		if err != nil || len(empty) != 0 {
+			t.Fatalf("empty NoteCommits() = %v, %v", empty, err)
+		}
+		if err := repo.WriteNoteRef("refs/notes/empty", first, []byte("note\n")); err != nil {
+			t.Fatal(err)
+		}
+		populated, err := repo.NoteCommits("refs/notes/empty")
+		if err != nil || !reflect.DeepEqual(populated, []string{first}) {
+			t.Fatalf("populated NoteCommits() = %v, %v", populated, err)
+		}
+	})
+
+	t.Run("snapshot byte budget", func(t *testing.T) {
+		writeFile(t, root, "snapshot.txt", "1234")
+		snapshot, used, err := repo.SnapshotWorktreeWithLimit("snapshot.txt", 4)
+		if err != nil || !snapshot.Exists || snapshot.Blob == "" || used != 4 {
+			t.Fatalf("SnapshotWorktreeWithLimit(limit) = %+v, %d, %v", snapshot, used, err)
+		}
+		if _, _, err := repo.SnapshotWorktreeWithLimit("snapshot.txt", 3); !errors.Is(err, ErrSnapshotBudget) {
+			t.Fatalf("SnapshotWorktreeWithLimit(over limit) = %v", err)
+		}
+		missing, used, err := repo.SnapshotWorktreeWithLimit("missing.txt", 4)
+		if err != nil || missing.Exists || used != 0 || missing.Path != "missing.txt" {
+			t.Fatalf("SnapshotWorktreeWithLimit(missing) = %+v, %d, %v", missing, used, err)
+		}
+		if _, _, err := repo.SnapshotWorktreeWithLimit("snapshot.txt", 0); !errors.Is(err, ErrSnapshotBudget) {
+			t.Fatalf("SnapshotWorktreeWithLimit(zero) = %v", err)
+		}
+	})
+}
+
+func TestDirtyPathsIncludesAllStatuses(t *testing.T) {
+	t.Parallel()
+	root := initRepository(t)
+	writeFile(t, root, "staged.txt", "staged\n")
+	writeFile(t, root, "unstaged.txt", "one\n")
+	writeFile(t, root, "renamed.txt", "rename\n")
+	writeFile(t, root, "deleted.txt", "delete\n")
+	commitAll(t, root, "base")
+
+	writeFile(t, root, "staged.txt", "staged\nchanged\n")
+	runGit(t, root, "add", "staged.txt")
+	writeFile(t, root, "unstaged.txt", "one\nchanged\n")
+	writeFile(t, root, "untracked.txt", "untracked\n")
+	if err := os.Remove(filepath.Join(root, "deleted.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "renamed.txt"), filepath.Join(root, "renamed-to.txt")); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "-A", "--", "renamed-to.txt")
+	paths, err := func() ([]string, error) {
+		repo, err := Discover(root)
+		if err != nil {
+			return nil, err
+		}
+		return repo.DirtyPaths()
+	}()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"deleted.txt", "renamed-to.txt", "renamed.txt", "staged.txt", "unstaged.txt", "untracked.txt"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("DirtyPaths() = %v, want %v", paths, want)
 	}
 }
 
@@ -348,6 +472,34 @@ func TestDiscoverAndConfigErrors(t *testing.T) {
 	}
 }
 
+func TestRepositoryClassificationHelpers(t *testing.T) {
+	t.Parallel()
+	if _, err := Discover(t.TempDir()); err == nil || !IsNotRepository(err) {
+		t.Fatalf("IsNotRepository() = false for error %v", err)
+	}
+	if IsNotRepository(errors.New("not a repository")) {
+		t.Fatal("IsNotRepository accepted an unrelated error")
+	}
+
+	underlying := errors.New("underlying")
+	commandErr := &CommandError{
+		Operation: "operation",
+		ExitCode:  1,
+		Err:       underlying,
+	}
+	if !errors.Is(commandErr, underlying) {
+		t.Fatal("CommandError did not unwrap underlying error")
+	}
+	if got := commandErr.Error(); !strings.Contains(got, "operation") ||
+		!strings.Contains(got, "exit code 1") {
+		t.Fatalf("CommandError.Error() = %q", got)
+	}
+	withStderr := &CommandError{Operation: "operation", ExitCode: 2, Stderr: "stderr"}
+	if got := withStderr.Error(); !strings.Contains(got, "stderr") {
+		t.Fatalf("CommandError.Error() with stderr = %q", got)
+	}
+}
+
 func TestNoteWriteError(t *testing.T) {
 	t.Parallel()
 	identity := &CommandError{
@@ -438,6 +590,60 @@ func TestCommandError(t *testing.T) {
 	var commandErr *CommandError
 	if !errors.As(err, &commandErr) || commandErr.ExitCode == 0 || !strings.Contains(commandErr.Error(), "invalid operation") {
 		t.Fatalf("error = %#v", err)
+	}
+}
+
+func TestValidateRevision(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "HEAD"},
+		{value: "main~2"},
+		{value: "", want: true},
+		{value: "-bad", want: true},
+		{value: "has space", want: true},
+		{value: "has\nnewline", want: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.value, func(t *testing.T) {
+			if err := validateRevision(test.value, "revision"); (err != nil) != test.want {
+				t.Fatalf("validateRevision(%q) error = %v, want error: %t", test.value, err, test.want)
+			}
+		})
+	}
+}
+
+func TestTempFileAndLimitedBuffer(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path, err := tempFile(dir, "test-", []byte("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "payload" {
+		t.Fatalf("tempFile() = %q, %v", data, err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tempFile(filepath.Join(dir, "missing"), "test-", []byte("payload")); err == nil {
+		t.Fatal("tempFile accepted an unavailable directory")
+	}
+
+	var buffer limitedBuffer
+	data = make([]byte, maxOutputBytes+1)
+	if written, err := buffer.Write(data); err != nil || written != len(data) || !buffer.exceeded {
+		t.Fatalf("limitedBuffer.Write(oversized) = %d, %v, exceeded=%t", written, err, buffer.exceeded)
+	}
+	if written, err := buffer.Write([]byte("x")); err != nil || written != 1 {
+		t.Fatalf("limitedBuffer.Write(after limit) = %d, %v", written, err)
+	}
+	if len(buffer.Bytes()) != maxOutputBytes || len(buffer.String()) != maxOutputBytes {
+		t.Fatalf("limitedBuffer size = %d", len(buffer.Bytes()))
 	}
 }
 

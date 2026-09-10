@@ -3,6 +3,7 @@ package interop
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -295,6 +296,17 @@ func TestExportGitAIAndAgentTraceAreDeterministic(t *testing.T) {
 	if string(traceFirst) != string(traceSecond) {
 		t.Fatal("Agent Trace export is not deterministic")
 	}
+	traceExport, err := Export(repo, "agent-trace", commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	traceAlias, err := EncodeAgentTrace(repo, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(traceExport, traceFirst) || !bytes.Equal(traceAlias, traceFirst) {
+		t.Fatal("Agent Trace aliases differ from direct export")
+	}
 	var trace AgentTraceRecord
 	if err := json.Unmarshal(traceFirst, &trace); err != nil {
 		t.Fatal(err)
@@ -369,7 +381,7 @@ func TestExportGitAIUsesGoldenBytes(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ExportGitAI(repo, commit)
+	got, err := Export(repo, "gitai", commit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,6 +391,79 @@ func TestExportGitAIUsesGoldenBytes(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("Git AI export differs from golden:\n%s", got)
+	}
+	alias, err := EncodeGitAI(repo, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(alias, want) {
+		t.Fatalf("Git AI alias differs from golden:\n%s", alias)
+	}
+}
+
+func TestExportRejectsInvalidFormat(t *testing.T) {
+	t.Parallel()
+	if _, err := Export(nil, "gitai", ""); err == nil {
+		t.Fatal("Export accepted a nil repository")
+	}
+	root := interopRepo(t)
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Export(repo, "unknown", ""); err == nil ||
+		!strings.Contains(err.Error(), "unsupported export format") {
+		t.Fatalf("Export unknown format error = %v", err)
+	}
+}
+
+func TestReadAndWriteGitAINote(t *testing.T) {
+	t.Parallel()
+	root := interopRepo(t)
+	writeInteropFile(t, root, "file.txt", "one\ntwo\nthree\nfour\n")
+	commit := commitInterop(t, root, "content")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(commit, "file.txt")
+	if err != nil || !exists {
+		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
+	}
+	if note, found, err := ReadGitAINote(repo, commit); err != nil || found || len(note.Files) != 0 {
+		t.Fatalf("ReadGitAINote before write = %+v, %t, %v", note, found, err)
+	}
+	byline, err := notes.Encode(model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file.txt": {
+				Blob: blob,
+				Ranges: []model.Range{{
+					Start: 1, End: 4,
+					Attribution: model.Attribution{Author: model.AuthorHuman},
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(commit, byline); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteGitAINote(repo, commit); err != nil {
+		t.Fatal(err)
+	}
+	note, found, err := ReadGitAINote(repo, commit)
+	if err != nil || !found {
+		t.Fatalf("ReadGitAINote after write = %+v, %t, %v", note, found, err)
+	}
+	if note.BaseCommit != commit || len(note.Files["file.txt"]) != 1 ||
+		len(note.Humans) != 1 {
+		t.Fatalf("Git AI note = %+v", note)
+	}
+	if err := WriteGitAINote(repo, commit); err != nil {
+		t.Fatalf("idempotent WriteGitAINote: %v", err)
 	}
 }
 
@@ -536,6 +621,120 @@ func TestImportGitAISkipsDifferentBylineNote(t *testing.T) {
 	if err != nil || result.Skipped != 1 || len(result.Warnings) != 1 {
 		t.Fatalf("different note import = %+v, %v", result, err)
 	}
+}
+
+func TestImportGitAIDryRunAndMalformedNote(t *testing.T) {
+	t.Parallel()
+	root := interopRepo(t)
+	writeInteropFile(t, root, "file.txt", "one\ntwo\nthree\nfour\n")
+	commit := commitInterop(t, root, "content")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(commit, "file.txt")
+	if err != nil || !exists {
+		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
+	}
+	if err := repo.WriteNote(commit, mustInteropNote(t, blob)); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteGitAINote(repo, commit); err != nil {
+		t.Fatal(err)
+	}
+	runInteropGit(t, root, "notes", "--ref=refs/notes/byline", "remove", commit)
+	result, err := ImportGitAI(repo, commit, true)
+	if err != nil || result.Imported != 1 || result.Skipped != 0 {
+		t.Fatalf("dry-run import = %+v, %v", result, err)
+	}
+	if _, found, err := repo.ReadNote(commit); err != nil || found {
+		t.Fatalf("dry-run wrote byline note: found=%t, err=%v", found, err)
+	}
+	result, err = ImportGitAI(repo, commit, false)
+	if err != nil || result.Imported != 1 {
+		t.Fatalf("real import = %+v, %v", result, err)
+	}
+
+	writeInteropFile(t, root, "file.txt", "one\ntwo\nthree\n")
+	malformed := commitInterop(t, root, "malformed")
+	if err := repo.WriteNoteRef(GitAINotesRef, malformed, []byte("not a Git AI note\n")); err != nil {
+		t.Fatal(err)
+	}
+	result, err = ImportGitAI(repo, malformed, false)
+	if err != nil || result.Skipped != 1 || len(result.Warnings) != 1 {
+		t.Fatalf("malformed import = %+v, %v", result, err)
+	}
+}
+
+func TestInteropValidationHelpers(t *testing.T) {
+	t.Parallel()
+	t.Run("sameStringMap", func(t *testing.T) {
+		tests := []struct {
+			name        string
+			left, right map[string]string
+			want        bool
+		}{
+			{name: "both nil", want: true},
+			{name: "same values", left: map[string]string{"one": "1"}, right: map[string]string{"one": "1"}, want: true},
+			{name: "different length", left: map[string]string{"one": "1"}, want: false},
+			{name: "different value", left: map[string]string{"one": "1"}, right: map[string]string{"one": "2"}, want: false},
+			{name: "missing key", left: map[string]string{"one": "1"}, right: map[string]string{"two": "1"}, want: false},
+		}
+		for _, test := range tests {
+			test := test
+			t.Run(test.name, func(t *testing.T) {
+				if got := sameStringMap(test.left, test.right); got != test.want {
+					t.Fatalf("sameStringMap() = %t, want %t", got, test.want)
+				}
+			})
+		}
+	})
+	t.Run("validateGitAIMetadata", func(t *testing.T) {
+		valid := &gitAIAgentIDWire{Tool: "cursor", ID: "conversation", Model: "model"}
+		tests := []struct {
+			name    string
+			agent   *gitAIAgentIDWire
+			human   string
+			custom  map[string]string
+			wantErr bool
+		}{
+			{name: "valid", agent: valid},
+			{name: "valid custom", agent: valid, custom: map[string]string{"source": "editor"}},
+			{name: "missing agent", human: "human", wantErr: true},
+			{name: "empty tool", agent: &gitAIAgentIDWire{ID: "id", Model: "model"}, wantErr: true},
+			{name: "control id", agent: &gitAIAgentIDWire{Tool: "tool", ID: "\x01", Model: "model"}, wantErr: true},
+			{name: "control human", agent: valid, human: "\x01", wantErr: true},
+			{name: "control custom key", agent: valid, custom: map[string]string{"\x01": "value"}, wantErr: true},
+			{name: "control custom value", agent: valid, custom: map[string]string{"key": "\x01"}, wantErr: true},
+		}
+		for _, test := range tests {
+			test := test
+			t.Run(test.name, func(t *testing.T) {
+				if err := validateGitAIMetadata(test.agent, test.human, test.custom); (err != nil) != test.wantErr {
+					t.Fatalf("validateGitAIMetadata() error = %v, want error: %t", err, test.wantErr)
+				}
+			})
+		}
+	})
+	t.Run("different note conflict", func(t *testing.T) {
+		tests := []struct {
+			name string
+			err  error
+			want bool
+		}{
+			{name: "nil", want: false},
+			{name: "matching", err: errors.New("commit already has a different attribution note"), want: true},
+			{name: "other", err: errors.New("other error"), want: false},
+		}
+		for _, test := range tests {
+			test := test
+			t.Run(test.name, func(t *testing.T) {
+				if got := isDifferentNoteConflict(test.err); got != test.want {
+					t.Fatalf("isDifferentNoteConflict() = %t, want %t", got, test.want)
+				}
+			})
+		}
+	})
 }
 
 func mustInteropNote(t *testing.T, blob string) []byte {
