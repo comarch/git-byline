@@ -462,7 +462,23 @@ func (repo *Repo) WriteNote(commit string, data []byte) error {
 	}
 	defer os.Remove(path)
 	_, err = repo.run("write attribution note", nil, "notes", "--ref=refs/notes/byline", "add", "-F", path, commit)
+	if err != nil {
+		var commandErr *CommandError
+		// The subprocess environment strips GIT_* variables, so the note
+		// writer identity can only come from Git configuration.
+		if errors.As(err, &commandErr) && isMissingIdentity(commandErr.Stderr) {
+			return fmt.Errorf("%w; set user.name and user.email with git config", err)
+		}
+	}
 	return err
+}
+
+// isMissingIdentity reports git output that fails for a missing committer
+// identity rather than a note or repository problem.
+func isMissingIdentity(stderr string) bool {
+	lower := strings.ToLower(stderr)
+	return strings.Contains(lower, "identity unknown") ||
+		strings.Contains(lower, "unable to auto-detect email address")
 }
 
 // ProtectBlobs updates the local retention ref.

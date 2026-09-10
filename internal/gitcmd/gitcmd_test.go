@@ -215,6 +215,22 @@ func TestDiscoverAndConfigErrors(t *testing.T) {
 	}
 }
 
+func TestIsMissingIdentity(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		stderr string
+		want   bool
+	}{
+		{"fatal: unable to auto-detect email address (got 'root@host.(none)')", true},
+		{"Author identity unknown\n\n*** Please tell me who you are.", true},
+		{"error: cannot add note: something else", false},
+		{"", false},
+	} {
+		if got := isMissingIdentity(test.stderr); got != test.want {
+			t.Fatalf("isMissingIdentity(%q) = %t, want %t", test.stderr, got, test.want)
+		}
+	}
+}
 func TestCommandError(t *testing.T) {
 	t.Parallel()
 	root := initRepository(t)
