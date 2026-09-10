@@ -222,10 +222,15 @@ configuration are preserved. Non-shell hooks, symlinked paths, external
 | `blame [--json] <file>` | Show line attribution for a file at `HEAD` |
 | `status [--json]` | Show checkpoint, pending, and annotation state |
 | `dashboard [--output FILE] [file]` | Generate a self-contained local HTML report |
+| `stats [<rev-range>] [--json]` | Aggregate attribution statistics without reading blobs |
+| `verify [<rev-range>] [--deep] [--json]` | Verify attribution notes and blob-pinned ranges |
+| `check [<rev-range>] [--max-ai-percent N] [--max-untracked-percent N] [--require-note] [--json]` | Check attribution policy limits |
 | `install-hooks` | Merge agent hooks plus Git annotation and note-sharing hooks |
 | `uninstall` | Remove only git-byline-managed hooks |
 | `version` | Print the build version |
 | `help [command]` | Show command help |
+
+`git byline check` exits with status 1 when a policy violation is found.
 
 PromptScript 1.18.1 compiles native project hooks for Factory, Claude Code,
 GitHub Copilot, VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, and Grok.

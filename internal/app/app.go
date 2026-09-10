@@ -88,6 +88,28 @@ func commands() []*command {
 			run: runDashboard,
 		},
 		{
+			name:  "stats",
+			short: "aggregate attribution statistics",
+			usage: "Usage: git-byline stats [<rev-range>] [--json]\n\n" +
+				"Show attribution totals and deterministic breakdowns without reading blobs.",
+			run: runStats,
+		},
+		{
+			name:  "verify",
+			short: "verify attribution notes",
+			usage: "Usage: git-byline verify [<rev-range>] [--deep] [--json]\n\n" +
+				"Check attribution notes, blob identity, and range coverage.\n" +
+				"--deep reads blobs to verify exact line counts.",
+			run: runVerify,
+		},
+		{
+			name:  "check",
+			short: "check attribution policy limits",
+			usage: "Usage: git-byline check [<rev-range>] [--max-ai-percent N] [--max-untracked-percent N] [--require-note] [--json]\n\n" +
+				"Evaluate attribution policy flags. A policy violation exits 1.",
+			run: runCheck,
+		},
+		{
 			name:  "install-hooks",
 			short: "install agent and Git hooks",
 			usage: "Usage: git-byline install-hooks [--agent droid|claude|all|none] [--git] [--local-notes] [--user|--project]\n\n" +
