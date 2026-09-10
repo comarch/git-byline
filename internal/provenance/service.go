@@ -342,6 +342,11 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	if err := dataStore.CheckStateWrite(nextState); err != nil {
 		return AnnotateResult{}, err
 	}
+	protected := retainedBlobs(records, state, model.Checkpoint{})
+	protected = append(protected, pendingBlobs(nextState)...)
+	if err := repo.ProtectBlobs(protected); err != nil {
+		return AnnotateResult{}, fmt.Errorf("protect pending snapshots: %w", err)
+	}
 	if err := repo.WriteNote(head, data); err != nil {
 		return AnnotateResult{}, err
 	}

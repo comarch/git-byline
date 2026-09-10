@@ -122,6 +122,27 @@ func TestAppendRepairsTruncatedCheckpointTail(t *testing.T) {
 	}
 }
 
+func TestAppendRejectsCompleteInvalidCheckpointTail(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	if err := os.MkdirAll(value.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := mustJSON(validCheckpoint(1)) + "\n" + `{"version":1,"unknown":true}`
+	if err := os.WriteFile(value.CheckpointPath(), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := inspectCheckpointTail(value.CheckpointPath(), false); err == nil {
+		t.Fatal("inspectCheckpointTail accepted complete invalid record")
+	}
+	if err := value.AppendCheckpoint(validCheckpoint(2)); err == nil {
+		t.Fatal("AppendCheckpoint accepted complete invalid record")
+	}
+	if current, err := os.ReadFile(value.CheckpointPath()); err != nil || string(current) != data {
+		t.Fatalf("rejected tail changed log to %q, %v", current, err)
+	}
+}
+
 func TestAppendPreservesValidCheckpointWithoutNewline(t *testing.T) {
 	t.Parallel()
 	value := New(t.TempDir())

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/comarch/git-byline/internal/model"
@@ -97,7 +98,7 @@ func (store Store) ReadCheckpoints() ([]model.Checkpoint, []string, error) {
 			Version int `json:"version"`
 		}
 		if err := json.Unmarshal(raw, &header); err != nil {
-			if finalTruncated {
+			if finalTruncated && isIncompleteJSON(err) {
 				warnings = append(warnings, fmt.Sprintf("ignored truncated final checkpoint line %d", line))
 				break
 			}
@@ -109,7 +110,7 @@ func (store Store) ReadCheckpoints() ([]model.Checkpoint, []string, error) {
 		}
 		var record model.Checkpoint
 		if err := decodeStrict(raw, &record); err != nil {
-			if finalTruncated {
+			if finalTruncated && isIncompleteJSON(err) {
 				warnings = append(warnings, fmt.Sprintf("ignored truncated final checkpoint line %d", line))
 				break
 			}
@@ -324,6 +325,9 @@ func inspectCheckpointTail(path string, repair bool) ([]byte, int64, bool, error
 		Version int `json:"version"`
 	}
 	if err := json.Unmarshal(tail, &header); err != nil {
+		if !isIncompleteJSON(err) {
+			return nil, 0, false, fmt.Errorf("decode checkpoint tail header: %w", err)
+		}
 		if repair {
 			if err := file.Truncate(start); err != nil {
 				return nil, 0, false, fmt.Errorf("truncate checkpoint tail: %w", err)
@@ -341,6 +345,11 @@ func inspectCheckpointTail(path string, repair bool) ([]byte, int64, bool, error
 		}
 	}
 	return []byte{'\n'}, info.Size(), false, nil
+}
+
+func isIncompleteJSON(err error) bool {
+	var syntax *json.SyntaxError
+	return errors.As(err, &syntax) && strings.Contains(syntax.Error(), "unexpected end of JSON input")
 }
 
 // ReadState reads state or returns a new empty state.

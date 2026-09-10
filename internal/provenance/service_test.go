@@ -14,6 +14,7 @@ import (
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/notes"
 	"github.com/comarch/git-byline/internal/preset"
+	"github.com/comarch/git-byline/internal/store"
 )
 
 func TestEndToEndAttributionAndPartialCommit(t *testing.T) {
@@ -200,6 +201,52 @@ func TestBlameHeadFileRejectsOversizedNoteCollection(t *testing.T) {
 	}
 	if _, err := BlameHeadFile(repo, "file.txt"); err == nil || !strings.Contains(err.Error(), "more than") {
 		t.Fatalf("BlameHeadFile() error = %v", err)
+	}
+}
+
+func TestAnnotateProtectsPendingBlobsBeforeStateWrite(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "base\npending\n")
+	event := preset.Event{Type: model.AuthorAI, Agent: "droid", Model: "test", Paths: []string{"file.txt"}}
+	if _, err := Capture(repo, event, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	head := commit(t, root, "pending")
+	git(t, root, "update-ref", "-d", "refs/worktree/byline/checkpoints")
+	refParent := filepath.Join(repo.GitDir, "refs", "worktree", "byline")
+	if info, err := os.Stat(refParent); err == nil && info.IsDir() {
+		if err := os.Remove(refParent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(refParent), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(refParent, []byte("block"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err == nil || !strings.Contains(err.Error(), "protect pending snapshots") {
+		t.Fatalf("Annotate() error = %v", err)
+	}
+	if _, found, err := repo.ReadNote(head); err != nil || found {
+		t.Fatalf("failed annotation note found = %t, error = %v", found, err)
+	}
+	state, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastAnnotatedCommit == head {
+		t.Fatalf("state advanced to failed commit: %+v", state)
 	}
 }
 
