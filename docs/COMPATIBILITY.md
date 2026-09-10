@@ -37,7 +37,7 @@ file, but interactive file switching requires JavaScript.
 | Gemini CLI | `portable-gemini` | Generated pre/post tool hooks | Common file and patch fields |
 | Windsurf | `portable-windsurf` | Generated write-event hooks | Common file and patch fields |
 | Grok | `portable-grok` | Generated pre/post tool hooks | Common file and patch fields |
-| agent-v1 | `agent-v1` | Standard edit payload | `edited_filepaths` |
+| agent-v1 | `agent-v1` | Standard edit payload, `agent_name` required | `edited_filepaths` |
 
 Unknown valid tool events are ignored. Malformed supported events fail without
 writing a checkpoint.
