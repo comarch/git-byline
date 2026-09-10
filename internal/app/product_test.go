@@ -3,10 +3,12 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +40,7 @@ func TestProductCommandFlow(t *testing.T) {
 	if code != ExitSuccess || err != nil || stderr != "" {
 		t.Fatalf("ai checkpoint = %d, %q, %v", code, stderr, err)
 	}
+	appWrite(t, root, "second.txt", "manual\n")
 	appCommit(t, root, "ai")
 	if code, _, _, err = appRun(root, now, nil, "annotate"); code != ExitSuccess || err != nil {
 		t.Fatalf("second annotate = %d, %v", code, err)
@@ -73,6 +76,113 @@ func TestProductCommandFlow(t *testing.T) {
 	if code != ExitSuccess || err != nil || stderr != "" || !strings.Contains(stdout, "Pending checkpoints: 0") {
 		t.Fatalf("text status = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
+	dashboardPath := filepath.Join(t.TempDir(), "dashboard.html")
+	code, stdout, stderr, err = appRun(root, now, nil, "dashboard", "--output", dashboardPath, "file.txt")
+	if code != ExitSuccess || err != nil || stdout != dashboardPath+"\n" || stderr != "" {
+		t.Fatalf("dashboard file = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	info, err := os.Stat(dashboardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("dashboard mode = %o", info.Mode().Perm())
+	}
+	data, err := os.ReadFile(dashboardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("file.txt")) ||
+		!bytes.Contains(data, []byte(">2</strong>")) ||
+		!bytes.Contains(data, []byte("attributed lines")) ||
+		!bytes.Contains(data, []byte("droid/unknown")) ||
+		bytes.Contains(data, []byte("https://")) {
+		t.Fatalf("dashboard content missing expected data")
+	}
+	allPath := filepath.Join(t.TempDir(), "all.html")
+	code, stdout, stderr, err = appRun(root, now, nil, "dashboard", "--output", allPath)
+	if code != ExitSuccess || err != nil || stdout != allPath+"\n" || stderr != "" {
+		t.Fatalf("dashboard all = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	allData, err := os.ReadFile(allPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(allData, []byte("second.txt")) ||
+		!bytes.Contains(allData, []byte(">2</strong><span>files")) {
+		t.Fatalf("dashboard all content missing second file")
+	}
+	code, stdout, stderr, err = appRun(root, now, nil, "dashboard", "file.txt")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("dashboard temp = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	tempPath := strings.TrimSpace(stdout)
+	t.Cleanup(func() { _ = os.Remove(tempPath) })
+	if !strings.HasSuffix(tempPath, ".html") {
+		t.Fatalf("dashboard temp path = %q", tempPath)
+	}
+	if _, err := os.Stat(tempPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDashboardRefusesExistingOutput(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "content\n")
+	appCommit(t, root, "base")
+	if code, _, _, err := appRun(root, time.Time{}, nil, "annotate"); code != ExitSuccess || err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "dashboard.html")
+	const existing = "keep\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _, err := appRun(root, time.Time{}, nil, "dashboard", "--output", path)
+	if code != ExitFailure || err == nil {
+		t.Fatalf("dashboard overwrite = %d, %v", code, err)
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != existing {
+		t.Fatalf("existing dashboard changed to %q", data)
+	}
+	for _, output := range []string{"bad\nname.html", "bad\tname.html"} {
+		code, _, _, err := appRun(root, time.Time{}, nil, "dashboard", "--output", output)
+		if code != ExitFailure || err == nil {
+			t.Fatalf("dashboard output %q = %d, %v", output, code, err)
+		}
+	}
+	code, _, _, err = appRun(root, time.Time{}, nil, "dashboard", "--output", "-")
+	if code != ExitFailure || err == nil {
+		t.Fatalf("dashboard stdout output = %d, %v", code, err)
+	}
+}
+
+func TestDashboardTempOutputRemainsReserved(t *testing.T) {
+	t.Parallel()
+	file, path, err := createDashboardOutput(&Env{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+	other, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if other != nil {
+		_ = other.Close()
+	}
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("second create error = %v, want file exists", err)
+	}
+	if err := writeDashboard(file, path, []byte("report")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "report" {
+		t.Fatalf("dashboard data = %q, %v", data, err)
+	}
 }
 
 func TestHookCommands(t *testing.T) {
@@ -80,10 +190,15 @@ func TestHookCommands(t *testing.T) {
 	root := appRepo(t)
 	code, stdout, stderr, err := appRun(root, time.Time{}, nil,
 		"install-hooks", "--agent", "droid", "--git", "--project")
-	if code != ExitSuccess || err != nil || stderr != "" || !strings.Contains(stdout, "updated ") {
+	if code != ExitSuccess || err != nil || stderr != "" ||
+		!strings.Contains(stdout, "updated ") ||
+		!strings.Contains(stdout, "attribution notes will be pushed automatically") {
 		t.Fatalf("install-hooks = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".factory", "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git", "hooks", "pre-push")); err != nil {
 		t.Fatal(err)
 	}
 	code, stdout, stderr, err = appRun(root, time.Time{}, nil,
@@ -105,12 +220,16 @@ func TestProductCommandUsageAndFailures(t *testing.T) {
 		{"checkpoint missing preset", "", []string{"checkpoint"}, ExitUsage},
 		{"checkpoint missing type", `{}`, []string{"checkpoint", "droid", "--hook-input", "stdin"}, ExitUsage},
 		{"checkpoint invalid input source", `{}`, []string{"checkpoint", "droid", "--type", "ai"}, ExitUsage},
+		{"checkpoint invalid owner", `{}`, []string{"checkpoint", "droid", "--managed-by", "other", "--type", "ai", "--hook-input", "stdin"}, ExitUsage},
 		{"checkpoint unknown flag", `{}`, []string{"checkpoint", "droid", "--bad"}, ExitUsage},
 		{"agent v1 explicit type", `{}`, []string{"checkpoint", "agent-v1", "--type", "ai", "--hook-input", "stdin"}, ExitUsage},
 		{"annotate argument", "", []string{"annotate", "extra"}, ExitUsage},
 		{"blame missing file", "", []string{"blame"}, ExitUsage},
 		{"blame unknown flag", "", []string{"blame", "--bad", "file"}, ExitUsage},
 		{"status argument", "", []string{"status", "extra"}, ExitUsage},
+		{"dashboard too many files", "", []string{"dashboard", "one", "two"}, ExitUsage},
+		{"dashboard unknown flag", "", []string{"dashboard", "--bad"}, ExitUsage},
+		{"local notes without git", "", []string{"install-hooks", "--agent", "droid", "--local-notes"}, ExitUsage},
 		{"install conflicting scope", "", []string{"install-hooks", "--user", "--project"}, ExitUsage},
 		{"install unknown agent", "", []string{"install-hooks", "--agent", "other"}, ExitUsage},
 	}
@@ -124,7 +243,7 @@ func TestProductCommandUsageAndFailures(t *testing.T) {
 			}
 		})
 	}
-	for _, args := range [][]string{{"blame", "-h"}, {"status", "--help"}, {"install-hooks", "-h"}, {"uninstall", "--help"}} {
+	for _, args := range [][]string{{"blame", "-h"}, {"status", "--help"}, {"dashboard", "-h"}, {"install-hooks", "-h"}, {"uninstall", "--help"}} {
 		code, stdout, stderr, err := appRun(root, time.Time{}, nil, args...)
 		if code != ExitSuccess || err != nil || stdout == "" || stderr != "" {
 			t.Fatalf("Run(%v) help = %d, %q, %q, %v", args, code, stdout, stderr, err)

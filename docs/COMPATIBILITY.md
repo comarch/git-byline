@@ -16,22 +16,28 @@ Release archives are built for six operating system and architecture pairs.
 Compilation proves arm64 artifacts. Runtime tests execute on hosted amd64 or
 native runner architecture.
 
+## Dashboard output
+
+`git byline dashboard` produces one self-contained HTML file. Generation
+requires no server, browser extension, network connection, or external runtime.
+The report uses standard HTML, CSS, SVG, and a small inline script for file
+selection. Browsers that disable JavaScript still render the summary and first
+file, but interactive file switching requires JavaScript.
+
 ## Agent adapters
 
-| Adapter | Events | Paths |
-| --- | --- | --- |
-| Droid | `Edit`, `Create`, `ApplyPatch` | `tool_input.file_path` or patch headers |
-| Claude Code | `Write`, `Edit`, `MultiEdit` | `tool_input.file_path` |
-| Factory PromptScript | Native pre/post tool hooks | Common file and patch fields |
-| Claude PromptScript | Native pre/post tool hooks | Common file and patch fields |
-| GitHub Copilot | Native pre/post tool hooks | Common file and patch fields |
-| VS Code Agent | Native pre/post tool hooks | Common file and patch fields |
-| Cursor | Native pre/post tool hooks | Common file and patch fields |
-| Codex | Native pre/post tool hooks | Common file and patch fields |
-| Gemini CLI | Native pre/post tool hooks | Common file and patch fields |
-| Windsurf | Native write-event hooks | Common file and patch fields |
-| Grok | Native pre/post tool hooks | Common file and patch fields |
-| agent-v1 | Standard edit payload | `edited_filepaths` |
+| Product or interface | Preset | Events | Paths |
+| --- | --- | --- | --- |
+| Factory | `droid`, `portable-factory` | `Edit`, `Create`, `ApplyPatch` and generated pre/post hooks | Common file and patch fields |
+| Claude Code | `claude`, `portable-claude` | `Write`, `Edit`, `MultiEdit` and generated pre/post hooks | Common file fields |
+| GitHub Copilot | `portable-copilot` | Generated pre/post tool hooks | Common file and patch fields |
+| VS Code Agent | `portable-vscode` | Generated pre/post tool hooks | Common file and patch fields |
+| Cursor | `portable-cursor` | Generated pre/post tool hooks | Common file and patch fields |
+| Codex | `portable-codex` | Generated pre/post tool hooks | Common file and patch fields |
+| Gemini CLI | `portable-gemini` | Generated pre/post tool hooks | Common file and patch fields |
+| Windsurf | `portable-windsurf` | Generated write-event hooks | Common file and patch fields |
+| Grok | `portable-grok` | Generated pre/post tool hooks | Common file and patch fields |
+| agent-v1 | `agent-v1` | Standard edit payload | `edited_filepaths` |
 
 Unknown valid tool events are ignored. Malformed supported events fail without
 writing a checkpoint.
@@ -40,6 +46,11 @@ PromptScript emits native hook configuration only for platforms with project
 hook APIs. Other instruction targets can consume generated project guidance,
 but cannot provide edit-event attribution without an external watcher or
 daemon. git-byline does not add either.
+
+OpenCode is not currently integrated. OpenCode exposes plugin execution hooks,
+but the pinned PromptScript release does not generate an OpenCode hook plugin.
+Track native support in
+[PromptScript issue #454](https://github.com/mrwogu/promptscript/issues/454).
 
 ## Git behavior
 
@@ -53,8 +64,10 @@ daemon. git-byline does not add either.
 
 - Git older than 2.31.
 - Binary and invalid UTF-8 attribution.
-- Network files or remote attribution storage.
+- Network files or a separate cloud attribution service.
 - Prompt and transcript storage.
+- Managed hook installation into external or symlinked `core.hooksPath`
+  directories.
 - Automatic reconstruction across several commits when the Git hook did not
   annotate any intermediate commit.
 - Provenance copied from non-first merge parents.

@@ -1,6 +1,7 @@
 # git-byline
 
-**Know which lines came from humans and AI - without sending code anywhere.**
+**Know which lines came from humans and AI - without another analytics
+service.**
 
 [![CI](https://github.com/comarch/git-byline/actions/workflows/ci.yml/badge.svg)](https://github.com/comarch/git-byline/actions/workflows/ci.yml)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/comarch/git-byline/security.yml?branch=main&label=CodeQL&logo=github)](https://github.com/comarch/git-byline/actions/workflows/security.yml)
@@ -8,7 +9,7 @@
 [![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![Built with PromptScript](https://img.shields.io/badge/Built%20with-PromptScript-7C3AED)](promptscript.yaml)
 [![MIT License](https://img.shields.io/badge/license-MIT-2563eb.svg)](LICENSE)
-[![Local only](https://img.shields.io/badge/runtime-local--only-16a34a.svg)](docs/SECURITY_MODEL.md)
+[![No telemetry](https://img.shields.io/badge/telemetry-none-16a34a.svg)](docs/SECURITY_MODEL.md)
 
 Git records who committed a line. It cannot tell whether that line came from a
 person, an AI agent, or older history. git-byline adds that missing layer.
@@ -32,11 +33,11 @@ and Gemini CLI adapters.
 | --- | --- |
 | Faster code review | Reviewers can locate agent-edited ranges instead of treating a mixed commit as one opaque change. |
 | Local provenance evidence | Versioned line ranges, agent, model, session, and timestamp metadata live in Git objects and notes. |
-| Private repository support | No code, prompt, transcript, or attribution data is sent to a service by the binary. |
+| Private repository support | No code, prompt, or transcript is sent to a separate service. Note metadata follows the selected Git remote unless automatic sharing is disabled with `--local-notes`. |
 | Honest unknowns | Legacy and ambiguous provenance becomes `untracked`, never a confident guess. |
 | Automation | Text for people and versioned JSON for local tools and policy checks. |
 
-## Local metrics without a hosted dashboard
+## Local dashboard without a hosted service
 
 ![Local git-byline attribution report showing human and AI line share, four model contributions, complete coverage, and healthy local state](docs/assets/git-byline-stats.png)
 
@@ -45,16 +46,36 @@ This prepared report is calculated from real `git byline blame --json` and
 agent adapters, four representative model labels, and one mixed commit. No
 telemetry or hosted analytics service is involved.
 
+Generate the same kind of self-contained report from the attribution note on
+your current `HEAD`:
+
+```sh
+git byline dashboard
+```
+
+The command prints the path to a private temporary HTML file. Open that file
+in a browser. Generate a report for one file or choose the output path:
+
+```sh
+git byline dashboard --output file-report.html src/example.go
+```
+
+The HTML embeds its CSS, JavaScript, metrics, source lines, and attribution
+data. It loads no CDN, font, image, script, or API. Existing output files are
+never replaced. Whole-commit and single-file reports include only files
+recorded in the attribution note attached directly to `HEAD`.
+
 ## What makes it different
 
 - **Line-level, not commit-level.** One commit can contain human, AI, and
   untracked ranges.
 - **Evidence, not heuristics.** Pre-edit and post-edit snapshots establish
   provenance at edit time.
-- **Git-native and local.** Checkpoint blobs, retention refs, and
-  `refs/notes/byline` stay in the repository.
+- **Git-native.** Checkpoint blobs and retention refs stay local.
+  `refs/notes/byline` follows ordinary pushes after Git hooks are installed.
 - **Narrow trust boundary.** No account, cloud service, daemon, telemetry,
-  prompt storage, transcript storage, or runtime network connection.
+  prompt storage, or transcript storage. The binary opens no network
+  connection; the managed pre-push hook invokes Git to publish notes.
 - **Built for real Git behavior.** Partial commits, renames, linked worktrees,
   restarts, and Git garbage collection are covered.
 - **Portable.** One pure Go binary, no CGo or language runtime, six release
@@ -144,6 +165,11 @@ path. Use `--project` to create a portable, reviewable project configuration
 that resolves `git-byline` through `PATH`.
 User-scoped agent hooks quietly ignore events outside a Git worktree.
 
+`--git` installs `post-commit` attribution and `pre-push` note sharing.
+Ordinary pushes then publish line ranges, paths, agent and model names,
+session identifiers, and timestamps to the same remote. Use `--local-notes`
+to install attribution without automatic note sharing.
+
 ### 2. Work normally
 
 Use your agent, edit by hand, stage selected changes, and commit:
@@ -183,8 +209,9 @@ git byline uninstall --agent droid --git --user
 Use `--agent none --git` to manage only the Git hook.
 
 Backups of changed agent and Git hook configuration use the
-`.git-byline.bak` suffix. Existing hooks and unrelated configuration are
-preserved. Symlinked and other non-regular configuration files are refused.
+`.git-byline.bak` suffix. Existing shell hooks and unrelated agent
+configuration are preserved. Non-shell hooks, symlinked paths, external
+`core.hooksPath` locations, and other non-regular files are refused.
 
 ## Commands
 
@@ -194,7 +221,8 @@ preserved. Symlinked and other non-regular configuration files are refused.
 | `annotate` | Replay pending snapshots and annotate `HEAD` |
 | `blame [--json] <file>` | Show line attribution for a file at `HEAD` |
 | `status [--json]` | Show checkpoint, pending, and annotation state |
-| `install-hooks` | Merge Droid, Claude Code, and Git hooks |
+| `dashboard [--output FILE] [file]` | Generate a self-contained local HTML report |
+| `install-hooks` | Merge agent hooks plus Git annotation and note-sharing hooks |
 | `uninstall` | Remove only git-byline-managed hooks |
 | `version` | Print the build version |
 | `help [command]` | Show command help |
@@ -252,14 +280,31 @@ git-byline stores:
 - `refs/notes/byline`
 
 Linked worktrees keep checkpoint state separate. Notes are shared within the
-common repository and are not pushed or fetched by normal Git operations.
-Explicitly sharing notes can disclose repository paths, agent and model names,
-session identifiers, and timestamps.
+common repository. After `install-hooks --git`, the managed `pre-push` hook
+publishes `refs/notes/byline` to the same remote before the branch push.
+Notes disclose repository paths, agent and model names, session identifiers,
+timestamps, blob IDs, and line ranges.
+
+Fetch notes explicitly in another clone:
+
+```sh
+git fetch origin refs/notes/byline:refs/notes/byline
+```
+
+Disable automatic note sharing by reinstalling Git hooks with:
+
+```sh
+git byline install-hooks --agent none --git --local-notes
+```
 
 git-byline does not store raw hook payloads, prompts, transcripts, environment
 variables, or file contents in checkpoint JSON. Snapshot blobs contain file
 content and remain local unless a user explicitly transfers related refs or
 Git objects.
+
+Generated dashboards contain committed source lines and attribution metadata.
+Default output uses a private temporary file. Keep reports local unless their
+content was reviewed for sharing.
 
 ## Limitations
 
@@ -273,6 +318,11 @@ Git objects.
   Git provides no staging timestamp to prove which duplicate was selected.
 - If several commits complete without annotation, git-byline refuses to guess
   across the gap.
+- Attribution notes are limited to 500 files and 16 MiB.
+- Whole-commit dashboards additionally limit rendered source to 100,000 lines
+  and 16 MiB.
+- Notes are pushed before the branch. A later branch rejection can leave note
+  metadata on the remote before its target commit arrives.
 - Prompts and transcripts are not stored.
 
 ## Troubleshooting

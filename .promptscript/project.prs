@@ -17,8 +17,9 @@
 
   git-byline is a local AI code attribution tool for Git. One pure Go binary
   tracks human, AI, and untracked authorship line by line from agent edits to
-  commits. Attribution is stored in local Git objects and notes. No cloud,
-  daemon, account, telemetry, or network connection.
+  commits. Checkpoints stay local; Git notes can follow ordinary pushes
+  through a managed hook. No cloud, daemon, account, or telemetry. The binary
+  opens no network connection.
 
   Read `README.md` and relevant files under `docs/` before changing public
   behavior, data formats, security boundaries, automation, or releases.

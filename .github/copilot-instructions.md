@@ -6,8 +6,9 @@
 
 git-byline is a local AI code attribution tool for Git. One pure Go binary
 tracks human, AI, and untracked authorship line by line from agent edits to
-commits. Attribution is stored in local Git objects and notes. No cloud,
-daemon, account, telemetry, or network connection.
+commits. Checkpoints stay local; Git notes can follow ordinary pushes
+through a managed hook. No cloud, daemon, account, or telemetry. The binary
+opens no network connection.
 
 Read `README.md` and relevant files under `docs/` before changing public
 behavior, data formats, security boundaries, automation, or releases.
@@ -18,7 +19,7 @@ behavior, data formats, security boundaries, automation, or releases.
 
 ## architecture
 
-cli: cmd/git-byline and internal/app, git: internal/gitcmd is the only Git subprocess boundary, model: internal/model owns versioned records and invariants, storage: internal/store and internal/lock own local durability, engine: internal/engine is pure attribution transformation, notes: internal/notes and internal/provenance own Git attribution notes, hooks: internal/preset and internal/hooks own agent integration, validation: tools/validate is the complete local gate, automation: .github/workflows owns CI, security, and release automation, generated: Native instructions, agents, workflows, and hooks for nine supported hook surfaces are compiled from .promptscript, installation: Factory users run /git-byline-setup from the marketplace plugin; other users install a checksum-verified release before starting an agent
+cli: cmd/git-byline and internal/app, git: internal/gitcmd is the only Git subprocess boundary, model: internal/model owns versioned records and invariants, storage: internal/store and internal/lock own local durability, engine: internal/engine is pure attribution transformation, notes: internal/notes and internal/provenance own Git attribution notes, dashboard: internal/dashboard renders self-contained local HTML without network access, hooks: internal/preset and internal/hooks own agent integration, annotation, and default Git note sharing, validation: tools/validate is the complete local gate, automation: .github/workflows owns CI, security, and release automation, generated: Native instructions, agents, workflows, and hooks for nine supported hook surfaces are compiled from .promptscript, installation: Factory users run /git-byline-setup from the marketplace plugin; other users install a checksum-verified release; Git hooks share attribution notes by default unless --local-notes is set
 
 ## Context
 
@@ -29,7 +30,10 @@ event and paths. `internal/gitcmd` reads allowed worktree files and writes
 snapshot blobs. Worktree-local state and a retention ref protect pending
 provenance. After commit, `annotate` replays snapshots, validates complete
 line coverage, writes canonical JSON to `refs/notes/byline`, advances state,
-and compacts retention.
+and compacts retention. `dashboard` renders validated blame and status data
+into one self-contained local HTML file without external resources. The
+managed `pre-push` hook publishes attribution notes through Git by default;
+`--local-notes` removes that sharing hook.
 
 ### Data locations
 
@@ -41,7 +45,7 @@ and compacts retention.
 
 ### Public commands
 
-- `checkpoint`, `annotate`, `blame`, `status`
+- `checkpoint`, `annotate`, `blame`, `status`, `dashboard`
 - `install-hooks`, `uninstall`
 - `version`, `help`
 

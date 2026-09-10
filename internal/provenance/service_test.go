@@ -1,6 +1,8 @@
 package provenance
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/notes"
 	"github.com/comarch/git-byline/internal/preset"
+	"github.com/comarch/git-byline/internal/store"
 )
 
 func TestEndToEndAttributionAndPartialCommit(t *testing.T) {
@@ -91,8 +94,159 @@ func TestEndToEndAttributionAndPartialCommit(t *testing.T) {
 	if status.PendingFiles != 0 || status.RetainedSnapshots != 0 || status.Head != status.LastAnnotatedCommit {
 		t.Fatalf("Status(finish) = %+v", status)
 	}
+	collection, err := BlameHead(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if collection.Commit != status.Head || len(collection.Files) != 1 ||
+		collection.Files[0].File != "file.txt" || len(collection.Files[0].Lines) != 3 {
+		t.Fatalf("BlameHead() = %+v", collection)
+	}
+	single, err := BlameHeadFile(repo, "file.txt")
+	if err != nil || single.File != "file.txt" || len(single.Lines) != 3 {
+		t.Fatalf("BlameHeadFile() = %+v, %v", single, err)
+	}
+	if _, err := BlameHeadFile(repo, "missing.txt"); err == nil {
+		t.Fatal("BlameHeadFile accepted file absent from HEAD note")
+	}
 	if result, err := Annotate(repo); err != nil || !result.Noop {
 		t.Fatalf("idempotent Annotate() = %+v, %v", result, err)
+	}
+}
+
+func TestBlameHeadRequiresAttributionNote(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "content\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BlameHead(repo); err == nil || !strings.Contains(err.Error(), "HEAD has no attribution note") {
+		t.Fatalf("BlameHead() error = %v", err)
+	}
+	if _, err := BlameHeadFile(repo, "file.txt"); err == nil || !strings.Contains(err.Error(), "HEAD has no attribution note") {
+		t.Fatalf("BlameHeadFile() error = %v", err)
+	}
+}
+
+func TestBlameHeadRejectsOversizedCollectionBeforeBlobRead(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "content\n")
+	head := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(head, "file.txt")
+	if err != nil || !exists {
+		t.Fatalf("BlobID() = %q, %t, %v", blob, exists, err)
+	}
+	note := model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file.txt": {
+				Blob: blob,
+				Ranges: []model.Range{{
+					Start: 1, End: maxBlameCollectionLines + 1,
+					Attribution: model.Attribution{Author: model.AuthorHuman},
+				}},
+			},
+		},
+	}
+	data, err := notes.Encode(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(head, data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BlameHead(repo); err == nil || !strings.Contains(err.Error(), "more than") {
+		t.Fatalf("BlameHead() error = %v", err)
+	}
+}
+
+func TestBlameHeadFileRejectsOversizedNoteCollection(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "content\n")
+	head := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(head, "file.txt")
+	if err != nil || !exists {
+		t.Fatalf("BlobID() = %q, %t, %v", blob, exists, err)
+	}
+	files := make(map[string]model.NoteFile, maxBlameCollectionFiles+1)
+	for index := 0; index <= maxBlameCollectionFiles; index++ {
+		files[fmt.Sprintf("file-%03d.txt", index)] = model.NoteFile{Blob: blob}
+	}
+	files["file.txt"] = model.NoteFile{
+		Blob: blob,
+		Ranges: []model.Range{{
+			Start: 1, End: 1,
+			Attribution: model.Attribution{Author: model.AuthorHuman},
+		}},
+	}
+	data, err := json.Marshal(model.Note{Version: model.NoteVersion, Files: files})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(head, data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BlameHeadFile(repo, "file.txt"); err == nil || !strings.Contains(err.Error(), "more than") {
+		t.Fatalf("BlameHeadFile() error = %v", err)
+	}
+}
+
+func TestAnnotateProtectsPendingBlobsBeforeStateWrite(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "base\npending\n")
+	event := preset.Event{Type: model.AuthorAI, Agent: "droid", Model: "test", Paths: []string{"file.txt"}}
+	if _, err := Capture(repo, event, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	head := commit(t, root, "pending")
+	git(t, root, "update-ref", "-d", "refs/worktree/byline/checkpoints")
+	refParent := filepath.Join(repo.GitDir, "refs", "worktree", "byline")
+	if info, err := os.Stat(refParent); err == nil && info.IsDir() {
+		if err := os.Remove(refParent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(refParent), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(refParent, []byte("block"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err == nil || !strings.Contains(err.Error(), "protect pending snapshots") {
+		t.Fatalf("Annotate() error = %v", err)
+	}
+	if _, found, err := repo.ReadNote(head); err != nil || found {
+		t.Fatalf("failed annotation note found = %t, error = %v", found, err)
+	}
+	state, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastAnnotatedCommit == head {
+		t.Fatalf("state advanced to failed commit: %+v", state)
 	}
 }
 

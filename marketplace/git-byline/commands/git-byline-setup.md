@@ -43,6 +43,12 @@ Otherwise install the Factory user hook and current repository Git hook:
 "$binary" install-hooks --agent droid --git --user
 ```
 
+Git hook installation shares `refs/notes/byline` with the selected remote on
+ordinary pushes. Tell the user that notes contain paths, line ranges, agent
+and model names, session identifiers, timestamps, and blob IDs. If the user
+wants automatic note sharing disabled, rerun the selected hook command with
+`--local-notes`. Notes can still be pushed explicitly.
+
 Run `$binary status`. Tell the user to add the reported install directory to
 `PATH` and restart active agents before relying on project hooks. Stop and
 report exact error when download, checksum, version, hook installation, or

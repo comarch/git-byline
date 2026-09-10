@@ -5,8 +5,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"unicode"
 
+	"github.com/comarch/git-byline/internal/dashboard"
 	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/hooks"
 	"github.com/comarch/git-byline/internal/model"
@@ -24,6 +28,7 @@ func runCheckpoint(env *Env, command *command, args []string) (int, error) {
 	flags.SetOutput(&output)
 	typeName := flags.String("type", "", "human or ai")
 	hookInput := flags.String("hook-input", "", "must be stdin")
+	managedBy := flags.String("managed-by", "", "managed hook owner")
 	if err := flags.Parse(args[1:]); err != nil {
 		return flagError(env, command, output.String(), err)
 	}
@@ -32,6 +37,9 @@ func runCheckpoint(env *Env, command *command, args []string) (int, error) {
 	}
 	if *hookInput != "stdin" {
 		return commandUsageError(env, command, errors.New("--hook-input must be stdin"))
+	}
+	if *managedBy != "" && *managedBy != "git-byline" {
+		return commandUsageError(env, command, errors.New("--managed-by must be git-byline"))
 	}
 	explicit := model.Author(*typeName)
 	if presetName == "agent-v1" {
@@ -61,6 +69,114 @@ func runCheckpoint(env *Env, command *command, args []string) (int, error) {
 	}
 	writeWarnings(env, result.Warnings)
 	return ExitSuccess, nil
+}
+
+func runDashboard(env *Env, command *command, args []string) (int, error) {
+	flags := flag.NewFlagSet(command.name, flag.ContinueOnError)
+	var output strings.Builder
+	flags.SetOutput(&output)
+	outputPath := flags.String("output", "", "output file")
+	if err := flags.Parse(args); err != nil {
+		return flagError(env, command, output.String(), err)
+	}
+	if flags.NArg() > 1 {
+		return commandUsageError(env, command, errors.New("dashboard accepts at most one file"))
+	}
+	repo, err := discoverForEnv(env)
+	if err != nil {
+		return operationalError(env, command.name, err)
+	}
+	status, err := provenance.Status(repo)
+	if err != nil {
+		return operationalError(env, command.name, err)
+	}
+	report := dashboard.Report{Status: status}
+	if flags.NArg() == 1 {
+		file, err := provenance.BlameHeadFile(repo, flags.Arg(0))
+		if err != nil {
+			return operationalError(env, command.name, err)
+		}
+		report.Commit = file.Commit
+		report.Files = []provenance.BlameResult{file}
+	} else {
+		collection, err := provenance.BlameHead(repo)
+		if err != nil {
+			return operationalError(env, command.name, err)
+		}
+		report.Commit = collection.Commit
+		report.Files = collection.Files
+		writeWarnings(env, collection.Warnings)
+	}
+	data, err := dashboard.Render(report)
+	if err != nil {
+		return operationalError(env, command.name, err)
+	}
+	file, path, err := createDashboardOutput(env, *outputPath)
+	if err != nil {
+		return operationalError(env, command.name, err)
+	}
+	if err := writeDashboard(file, path, data); err != nil {
+		return operationalError(env, command.name, err)
+	}
+	fmt.Fprintln(env.Stdout, path)
+	return ExitSuccess, nil
+}
+
+func createDashboardOutput(env *Env, requested string) (*os.File, string, error) {
+	if requested == "" {
+		file, err := os.CreateTemp("", "git-byline-dashboard-*.html")
+		if err != nil {
+			return nil, "", fmt.Errorf("create dashboard temp file: %w", err)
+		}
+		return file, file.Name(), nil
+	}
+	if requested == "-" {
+		return nil, "", errors.New("dashboard output must be a file")
+	}
+	if strings.ContainsRune(requested, 0) {
+		return nil, "", errors.New("dashboard output path contains NUL")
+	}
+	for _, char := range requested {
+		if unicode.IsControl(char) {
+			return nil, "", errors.New("dashboard output path contains a control character")
+		}
+	}
+	var path string
+	if filepath.IsAbs(requested) {
+		path = filepath.Clean(requested)
+	} else {
+		dir, err := env.workingDir()
+		if err != nil {
+			return nil, "", err
+		}
+		path = filepath.Join(dir, filepath.Clean(requested))
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, "", fmt.Errorf("create dashboard %s: %w", path, err)
+	}
+	return file, path, nil
+}
+
+func writeDashboard(file *os.File, path string, data []byte) error {
+	success := false
+	defer func() {
+		_ = file.Close()
+		if !success {
+			_ = os.Remove(path)
+		}
+	}()
+	if _, err := file.Write(data); err != nil {
+		return fmt.Errorf("write dashboard %s: %w", path, err)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync dashboard %s: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close dashboard %s: %w", path, err)
+	}
+	success = true
+	return nil
 }
 
 func runAnnotate(env *Env, command *command, args []string) (int, error) {
@@ -182,6 +298,9 @@ func runInstallHooks(env *Env, command *command, args []string) (int, error) {
 	if len(result.Changed) == 0 {
 		fmt.Fprintln(env.Stdout, "hooks already installed")
 	}
+	if options.Git && !options.LocalNotes {
+		fmt.Fprintln(env.Stdout, "attribution notes will be pushed automatically")
+	}
 	return ExitSuccess, nil
 }
 
@@ -215,7 +334,8 @@ func parseHookOptions(command *command, args []string) (hooks.Options, error) {
 	flags := flag.NewFlagSet(command.name, flag.ContinueOnError)
 	flags.SetOutput(new(strings.Builder))
 	agent := flags.String("agent", "all", "droid, claude, all, or none")
-	gitHook := flags.Bool("git", false, "manage Git post-commit hook")
+	gitHook := flags.Bool("git", false, "manage Git attribution hooks")
+	localNotes := flags.Bool("local-notes", false, "disable automatic attribution note sharing")
 	user := flags.Bool("user", false, "use user agent configuration")
 	project := flags.Bool("project", false, "use project agent configuration")
 	if err := flags.Parse(args); err != nil {
@@ -238,7 +358,10 @@ func parseHookOptions(command *command, args []string) (hooks.Options, error) {
 	if *agent == "none" && !*gitHook {
 		return hooks.Options{}, errors.New("select an agent or --git")
 	}
-	return hooks.Options{Agent: *agent, Git: *gitHook, User: *user}, nil
+	if *localNotes && !*gitHook {
+		return hooks.Options{}, errors.New("--local-notes requires --git")
+	}
+	return hooks.Options{Agent: *agent, Git: *gitHook, User: *user, LocalNotes: *localNotes}, nil
 }
 
 func parseJSONFlag(args []string) (bool, []string, error) {

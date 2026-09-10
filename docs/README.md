@@ -16,6 +16,7 @@ Choose the shortest path to your question.
 | --- | --- |
 | Install the binary or Factory plugin | [Installation](INSTALL.md) |
 | Understand hooks, checkpoints, and notes | [Architecture and data formats](ARCHITECTURE.md) |
+| Generate a private local HTML report | [README dashboard guide](../README.md#local-dashboard-without-a-hosted-service) |
 | Diagnose local state | [README troubleshooting](../README.md#troubleshooting) |
 
 ## Build and operate

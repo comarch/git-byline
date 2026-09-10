@@ -23,9 +23,10 @@ const (
 
 // Options selects hook systems and scope.
 type Options struct {
-	Agent string
-	Git   bool
-	User  bool
+	Agent      string
+	Git        bool
+	User       bool
+	LocalNotes bool
 }
 
 // Result lists files changed by an operation.
@@ -86,20 +87,44 @@ func change(dir string, options Options, install bool) (Result, error) {
 		}
 	}
 	if options.Git {
-		path, err := gitHookPath(repo)
-		if err != nil {
-			return Result{}, err
+		specs := []struct {
+			name    string
+			command string
+			install bool
+		}{
+			{
+				name:    "post-commit",
+				command: quoteExecutable(executable) + " annotate || exit 1",
+				install: install,
+			},
+			{
+				name:    "pre-push",
+				command: notesPushCommand(),
+				install: install && !options.LocalNotes,
+			},
 		}
-		didChange, err := changeGitHook(path, executable, install)
-		if err != nil {
-			return Result{}, err
-		}
-		if didChange {
-			changed = append(changed, path)
+		for _, spec := range specs {
+			path, err := gitHookPath(repo, spec.name)
+			if err != nil {
+				return Result{}, err
+			}
+			didChange, err := changeGitHook(path, spec.command, spec.install)
+			if err != nil {
+				return Result{}, err
+			}
+			if didChange {
+				changed = append(changed, path)
+			}
 		}
 	}
 	sort.Strings(changed)
 	return Result{Changed: changed}, nil
+}
+
+func notesPushCommand() string {
+	return `if git show-ref --verify --quiet refs/notes/byline; then
+  git push --no-verify -- "$1" refs/notes/byline:refs/notes/byline || exit 1
+fi`
 }
 
 func selectedAgents(value string) []string {
@@ -122,14 +147,19 @@ func agentConfigPath(root, agent string, user bool) (string, error) {
 		}
 		base = home
 	}
+	var path string
 	switch agent {
 	case "droid":
-		return filepath.Join(base, ".factory", "hooks.json"), nil
+		path = filepath.Join(base, ".factory", "hooks.json")
 	case "claude":
-		return filepath.Join(base, ".claude", "settings.json"), nil
+		path = filepath.Join(base, ".claude", "settings.json")
 	default:
 		return "", fmt.Errorf("unsupported agent %q", agent)
 	}
+	if err := rejectSymlinkPath(base, filepath.Dir(path)); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func changeAgentConfig(path, agent, executable string, install bool) (bool, error) {
@@ -138,7 +168,8 @@ func changeAgentConfig(path, agent, executable string, install bool) (bool, erro
 		return false, err
 	}
 	eventConfig := config
-	if agent == "claude" {
+	nested := agent == "claude"
+	if nested {
 		value := config["hooks"]
 		if value == nil {
 			eventConfig = map[string]any{}
@@ -151,15 +182,75 @@ func changeAgentConfig(path, agent, executable string, install bool) (bool, erro
 		}
 	}
 	specs := agentSpecs(agent, executable)
+	changed, err := updateAgentEvents(eventConfig, specs, install)
+	if err != nil {
+		return false, fmt.Errorf("update hooks in %s: %w", path, err)
+	}
+	if nested {
+		if len(eventConfig) == 0 {
+			delete(config, "hooks")
+		} else {
+			config["hooks"] = eventConfig
+		}
+	} else if agent == "droid" {
+		if legacy, ok := config["hooks"].(map[string]any); ok {
+			legacyChanged, err := updateAgentEvents(legacy, specs, false)
+			if err != nil {
+				return false, fmt.Errorf("update legacy hooks in %s: %w", path, err)
+			}
+			if legacyChanged {
+				changed = true
+				if len(legacy) == 0 {
+					delete(config, "hooks")
+				} else {
+					config["hooks"] = legacy
+				}
+			}
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	if existed {
+		if err := createBackup(path, mode); err != nil {
+			return false, err
+		}
+	}
+	if !install && len(config) == 0 && !existed {
+		return false, nil
+	}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return false, fmt.Errorf("encode %s: %w", path, err)
+	}
+	data = append(data, '\n')
+	if err := atomicWrite(path, data, mode); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func updateAgentEvents(eventConfig map[string]any, specs map[string]hookSpec, install bool) (bool, error) {
 	changed := false
 	for event, spec := range specs {
 		values, err := objectArray(eventConfig[event])
 		if err != nil {
-			return false, fmt.Errorf("read %s in %s: %w", event, path, err)
+			return false, fmt.Errorf("read %s: %w", event, err)
 		}
 		filtered := make([]any, 0, len(values)+1)
 		found := false
 		for _, value := range values {
+			if install && !found {
+				updated, managed, current := updateManagedHook(value, spec)
+				if managed {
+					filtered = append(filtered, updated)
+					found = true
+					if !current {
+						changed = true
+					}
+					continue
+				}
+			}
 			remaining, removed, current := removeManagedHook(value, spec)
 			if removed {
 				if install && current && !found {
@@ -194,33 +285,62 @@ func changeAgentConfig(path, agent, executable string, install bool) (bool, erro
 			eventConfig[event] = filtered
 		}
 	}
-	if agent == "claude" {
-		if len(eventConfig) == 0 {
-			delete(config, "hooks")
-		} else {
-			config["hooks"] = eventConfig
-		}
+	return changed, nil
+}
+
+func updateManagedHook(value any, spec hookSpec) (any, bool, bool) {
+	entry, ok := value.(map[string]any)
+	if !ok {
+		return value, false, false
 	}
-	if !changed {
-		return false, nil
+	matcher, _ := entry["matcher"].(string)
+	if matcher != spec.matcher {
+		return value, false, false
 	}
-	if existed {
-		if err := createBackup(path, mode); err != nil {
-			return false, err
-		}
-	}
-	if !install && len(config) == 0 && !existed {
-		return false, nil
-	}
-	data, err := json.MarshalIndent(config, "", "  ")
+	hooks, err := objectArray(entry["hooks"])
 	if err != nil {
-		return false, fmt.Errorf("encode %s: %w", path, err)
+		return value, false, false
 	}
-	data = append(data, '\n')
-	if err := atomicWrite(path, data, mode); err != nil {
-		return false, err
+	updatedHooks := make([]any, 0, len(hooks))
+	found := false
+	changed := false
+	for _, value := range hooks {
+		hook, ok := value.(map[string]any)
+		if !ok {
+			updatedHooks = append(updatedHooks, value)
+			continue
+		}
+		candidate, _ := hook["command"].(string)
+		if hook["type"] != "command" || !managedAgentCommand(candidate, spec) {
+			updatedHooks = append(updatedHooks, value)
+			continue
+		}
+		if found {
+			changed = true
+			continue
+		}
+		found = true
+		if candidate == spec.command {
+			updatedHooks = append(updatedHooks, value)
+			continue
+		}
+		updatedHook := make(map[string]any, len(hook))
+		for key, value := range hook {
+			updatedHook[key] = value
+		}
+		updatedHook["command"] = spec.command
+		updatedHooks = append(updatedHooks, updatedHook)
+		changed = true
 	}
-	return true, nil
+	if !found || !changed {
+		return value, found, found
+	}
+	updatedEntry := make(map[string]any, len(entry))
+	for key, value := range entry {
+		updatedEntry[key] = value
+	}
+	updatedEntry["hooks"] = updatedHooks
+	return updatedEntry, true, false
 }
 
 type hookSpec struct {
@@ -239,11 +359,11 @@ func agentSpecs(agent, executable string) map[string]hookSpec {
 	return map[string]hookSpec{
 		"PreToolUse": {
 			matcher: matcher,
-			command: quoteExecutable(executable) + " checkpoint " + agent + " --type human --hook-input stdin",
+			command: quoteExecutable(executable) + " checkpoint " + agent + " --managed-by git-byline --type human --hook-input stdin",
 		},
 		"PostToolUse": {
 			matcher: matcher,
-			command: quoteExecutable(executable) + " checkpoint " + agent + " --type ai --hook-input stdin",
+			command: quoteExecutable(executable) + " checkpoint " + agent + " --managed-by git-byline --type ai --hook-input stdin",
 		},
 	}
 }
@@ -291,8 +411,7 @@ func removeManagedHook(value any, spec hookSpec) (any, bool, bool) {
 			continue
 		}
 		candidate, _ := hook["command"].(string)
-		signature := spec.command[strings.Index(spec.command, " checkpoint "):]
-		if hook["type"] == "command" && strings.HasSuffix(candidate, signature) {
+		if hook["type"] == "command" && managedAgentCommand(candidate, spec) {
 			removed = true
 			current = len(hooks) == 1 && candidate == spec.command
 			continue
@@ -302,7 +421,14 @@ func removeManagedHook(value any, spec hookSpec) (any, bool, bool) {
 	if !removed {
 		return value, false, false
 	}
-	if len(filtered) == 0 {
+	hasMetadata := false
+	for key := range entry {
+		if key != "matcher" && key != "hooks" {
+			hasMetadata = true
+			break
+		}
+	}
+	if len(filtered) == 0 && !hasMetadata {
 		return nil, true, current
 	}
 	remaining := make(map[string]any, len(entry))
@@ -311,6 +437,65 @@ func removeManagedHook(value any, spec hookSpec) (any, bool, bool) {
 	}
 	remaining["hooks"] = filtered
 	return remaining, true, false
+}
+
+func managedAgentCommand(candidate string, spec hookSpec) bool {
+	signature := spec.command[strings.Index(spec.command, " checkpoint "):]
+	legacySignature := strings.Replace(signature, " --managed-by git-byline", "", 1)
+	return commandHasSingleExecutable(candidate, signature) ||
+		commandHasGitBylineExecutable(candidate, legacySignature)
+}
+
+func commandHasSingleExecutable(command, signature string) bool {
+	if !strings.HasSuffix(command, signature) {
+		return false
+	}
+	executable := strings.TrimSuffix(command, signature)
+	if len(executable) < 2 ||
+		(executable[0] != '\'' && executable[0] != '"') ||
+		executable[len(executable)-1] != executable[0] {
+		return false
+	}
+	quote := byte(0)
+	escaped := false
+	for index := 0; index < len(executable); index++ {
+		char := executable[index]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if quote == '"' && char == '\\' {
+			escaped = true
+			continue
+		}
+		if quote == 0 {
+			switch char {
+			case '\'', '"':
+				quote = char
+			case ' ', '\t', '\r', '\n', ';', '&', '|', '<', '>':
+				return false
+			}
+			continue
+		}
+		if char == quote {
+			quote = 0
+		}
+	}
+	return quote == 0 && !escaped
+}
+
+func commandHasGitBylineExecutable(command, signature string) bool {
+	if !commandHasSingleExecutable(command, signature) {
+		return false
+	}
+	executable := strings.TrimSuffix(command, signature)
+	value := executable[1 : len(executable)-1]
+	value = strings.ReplaceAll(value, `\`, "/")
+	base := value
+	if index := strings.LastIndexByte(base, '/'); index >= 0 {
+		base = base[index+1:]
+	}
+	return base == "git-byline" || strings.EqualFold(base, "git-byline.exe")
 }
 
 func objectArray(value any) ([]any, error) {
@@ -385,21 +570,57 @@ func createBackup(path string, mode os.FileMode) error {
 	return nil
 }
 
-func gitHookPath(repo *gitcmd.Repo) (string, error) {
-	hooksPath, ok, err := repo.ConfigPath("core.hooksPath")
+func gitHookPath(repo *gitcmd.Repo, name string) (string, error) {
+	hooksPath, err := repo.GitPath("hooks")
 	if err != nil {
 		return "", err
 	}
-	if !ok || hooksPath == "" {
-		return filepath.Join(repo.GitDir, "hooks", "post-commit"), nil
+	base := repo.Root
+	if pathInside(repo.CommonDir, hooksPath) {
+		base = repo.CommonDir
+	} else if !pathInside(repo.Root, hooksPath) {
+		return "", fmt.Errorf("refuse hooks directory outside repository: %s", hooksPath)
 	}
-	if !filepath.IsAbs(hooksPath) {
-		hooksPath = filepath.Join(repo.Root, hooksPath)
+	if err := rejectSymlinkPath(base, hooksPath); err != nil {
+		return "", err
 	}
-	return filepath.Join(filepath.Clean(hooksPath), "post-commit"), nil
+	return filepath.Join(hooksPath, name), nil
 }
 
-func changeGitHook(path, executable string, install bool) (bool, error) {
+func pathInside(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func rejectSymlinkPath(root, path string) error {
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("hook path %s escapes trusted root %s", path, root)
+	}
+	current := root
+	for _, part := range strings.Split(relative, string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("stat hook directory %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refuse symlinked hook directory %s", current)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("hook directory component %s is not a directory", current)
+		}
+	}
+	return nil
+}
+
+func changeGitHook(path, command string, install bool) (bool, error) {
 	existed := true
 	mode := os.FileMode(0o755)
 	info, err := os.Lstat(path)
@@ -427,15 +648,52 @@ func changeGitHook(path, executable string, install bool) (bool, error) {
 	if hasBlock && (!strings.Contains(text, blockStart) || !strings.Contains(text, blockEnd)) {
 		return false, fmt.Errorf("hook %s contains an incomplete git-byline block", path)
 	}
-	if install {
-		if hasBlock {
+	if strings.Count(text, blockStart) > 1 || strings.Count(text, blockEnd) > 1 {
+		return false, fmt.Errorf("hook %s contains multiple git-byline blocks", path)
+	}
+	if hasBlock {
+		start := strings.Index(text, blockStart)
+		end := strings.Index(text, blockEnd)
+		if end < start {
+			return false, fmt.Errorf("hook %s contains reversed git-byline markers", path)
+		}
+		block := text[start : end+len(blockEnd)]
+		if !managedGitHookBlock(block) {
+			return false, fmt.Errorf("hook %s contains an unrecognized git-byline block", path)
+		}
+	}
+	if existed && !isShellHook(data) {
+		if !install && !hasBlock {
 			return false, nil
 		}
-		managed := blockStart + "\n" + quoteExecutable(executable) + " annotate\n" + blockEnd
+		return false, fmt.Errorf("refuse non-shell hook %s", path)
+	}
+	if install {
+		managed := blockStart + "\n" + command + "\n" + blockEnd
+		if hasBlock {
+			start := strings.Index(text, blockStart)
+			end := start + strings.Index(text[start:], blockEnd) + len(blockEnd)
+			newline := strings.IndexByte(text, '\n')
+			if newline >= 0 && start == newline+1 && text[start:end] == managed {
+				return false, nil
+			}
+			if end < len(text) && text[end] == '\n' {
+				end++
+			} else if end+1 < len(text) && text[end] == '\r' && text[end+1] == '\n' {
+				end += 2
+			}
+			text = text[:start] + text[end:]
+		}
 		if !existed {
-			text = "#!/bin/sh\n\n" + managed + "\n"
+			text = "#!/bin/sh\n" + managed + "\n"
 		} else {
-			text = strings.TrimRight(text, "\r\n") + "\n\n" + managed + "\n"
+			newline := strings.IndexByte(text, '\n')
+			if newline < 0 {
+				text += "\n" + managed + "\n"
+			} else {
+				newline++
+				text = text[:newline] + managed + "\n" + text[newline:]
+			}
 		}
 	} else {
 		if !hasBlock {
@@ -447,23 +705,72 @@ func changeGitHook(path, executable string, install bool) (bool, error) {
 			return false, fmt.Errorf("hook %s contains an incomplete git-byline block", path)
 		}
 		end = start + end + len(blockEnd)
-		text = strings.TrimRight(text[:start], "\r\n") + strings.TrimLeft(text[end:], "\r\n")
-		if text != "" {
-			text += "\n"
+		if end < len(text) && text[end] == '\n' {
+			end++
+		} else if end+1 < len(text) && text[end] == '\r' && text[end+1] == '\n' {
+			end += 2
 		}
+		text = text[:start] + text[end:]
 	}
-	if existed {
+	backupExisted := false
+	if _, err := os.Lstat(path + ".git-byline.bak"); err == nil {
+		backupExisted = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("stat backup for %s: %w", path, err)
+	}
+	removeGeneratedHook := !install && strings.TrimSpace(text) == "#!/bin/sh" && !backupExisted
+	if existed && !removeGeneratedHook {
 		if err := createBackup(path, mode); err != nil {
 			return false, err
 		}
 	}
-	if !install && strings.TrimSpace(text) == "#!/bin/sh" && !existed {
-		return false, nil
+	if removeGeneratedHook {
+		if err := os.Remove(path); err != nil {
+			return false, fmt.Errorf("remove %s: %w", path, err)
+		}
+		return true, nil
 	}
 	if err := atomicWrite(path, []byte(text), mode); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+func managedGitHookBlock(block string) bool {
+	block = strings.ReplaceAll(block, "\r\n", "\n")
+	prefix := blockStart + "\n"
+	suffix := "\n" + blockEnd
+	if !strings.HasPrefix(block, prefix) || !strings.HasSuffix(block, suffix) {
+		return false
+	}
+	command := strings.TrimSuffix(strings.TrimPrefix(block, prefix), suffix)
+	return command == notesPushCommand() ||
+		commandHasSingleExecutable(command, " annotate || exit 1") ||
+		commandHasSingleExecutable(command, " annotate")
+}
+
+func isShellHook(data []byte) bool {
+	first, _, _ := strings.Cut(strings.TrimSuffix(string(data), "\r"), "\n")
+	if !strings.HasPrefix(first, "#!") {
+		return false
+	}
+	fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(first, "#!")))
+	if len(fields) == 0 {
+		return false
+	}
+	interpreter := filepath.Base(fields[0])
+	if interpreter == "env" {
+		if len(fields) < 2 {
+			return false
+		}
+		interpreter = filepath.Base(fields[1])
+	}
+	switch interpreter {
+	case "sh", "bash", "dash", "ksh", "zsh":
+		return true
+	default:
+		return false
+	}
 }
 
 func atomicWrite(path string, data []byte, mode os.FileMode) error {
