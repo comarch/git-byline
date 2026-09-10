@@ -1,7 +1,9 @@
 package interop
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/notes"
+	"github.com/comarch/git-byline/internal/store"
 )
 
 func TestDecodeGitAIGolden(t *testing.T) {
@@ -58,21 +61,117 @@ func TestDecodeGitAIErrors(t *testing.T) {
 	tests := []struct {
 		name string
 		data string
+		want string
 	}{
-		{"missing divider", "file.go\n  0123456789abcdef 1\n"},
-		{"unknown schema", "file.go\n  0123456789abcdef 1\n---\n{\"schema_version\":\"authorship/2.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{}}"},
-		{"missing prompt", "file.go\n  0123456789abcdef 1\n---\n{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{}}"},
-		{"overlap", "file.go\n  0123456789abcdef 1-2\n  0123456789abcdef 2-3\n---\n{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{\"0123456789abcdef\":{\"agent_id\":{\"tool\":\"cursor\",\"id\":\"c\",\"model\":\"m\"},\"total_additions\":1,\"total_deletions\":0,\"accepted_lines\":1,\"overriden_lines\":0}}}"},
-		{"control path", "bad\x1bpath\n  0123456789abcdef 1\n---\n{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{\"0123456789abcdef\":{\"agent_id\":{\"tool\":\"cursor\",\"id\":\"c\",\"model\":\"m\"},\"total_additions\":1,\"total_deletions\":0,\"accepted_lines\":1,\"overriden_lines\":0}}}"},
-		{"unknown metadata", "file.go\n  0123456789abcdef 1\n---\n{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{},\"unknown\":true}"},
+		{"missing divider", "file.go\n  0123456789abcdef 1\n", ""},
+		{"unknown schema", "file.go\n  0123456789abcdef 1\n---\n{\"schema_version\":\"authorship/2.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{}}", ""},
+		{"missing prompt", "file.go\n  0123456789abcdef 1\n---\n{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{}}", ""},
+		{"overlap", "file.go\n  0123456789abcdef 1-2\n  0123456789abcdef 2-3\n---\n{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{\"0123456789abcdef\":{\"agent_id\":{\"tool\":\"cursor\",\"id\":\"c\",\"model\":\"m\"},\"total_additions\":1,\"total_deletions\":0,\"accepted_lines\":1,\"overriden_lines\":0}}}", ""},
+		{"control path", "bad\x1bpath\n  0123456789abcdef 1\n---\n{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{\"0123456789abcdef\":{\"agent_id\":{\"tool\":\"cursor\",\"id\":\"c\",\"model\":\"m\"},\"total_additions\":1,\"total_deletions\":0,\"accepted_lines\":1,\"overriden_lines\":0}}}", ""},
+		{"unknown metadata", "file.go\n  0123456789abcdef 1\n---\n{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{},\"unknown\":true}", ""},
+		{"negative counter", "file.go\n  0123456789abcdef 1\n---\n{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{\"0123456789abcdef\":{\"agent_id\":{\"tool\":\"cursor\",\"id\":\"c\",\"model\":\"m\"},\"total_additions\":-1,\"total_deletions\":0,\"accepted_lines\":1,\"overriden_lines\":0}}}", "counters must be nonnegative"},
+		{"invalid metadata string", "file.go\n  0123456789abcdef 1\n---\n{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"prompts\":{\"0123456789abcdef\":{\"agent_id\":{\"tool\":\"cursor\",\"id\":\"c\",\"model\":\"m\"},\"total_additions\":1,\"total_deletions\":0,\"accepted_lines\":1,\"overriden_lines\":0,\"messages_url\":\"\\u0001\"}}}", "invalid metadata string"},
 	}
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := DecodeGitAI([]byte(test.data)); err == nil {
 				t.Fatal("DecodeGitAI accepted invalid note")
+			} else if test.want != "" && !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("DecodeGitAI error = %q, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestValidLegacyIDs(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"0123456789abcdef", "0123456"} {
+		if !validLegacyID(value) {
+			t.Fatalf("validLegacyID(%q) = false", value)
+		}
+	}
+	for _, key := range []string{"0123456789abcdef", "0123456"} {
+		data := "file.go\n  " + key + " 1\n---\n" +
+			`{"schema_version":"authorship/3.0.0","base_commit_sha":"0123456789abcdef0123456789abcdef01234567","prompts":{` +
+			fmt.Sprintf("%q", key) +
+			`:{"agent_id":{"tool":"cursor","id":"c","model":"m"},"total_additions":1,"total_deletions":0,"accepted_lines":1,"overriden_lines":0}}}`
+		note, err := DecodeGitAI([]byte(data))
+		if err != nil {
+			t.Fatalf("DecodeGitAI(%q): %v", key, err)
+		}
+		if _, ok := note.Prompts[key]; !ok {
+			t.Fatalf("prompt %q missing after decode", key)
+		}
+	}
+}
+
+func TestGitAISessionIDAlwaysDerivesFromConversation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		tool         string
+		conversation string
+		want         string
+	}{
+		{
+			name:         "ordinary conversation",
+			tool:         "cursor",
+			conversation: "conversation",
+			want:         "s_58b12a0f30f017",
+		},
+		{
+			name:         "prehashed conversation",
+			tool:         "claude",
+			conversation: "s_0123456789abcd",
+			want:         "s_c14046f11a8b9a",
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			got := gitAISessionID(test.tool, test.conversation)
+			if got != test.want {
+				t.Fatalf("gitAISessionID() = %q, want %q", got, test.want)
+			}
+			if test.name == "prehashed conversation" && got == test.conversation {
+				t.Fatal("pre-hashed conversation was preserved")
+			}
+		})
+	}
+}
+
+func TestDecodeGitAIManyEntries(t *testing.T) {
+	t.Parallel()
+	const count = 10_000
+	var builder strings.Builder
+	builder.WriteString("file.go\n")
+	for line := 1; line <= count; line++ {
+		fmt.Fprintf(&builder, "  0123456789abcdef %d\n", line)
+	}
+	builder.WriteString("---\n")
+	builder.WriteString(`{"schema_version":"authorship/3.0.0","base_commit_sha":"0123456789abcdef0123456789abcdef01234567","prompts":{"0123456789abcdef":{"agent_id":{"tool":"cursor","id":"c","model":"m"},"total_additions":1,"total_deletions":0,"accepted_lines":1,"overriden_lines":0}}}`)
+	note, err := DecodeGitAI([]byte(builder.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(note.Files["file.go"]); got != count {
+		t.Fatalf("decoded entries = %d, want %d", got, count)
+	}
+}
+
+func TestDecodeGitAIRejectsTooManyEntries(t *testing.T) {
+	t.Parallel()
+	var builder strings.Builder
+	builder.WriteString("file.go\n")
+	for line := 1; line <= maxGitAIEntries+1; line++ {
+		fmt.Fprintf(&builder, "  0123456789abcdef %d\n", line)
+	}
+	builder.WriteString("---\n")
+	builder.WriteString(`{"schema_version":"authorship/3.0.0","base_commit_sha":"0123456789abcdef0123456789abcdef01234567","prompts":{"0123456789abcdef":{"agent_id":{"tool":"cursor","id":"c","model":"m"},"total_additions":1,"total_deletions":0,"accepted_lines":1,"overriden_lines":0}}}`)
+	if _, err := DecodeGitAI([]byte(builder.String())); err == nil ||
+		!strings.Contains(err.Error(), "more than 100000 attestations") {
+		t.Fatalf("DecodeGitAI error = %v", err)
 	}
 }
 
@@ -153,6 +252,19 @@ func TestExportGitAIAndAgentTraceAreDeterministic(t *testing.T) {
 	if err := repo.WriteNote(commit, encoded); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.New(repo.GitDir).AppendCheckpoint(model.Checkpoint{
+		Version: model.CheckpointVersion,
+		Kind:    "edit",
+		Seq:     1,
+		TS:      "2026-01-02T03:04:05Z",
+		Type:    model.AuthorAI,
+		Session: "conversation",
+		Agent:   "cursor",
+		Model:   "anthropic/model",
+		Files:   []model.Snapshot{{Path: "file.txt", Exists: true, Blob: blob}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	first, err := ExportGitAI(repo, commit)
 	if err != nil {
 		t.Fatal(err)
@@ -189,6 +301,197 @@ func TestExportGitAIAndAgentTraceAreDeterministic(t *testing.T) {
 	}
 	if trace.Version != "0.1.0" || trace.VCS.Revision != commit || len(trace.Files) != 1 {
 		t.Fatalf("trace = %+v", trace)
+	}
+}
+
+func TestExportGitAIUsesGoldenBytes(t *testing.T) {
+	t.Parallel()
+	root := interopRepo(t)
+	writeInteropFile(t, root, "a.go", "ai-a\nhuman-a\n")
+	writeInteropFile(t, root, "z.go", "human-z\nai-z\nuntracked-z\n")
+	commit := commitInteropWithDate(t, root, "golden", "2026-01-02T03:04:05Z")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs := map[string]string{}
+	for _, path := range []string{"a.go", "z.go"} {
+		blob, exists, err := repo.BlobID(commit, path)
+		if err != nil || !exists {
+			t.Fatalf("blob %q = %q, %t, %v", path, blob, exists, err)
+		}
+		blobs[path] = blob
+	}
+	note := model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"a.go": {
+				Blob: blobs["a.go"],
+				Ranges: []model.Range{
+					{Start: 1, End: 1, Attribution: model.Attribution{
+						Author: model.AuthorAI, Agent: "cursor", Model: "model", Session: "conversation",
+					}},
+					{Start: 2, End: 2, Attribution: model.Attribution{Author: model.AuthorHuman}},
+				},
+			},
+			"z.go": {
+				Blob: blobs["z.go"],
+				Ranges: []model.Range{
+					{Start: 1, End: 1, Attribution: model.Attribution{Author: model.AuthorHuman}},
+					{Start: 2, End: 2, Attribution: model.Attribution{
+						Author: model.AuthorAI, Agent: "cursor", Model: "model", Session: "conversation",
+					}},
+					{Start: 3, End: 3, Attribution: model.Attribution{Author: model.AuthorUntracked}},
+				},
+			},
+		},
+	}
+	encoded, err := notes.Encode(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(commit, encoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.New(repo.GitDir).AppendCheckpoint(model.Checkpoint{
+		Version: model.CheckpointVersion,
+		Kind:    "edit",
+		Seq:     7,
+		TS:      "2026-01-02T03:04:05Z",
+		Type:    model.AuthorAI,
+		Session: "conversation",
+		Agent:   "cursor",
+		Model:   "model",
+		Files: []model.Snapshot{
+			{Path: "a.go", Exists: true, Blob: blobs["a.go"]},
+			{Path: "z.go", Exists: true, Blob: blobs["z.go"]},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ExportGitAI(repo, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "gitai-export.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("Git AI export differs from golden:\n%s", got)
+	}
+}
+
+func TestExportGitAIUnmatchedAIIsUntracked(t *testing.T) {
+	t.Parallel()
+	root := interopRepo(t)
+	writeInteropFile(t, root, "file.txt", "unmatched\nhuman\n")
+	commit := commitInterop(t, root, "content")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(commit, "file.txt")
+	if err != nil || !exists {
+		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
+	}
+	note := model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file.txt": {
+				Blob: blob,
+				Ranges: []model.Range{
+					{Start: 1, End: 1, Attribution: model.Attribution{
+						Author: model.AuthorAI, Agent: "cursor", Model: "model", Session: "missing",
+					}},
+					{Start: 2, End: 2, Attribution: model.Attribution{Author: model.AuthorHuman}},
+				},
+			},
+		},
+	}
+	encoded, err := notes.Encode(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(commit, encoded); err != nil {
+		t.Fatal(err)
+	}
+	data, err := ExportGitAI(repo, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := DecodeGitAI(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Files["file.txt"]; len(got) != 1 ||
+		got[0].Key != gitAIHumanID(syntheticHumanAuthor) ||
+		got[0].Ranges[0] != (GitAILineRange{Start: 2, End: 2}) {
+		t.Fatalf("exported attestations = %+v", got)
+	}
+	converted, err := parsed.ToBylineNote(repo, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranges := converted.Files["file.txt"].Ranges
+	if len(ranges) != 2 || ranges[0].Author != model.AuthorUntracked ||
+		ranges[1].Author != model.AuthorHuman {
+		t.Fatalf("converted unmatched attribution = %+v", ranges)
+	}
+}
+
+func TestGitAIPathLeadingQuoteRoundTrip(t *testing.T) {
+	t.Parallel()
+	root := interopRepo(t)
+	path := `"quoted.txt`
+	writeInteropFile(t, root, path, "line\n")
+	commit := commitInterop(t, root, "quoted path")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(commit, path)
+	if err != nil || !exists {
+		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
+	}
+	encoded, err := notes.Encode(model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			path: {
+				Blob: blob,
+				Ranges: []model.Range{{
+					Start: 1, End: 1,
+					Attribution: model.Attribution{Author: model.AuthorHuman},
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(commit, encoded); err != nil {
+		t.Fatal(err)
+	}
+	data, err := ExportGitAI(repo, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "\"\\\"quoted.txt\"") {
+		t.Fatalf("export did not quote leading-quote path: %s", data)
+	}
+	parsed, err := DecodeGitAI(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := parsed.Files[path]; !ok {
+		t.Fatalf("parsed paths = %+v", parsed.Files)
+	}
+	converted, err := parsed.ToBylineNote(repo, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := converted.Files[path]; !ok {
+		t.Fatalf("converted paths = %+v", converted.Files)
 	}
 }
 
@@ -275,7 +578,21 @@ func commitInterop(t *testing.T, root, message string) string {
 	return strings.TrimSpace(runInteropGit(t, root, "rev-parse", "HEAD"))
 }
 
+func commitInteropWithDate(t *testing.T, root, message, date string) string {
+	t.Helper()
+	runInteropGit(t, root, "add", "-A")
+	runInteropGitWithEnv(t, root, []string{
+		"GIT_AUTHOR_DATE=" + date,
+		"GIT_COMMITTER_DATE=" + date,
+	}, "commit", "-m", message)
+	return strings.TrimSpace(runInteropGit(t, root, "rev-parse", "HEAD"))
+}
+
 func runInteropGit(t *testing.T, root string, args ...string) string {
+	return runInteropGitWithEnv(t, root, nil, args...)
+}
+
+func runInteropGitWithEnv(t *testing.T, root string, extraEnv []string, args ...string) string {
 	t.Helper()
 	command := exec.Command("git", args...)
 	command.Dir = root
@@ -284,6 +601,7 @@ func runInteropGit(t *testing.T, root string, args ...string) string {
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
 	)
+	command.Env = append(command.Env, extraEnv...)
 	out, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)

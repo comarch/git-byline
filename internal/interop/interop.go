@@ -10,8 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/comarch/git-byline/internal/engine"
 	"github.com/comarch/git-byline/internal/gitcmd"
@@ -27,6 +30,8 @@ const (
 	maxGitAINoteBytes = 16 << 20
 	maxImportCommits  = 10_000
 	maxGitAIFiles     = 500
+	maxGitAIEntries   = 100_000
+	maxGitAIString    = 1024
 
 	syntheticHumanAuthor = "git-byline"
 )
@@ -177,20 +182,17 @@ func ExportGitAI(repo *gitcmd.Repo, commit string) ([]byte, error) {
 		Humans:        map[string]gitAIHumanWire{},
 	}
 	var attestations strings.Builder
-	syntheticSequence := index.maxSeq
 	paths := sortedNotePaths(note)
 	for _, path := range paths {
 		file := note.Files[path]
-		entries, sessionRecords, humanRecords, nextSequence, err := gitAIEntries(
+		entries, sessionRecords, humanRecords, err := gitAIEntries(
 			path,
 			file.Ranges,
 			index,
-			syntheticSequence,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("encode Git AI file %q: %w", path, err)
 		}
-		syntheticSequence = nextSequence
 		if len(entries) == 0 {
 			continue
 		}
@@ -361,26 +363,39 @@ func DecodeGitAI(data []byte) (GitAINote, error) {
 		return GitAINote{}, errors.New("Git AI base_commit_sha is invalid")
 	}
 	for key, value := range metadata.Sessions {
-		if !validSessionID(key) || value.AgentID == nil || value.AgentID.Tool == "" {
+		if !validSessionID(key) {
 			return GitAINote{}, fmt.Errorf("invalid Git AI session %q", key)
+		}
+		if err := validateGitAIMetadata(value.AgentID, value.HumanAuthor, value.CustomAttributes); err != nil {
+			return GitAINote{}, fmt.Errorf("invalid Git AI session %q: %w", key, err)
 		}
 		result.Sessions[key] = GitAISession{AgentID: GitAIAgentID{
 			Tool: value.AgentID.Tool, ID: value.AgentID.ID, Model: value.AgentID.Model,
 		}}
 	}
 	for key, value := range metadata.Humans {
-		if !validHumanID(key) || value.Author == "" {
+		if !validHumanID(key) || !validGitAIString(value.Author, true) {
 			return GitAINote{}, fmt.Errorf("invalid Git AI human %q", key)
 		}
 		result.Humans[key] = GitAIHuman{Author: value.Author}
 	}
 	for key, value := range metadata.Prompts {
-		if !validLegacyID(key) || value.AgentID == nil || value.AgentID.Tool == "" {
+		if !validLegacyID(key) {
 			return GitAINote{}, fmt.Errorf("invalid Git AI prompt %q", key)
 		}
 		if value.TotalAdditions == nil || value.TotalDeletions == nil ||
 			value.AcceptedLines == nil || value.OverridenLines == nil {
 			return GitAINote{}, fmt.Errorf("invalid Git AI prompt %q: missing counters", key)
+		}
+		if *value.TotalAdditions < 0 || *value.TotalDeletions < 0 ||
+			*value.AcceptedLines < 0 || *value.OverridenLines < 0 {
+			return GitAINote{}, fmt.Errorf("invalid Git AI prompt %q: counters must be nonnegative", key)
+		}
+		if err := validateGitAIMetadata(value.AgentID, value.HumanAuthor, value.CustomAttributes); err != nil {
+			return GitAINote{}, fmt.Errorf("invalid Git AI prompt %q: %w", key, err)
+		}
+		if !validGitAIString(value.MessagesURL, false) {
+			return GitAINote{}, fmt.Errorf("invalid Git AI prompt %q: invalid metadata string", key)
 		}
 		result.Prompts[key] = GitAIPrompt{
 			AgentID: GitAIAgentID{
@@ -394,6 +409,7 @@ func DecodeGitAI(data []byte) (GitAINote, error) {
 	}
 	var currentPath string
 	seenPaths := map[string]bool{}
+	attestationCount := 0
 	for index, line := range lines[:divider] {
 		if line == "" {
 			return GitAINote{}, fmt.Errorf("Git AI attestation line %d is empty", index+1)
@@ -419,6 +435,10 @@ func DecodeGitAI(data []byte) (GitAINote, error) {
 			result.Files[currentPath] = append(result.Files[currentPath], GitAIAttestation{
 				Key: fields[0], Ranges: ranges,
 			})
+			attestationCount++
+			if attestationCount > maxGitAIEntries {
+				return GitAINote{}, fmt.Errorf("Git AI note has more than %d attestations", maxGitAIEntries)
+			}
 			continue
 		}
 		if strings.HasPrefix(line, " ") {
@@ -566,6 +586,12 @@ func ImportGitAI(repo *gitcmd.Repo, revisionRange string, dryRun bool) (ImportRe
 		}
 		if !dryRun {
 			if err := repo.WriteNoteRef("refs/notes/byline", commit, encoded); err != nil {
+				if isDifferentNoteConflict(err) {
+					result.Skipped++
+					result.Warnings = append(result.Warnings,
+						fmt.Sprintf("skipped %s: existing byline note is different", commit))
+					continue
+				}
 				return result, fmt.Errorf("write byline note on %s: %w", commit, err)
 			}
 		}
@@ -638,9 +664,8 @@ func resolveCommit(repo *gitcmd.Repo, revision string) (string, error) {
 }
 
 type checkpointIndex struct {
-	exact  map[string]uint64
-	loose  map[string]uint64
-	maxSeq uint64
+	exact map[string]uint64
+	loose map[string]uint64
 }
 
 func newCheckpointIndex(records []model.Checkpoint) checkpointIndex {
@@ -649,9 +674,6 @@ func newCheckpointIndex(records []model.Checkpoint) checkpointIndex {
 		loose: map[string]uint64{},
 	}
 	for _, record := range records {
-		if record.Seq > index.maxSeq {
-			index.maxSeq = record.Seq
-		}
 		if record.Type != model.AuthorAI {
 			continue
 		}
@@ -667,15 +689,14 @@ func newCheckpointIndex(records []model.Checkpoint) checkpointIndex {
 	return index
 }
 
-func (index checkpointIndex) sequence(attr model.Attribution, next *uint64) uint64 {
+func (index checkpointIndex) sequence(attr model.Attribution) (uint64, bool) {
 	if value, ok := index.exact[checkpointKey(attr.Agent, attr.Model, attr.Session, attr.TS)]; ok {
-		return value
+		return value, true
 	}
 	if value, ok := index.loose[checkpointKey(attr.Agent, attr.Model, attr.Session, "")]; ok {
-		return value
+		return value, true
 	}
-	*next = *next + 1
-	return *next
+	return 0, false
 }
 
 type gitAIEntry struct {
@@ -688,8 +709,7 @@ func gitAIEntries(
 	path string,
 	ranges []model.Range,
 	index checkpointIndex,
-	nextSequence uint64,
-) ([]gitAIEntry, map[string]gitAISessionWire, map[string]gitAIHumanWire, uint64, error) {
+) ([]gitAIEntry, map[string]gitAISessionWire, map[string]gitAIHumanWire, error) {
 	entries := map[string]*gitAIEntry{}
 	sessions := map[string]gitAISessionWire{}
 	humans := map[string]gitAIHumanWire{}
@@ -698,7 +718,10 @@ func gitAIEntries(
 		switch value.Author {
 		case model.AuthorAI:
 			sessionID := gitAISessionID(value.Agent, value.Session)
-			sequence := index.sequence(value.Attribution, &nextSequence)
+			sequence, matched := index.sequence(value.Attribution)
+			if !matched {
+				continue
+			}
 			key = sessionID + "::" + gitAITraceID(sequence)
 			modelName := value.Model
 			if modelName == "" {
@@ -712,7 +735,7 @@ func gitAIEntries(
 				},
 			}
 			if previous, ok := sessions[sessionID]; ok && !sameSessionWire(previous, session) {
-				return nil, nil, nil, nextSequence, fmt.Errorf(
+				return nil, nil, nil, fmt.Errorf(
 					"file %q has conflicting session metadata for %s", path, sessionID,
 				)
 			}
@@ -724,7 +747,7 @@ func gitAIEntries(
 		case model.AuthorUntracked:
 			continue
 		default:
-			return nil, nil, nil, nextSequence, fmt.Errorf("unsupported author %q", value.Author)
+			return nil, nil, nil, fmt.Errorf("unsupported author %q", value.Author)
 		}
 		entry := entries[key]
 		if entry == nil {
@@ -741,7 +764,7 @@ func gitAIEntries(
 		result = append(result, *entry)
 	}
 	sortGitAIEntries(result)
-	return result, sessions, humans, nextSequence, nil
+	return result, sessions, humans, nil
 }
 
 type gitAIWireMetadata struct {
@@ -820,7 +843,45 @@ func decodeGitAIMetadata(data []byte) (gitAIWireMetadata, error) {
 	if metadata.SchemaVersion == "" || metadata.BaseCommitSHA == "" {
 		return gitAIWireMetadata{}, errors.New("Git AI metadata is missing required fields")
 	}
+	if !validGitAIString(metadata.GitAIVersion, false) {
+		return gitAIWireMetadata{}, errors.New("invalid Git AI metadata string")
+	}
 	return metadata, nil
+}
+
+func validateGitAIMetadata(
+	agentID *gitAIAgentIDWire,
+	humanAuthor string,
+	customAttributes map[string]string,
+) error {
+	if agentID == nil ||
+		!validGitAIString(agentID.Tool, true) ||
+		!validGitAIString(agentID.ID, false) ||
+		!validGitAIString(agentID.Model, false) ||
+		!validGitAIString(humanAuthor, false) {
+		return errors.New("invalid metadata string")
+	}
+	for key, value := range customAttributes {
+		if !validGitAIString(key, true) || !validGitAIString(value, false) {
+			return errors.New("invalid metadata string")
+		}
+	}
+	return nil
+}
+
+func validGitAIString(value string, required bool) bool {
+	if required && value == "" {
+		return false
+	}
+	if len(value) > maxGitAIString || !utf8.ValidString(value) {
+		return false
+	}
+	for _, char := range value {
+		if unicode.IsControl(char) {
+			return false
+		}
+	}
+	return true
 }
 
 func (note GitAINote) attribution(key string) (model.Attribution, error) {
@@ -903,14 +964,15 @@ func validateAttestationRanges(entries []GitAIAttestation) error {
 			values = append(values, rangeValue{start: value.Start, end: value.End})
 		}
 	}
-	for i := 1; i < len(values); i++ {
-		for j := i; j > 0; j-- {
-			if values[j-1].start <= values[j].start {
-				break
-			}
-			values[j-1], values[j] = values[j], values[j-1]
-		}
+	if len(values) > maxGitAIEntries {
+		return fmt.Errorf("more than %d attestation ranges", maxGitAIEntries)
 	}
+	sort.Slice(values, func(left, right int) bool {
+		if values[left].start == values[right].start {
+			return values[left].end < values[right].end
+		}
+		return values[left].start < values[right].start
+	})
 	for i := 1; i < len(values); i++ {
 		if values[i].start <= values[i-1].end {
 			return errors.New("attestation ranges overlap")
@@ -1021,7 +1083,7 @@ func formatLineRanges(values []GitAILineRange) string {
 }
 
 func writeGitAIPath(builder *strings.Builder, path string) {
-	if strings.ContainsAny(path, " \t\n") {
+	if strings.ContainsAny(path, " \t\n") || strings.HasPrefix(path, `"`) {
 		builder.WriteString(strconv.Quote(path))
 	} else {
 		builder.WriteString(path)
@@ -1063,9 +1125,6 @@ func checkpointKey(agent, modelName, session, timestamp string) string {
 }
 
 func gitAISessionID(tool, conversation string) string {
-	if validSessionID(conversation) {
-		return conversation
-	}
 	sum := sha256.Sum256([]byte(tool + ":" + conversation))
 	return "s_" + hex.EncodeToString(sum[:])[:14]
 }
@@ -1129,6 +1188,10 @@ func validLegacyID(value string) bool {
 
 func sameNoteBytes(left, right []byte) bool {
 	return bytes.Equal(bytes.TrimSuffix(left, []byte{'\n'}), bytes.TrimSuffix(right, []byte{'\n'}))
+}
+
+func isDifferentNoteConflict(err error) bool {
+	return err != nil && err.Error() == "commit already has a different attribution note"
 }
 
 func importCommits(repo *gitcmd.Repo, revisionRange string) ([]string, error) {

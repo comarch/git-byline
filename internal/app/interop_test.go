@@ -84,6 +84,40 @@ func TestImportCommand(t *testing.T) {
 	}
 }
 
+func TestImportCommandWarnsAndSucceedsForDifferentNote(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "one\ntwo\n")
+	appCommit(t, root, "content")
+	head := strings.TrimSpace(appGit(t, root, "rev-parse", "HEAD"))
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := "file.txt\n  0123456789abcdef 2\n---\n" +
+		"{\"schema_version\":\"authorship/3.0.0\",\"base_commit_sha\":\"" + head +
+		"\",\"prompts\":{\"0123456789abcdef\":{\"agent_id\":{\"tool\":\"cursor\",\"id\":\"c\",\"model\":\"model\"},\"total_additions\":1,\"total_deletions\":0,\"accepted_lines\":1,\"overriden_lines\":0}}}\n"
+	if err := repo.WriteNoteRef("refs/notes/ai", head, []byte(data)); err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(head, "file.txt")
+	if err != nil || !exists {
+		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
+	}
+	if err := repo.WriteNote(head, mustAppInteropNote(t, blob)); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr, err := appRun(root, zeroAppTime(), nil,
+		"import", "--format", "gitai")
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("import = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	if stdout != "imported 0 Git AI notes\n" ||
+		!strings.Contains(stderr, "existing byline note is different") {
+		t.Fatalf("import output = %q, %q", stdout, stderr)
+	}
+}
+
 func TestInteropCommandUsage(t *testing.T) {
 	t.Parallel()
 	root := appRepo(t)

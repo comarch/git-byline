@@ -22,7 +22,7 @@ The mapping is:
 | --- | --- |
 | `s_<14hex>::t_<14hex>` with a `sessions` record | `ai`, with `agent` from `agent_id.tool`, plus `model` and the `s_` session ID |
 | `h_<14hex>` with a `humans` record | `human` |
-| Bare 16-hex key with a `prompts` record | `ai`, with agent and model from the prompt record and the bare key as session |
+| Bare 16-hex or 7-hex key with a `prompts` record | `ai`, with agent and model from the prompt record and the bare key as session |
 | No attestation for a committed line | `untracked` |
 
 Import resolves each path against the committed blob. It rejects missing,
@@ -30,18 +30,28 @@ invalid, overlapping, or out-of-bounds ranges. Lines not present in the Git AI
 attestation are added as `untracked`, so the resulting byline note keeps full
 ordered coverage.
 
-When exporting, git-byline derives a session ID as:
+Git AI v3.0.0 implementations SHOULD accept 7-character legacy hash keys for
+backward compatibility with versions before v1.0. git-byline accepts both
+7-hex and 16-hex legacy keys.
+
+When exporting, git-byline always derives a session ID as:
 
 ```text
 s_ + first 14 hex characters of SHA-256(tool + ":" + conversation_id)
 ```
 
-If a byline session already has the `s_` form, it is preserved. Git AI trace
-IDs use `t_` plus the first 14 hex characters of
+An input conversation ID already having the `s_` form is hashed again. Git AI
+trace IDs use `t_` plus the first 14 hex characters of
 `SHA-256("git-byline:checkpoint:" + checkpoint_sequence)`. This replaces the
 Git AI specification's random trace ID so identical local state produces
-identical output. Human records use a deterministic `git-byline` author
-identity because the byline note stores no committer identity per line.
+identical output. Trace IDs are emitted only when the AI range matches a real
+checkpoint sequence. An unmatched AI range is omitted from the Git AI
+attestation and therefore imports as `untracked`. Human records use a
+deterministic `git-byline` author identity because the byline note stores no
+committer identity per line.
+
+Git AI export quotes paths containing spaces, tabs, or newlines. It also quotes
+paths beginning with a double quote so export and import preserve the path.
 
 ## Agent Trace 0.1
 
