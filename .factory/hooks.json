@@ -10,6 +10,16 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "Bash|Shell|RunCommand|run_command|Execute|execute_command|Terminal",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${FACTORY_PROJECT_DIR:-}\" ]; then printf '%s\\n' 'PromptScript factory hook requires non-empty FACTORY_PROJECT_DIR.' >&2; exit 1; fi; cd \"$FACTORY_PROJECT_DIR\" && git-byline checkpoint portable-factory --type human --hook-input stdin # promptscript-generated:factory-shell-pre",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -19,6 +29,16 @@
           {
             "type": "command",
             "command": "if [ -z \"${FACTORY_PROJECT_DIR:-}\" ]; then printf '%s\\n' 'PromptScript factory hook requires non-empty FACTORY_PROJECT_DIR.' >&2; exit 1; fi; cd \"$FACTORY_PROJECT_DIR\" && git-byline checkpoint portable-factory --type ai --hook-input stdin # promptscript-generated:factory-post-edit",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Shell|RunCommand|run_command|Execute|execute_command|Terminal",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${FACTORY_PROJECT_DIR:-}\" ]; then printf '%s\\n' 'PromptScript factory hook requires non-empty FACTORY_PROJECT_DIR.' >&2; exit 1; fi; cd \"$FACTORY_PROJECT_DIR\" && git-byline checkpoint portable-factory --type ai --hook-input stdin # promptscript-generated:factory-shell-post",
             "timeout": 30
           }
         ]

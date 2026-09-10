@@ -30,6 +30,11 @@ const (
 // ErrOutputLimit reports Git output larger than the supported file bound.
 var ErrOutputLimit = errors.New("git output exceeds the supported limit")
 
+// ErrSnapshotBudget reports a snapshot that exceeds its remaining budget.
+var ErrSnapshotBudget = errors.New("snapshot byte budget exceeded")
+
+var errWorktreeFileLimit = errors.New("worktree file exceeds requested limit")
+
 // Repo describes one Git worktree.
 type Repo struct {
 	Root      string
@@ -277,7 +282,7 @@ func (repo *Repo) PatchID(commit string) (string, error) {
 
 // DirtyPaths returns normalized paths reported by Git as dirty.
 func (repo *Repo) DirtyPaths() ([]string, error) {
-	out, err := repo.run("list dirty paths", nil, "status", "--porcelain=v1", "-z", "-uall")
+	out, err := repo.run("list dirty paths", nil, "-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z", "-uall")
 	if err != nil {
 		return nil, err
 	}
@@ -460,6 +465,13 @@ func (repo *Repo) HashBytes(content []byte) (string, error) {
 
 // WorktreeFile safely reads a regular, non-ignored file inside the worktree.
 func (repo *Repo) WorktreeFile(path string) ([]byte, bool, string, error) {
+	return repo.worktreeFile(path, maxFileBytes)
+}
+
+func (repo *Repo) worktreeFile(path string, limit int64) ([]byte, bool, string, error) {
+	if limit <= 0 {
+		return nil, false, "", fmt.Errorf("%w: path %q exceeds %d bytes", errWorktreeFileLimit, path, limit)
+	}
 	path, err := repo.NormalizeWorktreePath(path)
 	if err != nil {
 		return nil, false, "", err
@@ -492,8 +504,8 @@ func (repo *Repo) WorktreeFile(path string) ([]byte, bool, string, error) {
 	if !inside(repo.Root, resolved) {
 		return nil, false, "", fmt.Errorf("path %q escapes the worktree", path)
 	}
-	if info.Size() > maxFileBytes {
-		return nil, false, "", fmt.Errorf("path %q exceeds %d bytes", path, maxFileBytes)
+	if info.Size() > limit {
+		return nil, false, "", fmt.Errorf("%w: path %q exceeds %d bytes", errWorktreeFileLimit, path, limit)
 	}
 	file, err := os.Open(full)
 	if err != nil {
@@ -507,15 +519,15 @@ func (repo *Repo) WorktreeFile(path string) ([]byte, bool, string, error) {
 	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
 		return nil, false, "", fmt.Errorf("path %q changed while opening", path)
 	}
-	if openedInfo.Size() > maxFileBytes {
-		return nil, false, "", fmt.Errorf("path %q exceeds %d bytes", path, maxFileBytes)
+	if openedInfo.Size() > limit {
+		return nil, false, "", fmt.Errorf("%w: path %q exceeds %d bytes", errWorktreeFileLimit, path, limit)
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxFileBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, false, "", fmt.Errorf("read path %q: %w", path, err)
 	}
-	if len(data) > maxFileBytes {
-		return nil, false, "", fmt.Errorf("path %q exceeds %d bytes", path, maxFileBytes)
+	if int64(len(data)) > limit {
+		return nil, false, "", fmt.Errorf("%w: path %q exceeds %d bytes", errWorktreeFileLimit, path, limit)
 	}
 	if bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data) {
 		return nil, false, "", fmt.Errorf("path %q is binary or invalid UTF-8", path)
@@ -562,6 +574,28 @@ func (repo *Repo) SnapshotWorktree(path string) (model.Snapshot, error) {
 	return model.Snapshot{Path: normalized, Exists: true, Blob: oid}, nil
 }
 
+// SnapshotWorktreeWithLimit hashes one allowed worktree path within maxBytes.
+func (repo *Repo) SnapshotWorktreeWithLimit(path string, maxBytes int64) (model.Snapshot, int64, error) {
+	if maxBytes <= 0 {
+		return model.Snapshot{}, 0, ErrSnapshotBudget
+	}
+	content, exists, normalized, err := repo.worktreeFile(path, maxBytes)
+	if err != nil {
+		if errors.Is(err, errWorktreeFileLimit) {
+			return model.Snapshot{}, 0, ErrSnapshotBudget
+		}
+		return model.Snapshot{}, 0, err
+	}
+	if !exists {
+		return model.Snapshot{Path: normalized, Exists: false}, 0, nil
+	}
+	oid, err := repo.HashBytes(content)
+	if err != nil {
+		return model.Snapshot{}, 0, err
+	}
+	return model.Snapshot{Path: normalized, Exists: true, Blob: oid}, int64(len(content)), nil
+}
+
 // Ignored reports whether path is ignored by Git.
 func (repo *Repo) Ignored(path string) (bool, error) {
 	out, err := repo.run("check ignored path", nil, "check-ignore", "-q", "--", path)
@@ -594,9 +628,10 @@ func NormalizePath(path string) (string, error) {
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", errors.New("path escapes the worktree")
 	}
-	first, _, _ := strings.Cut(clean, "/")
-	if strings.EqualFold(first, ".git") {
-		return "", errors.New("Git administrative paths are not allowed")
+	for _, component := range strings.Split(clean, "/") {
+		if strings.EqualFold(component, ".git") {
+			return "", errors.New("Git administrative paths are not allowed")
+		}
 	}
 	return clean, nil
 }

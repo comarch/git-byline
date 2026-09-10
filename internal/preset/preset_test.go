@@ -24,6 +24,14 @@ func TestParseToolHooks(t *testing.T) {
 			payload: `{"session_id":"session-1","tool_name":"Edit","model":"test-model","tool_input":{"file_path":"a.go"}}`,
 		},
 		{
+			name: "droid shell pre", preset: "droid", author: model.AuthorHuman, handled: true,
+			payload: `{"tool_name":"Bash","model":"test-model"}`,
+		},
+		{
+			name: "claude shell post", preset: "claude", author: model.AuthorAI, handled: true,
+			payload: `{"session_id":"session-1","tool_name":"Bash","model":"test-model"}`,
+		},
+		{
 			name: "qualified droid create", preset: "droid", author: model.AuthorHuman, handled: true, paths: 1,
 			payload: `{"tool_name":"functions.Create","tool_input":{"file_path":"a.go"}}`,
 		},
@@ -72,6 +80,15 @@ func TestParseToolHooks(t *testing.T) {
 			if err == nil && len(event.Paths) != test.paths {
 				t.Fatalf("paths = %v, want %d", event.Paths, test.paths)
 			}
+			if err == nil && strings.Contains(test.name, "shell") {
+				wantKind := model.CheckpointKindShellPre
+				if test.author == model.AuthorAI {
+					wantKind = model.CheckpointKindShellPost
+				}
+				if event.Kind != wantKind || len(event.Paths) != 0 {
+					t.Fatalf("shell event = %+v, want kind %q without paths", event, wantKind)
+				}
+			}
 		})
 	}
 }
@@ -98,6 +115,31 @@ func TestParseAgentV1(t *testing.T) {
 		if _, _, err := Parse("agent-v1", "", strings.NewReader(invalid)); err == nil {
 			t.Fatalf("Parse accepted %s", invalid)
 		}
+	}
+	for _, test := range []struct {
+		name string
+		kind string
+		want model.Author
+	}{
+		{"shell pre", model.CheckpointKindShellPre, model.AuthorHuman},
+		{"shell post", model.CheckpointKindShellPost, model.AuthorAI},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			payload := `{"type":"` + test.kind + `","agent_name":"agent","model":"model","conversation_id":"session"}`
+			event, handled, err := Parse("agent-v1", "", strings.NewReader(payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !handled || event.Kind != test.kind || event.Type != test.want || len(event.Paths) != 0 {
+				t.Fatalf("event = %+v, handled = %t", event, handled)
+			}
+			if test.want == model.AuthorAI &&
+				(event.Agent != "agent" || event.Model != "model" || event.Session != "session") {
+				t.Fatalf("shell post metadata = %+v", event)
+			}
+		})
 	}
 }
 
@@ -134,6 +176,36 @@ func TestParsePortableHooks(t *testing.T) {
 			}
 		})
 	}
+	for _, agent := range portableAgents {
+		agent := agent
+		t.Run("shell-"+agent, func(t *testing.T) {
+			t.Parallel()
+			payload := `{"toolName":"run_command","model":"model","conversationId":"session"}`
+			event, handled, err := Parse("portable-"+agent, model.AuthorAI, strings.NewReader(payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !handled || event.Kind != model.CheckpointKindShellPost || len(event.Paths) != 0 ||
+				event.Agent != agent || event.Model != "model" || event.Session != "session" {
+				t.Fatalf("shell event = %+v, handled = %t", event, handled)
+			}
+		})
+	}
+	for _, agent := range []string{"vscode", "windsurf"} {
+		agent := agent
+		t.Run("path-only-"+agent, func(t *testing.T) {
+			t.Parallel()
+			event, handled, err := Parse("portable-"+agent, model.AuthorAI,
+				strings.NewReader(`{"path":"path-only.go"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !handled || event.Kind != model.CheckpointKindEdit ||
+				len(event.Paths) != 1 || event.Paths[0] != "path-only.go" {
+				t.Fatalf("path-only event = %+v, handled = %t", event, handled)
+			}
+		})
+	}
 	if _, _, err := Parse("portable-other", model.AuthorAI, strings.NewReader(`{"file":"a"}`)); err == nil {
 		t.Fatal("Parse accepted an unknown portable agent")
 	}
@@ -143,6 +215,18 @@ func TestParsePortableHooks(t *testing.T) {
 	if _, handled, err := Parse("portable-windsurf", model.AuthorAI,
 		strings.NewReader(`{"hook_event_name":"post_read_code","file_path":"a.go"}`)); err != nil || handled {
 		t.Fatalf("read-only portable event = handled %t, error %v", handled, err)
+	}
+}
+
+func TestShellEventIdentifier(t *testing.T) {
+	t.Parallel()
+	event, handled, err := Parse("droid", model.AuthorAI,
+		strings.NewReader(`{"tool_name":"Bash","tool_call_id":"call-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || event.EventID != "call-1" || event.Kind != model.CheckpointKindShellPost {
+		t.Fatalf("shell event = %+v, handled = %t", event, handled)
 	}
 }
 

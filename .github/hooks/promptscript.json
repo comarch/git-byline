@@ -9,6 +9,14 @@
         "cwd": ".",
         "matcher": "apply_patch|create_file|edit_file|write_file|replace_string_in_file|multi_replace_string_in_file",
         "timeoutSec": 30
+      },
+      {
+        "type": "command",
+        "bash": "git-byline checkpoint portable-copilot --type human --hook-input stdin # promptscript-generated:copilot-shell-pre",
+        "powershell": "& 'git-byline' 'checkpoint' 'portable-copilot' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:copilot-shell-pre",
+        "cwd": ".",
+        "matcher": "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell",
+        "timeoutSec": 30
       }
     ],
     "postToolUse": [
@@ -18,6 +26,14 @@
         "powershell": "& 'git-byline' 'checkpoint' 'portable-copilot' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:copilot-post-edit",
         "cwd": ".",
         "matcher": "apply_patch|create_file|edit_file|write_file|replace_string_in_file|multi_replace_string_in_file",
+        "timeoutSec": 30
+      },
+      {
+        "type": "command",
+        "bash": "git-byline checkpoint portable-copilot --type ai --hook-input stdin # promptscript-generated:copilot-shell-post",
+        "powershell": "& 'git-byline' 'checkpoint' 'portable-copilot' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:copilot-shell-post",
+        "cwd": ".",
+        "matcher": "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell",
         "timeoutSec": 30
       }
     ]

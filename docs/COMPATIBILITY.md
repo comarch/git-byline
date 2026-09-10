@@ -42,6 +42,24 @@ file, but interactive file switching requires JavaScript.
 Unknown valid tool events are ignored. Malformed supported events fail without
 writing a checkpoint.
 
+## Shell attribution
+
+Shell hooks are supported for Droid, Claude Code, and the nine portable agent
+surfaces. The pre-shell checkpoint records the dirty worktree paths and their
+blob IDs. The post-shell checkpoint records only paths whose current blob
+differs from the pre-shell snapshot. Paths come from Git status, not from the
+shell payload. When a shell payload carries a tool call or event identifier,
+git-byline stores it and pairs the post event with the matching pre event.
+Without an identifier, it pairs the post event with the latest unpaired
+pre-shell checkpoint. Concurrent overlapping shell commands without
+identifiers remain a documented race limitation.
+
+Blob comparison avoids claiming unrelated dirty files merely because they were
+already present. It does not remove the concurrent-edit race: a human edit to a
+tracked path during a long-running shell command can be included in the
+post-shell blob and attributed to the agent. This is a known limitation, not a
+provenance guarantee.
+
 PromptScript emits native hook configuration only for platforms with project
 hook APIs. Other instruction targets can consume generated project guidance,
 but cannot provide edit-event attribution without an external watcher or

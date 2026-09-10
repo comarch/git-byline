@@ -271,6 +271,36 @@ func TestProductCommandUsageAndFailures(t *testing.T) {
 	}
 }
 
+func TestCheckpointInputDeadline(t *testing.T) {
+	oldTimeout := checkpointInputTimeoutNanos.Swap(int64(10 * time.Millisecond))
+	defer checkpointInputTimeoutNanos.Store(oldTimeout)
+
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	root := t.TempDir()
+	done := make(chan struct {
+		code int
+		err  error
+	}, 1)
+	go func() {
+		code, _, _, err := appRun(root, time.Time{}, reader,
+			"checkpoint", "droid", "--type", "ai", "--hook-input", "stdin")
+		done <- struct {
+			code int
+			err  error
+		}{code: code, err: err}
+	}()
+	select {
+	case result := <-done:
+		if result.code != ExitFailure || result.err == nil ||
+			!strings.Contains(result.err.Error(), "timed out") {
+			t.Fatalf("checkpoint deadline = %d, %v", result.code, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("checkpoint input did not time out")
+	}
+}
+
 func appRun(root string, now time.Time, input io.Reader, args ...string) (int, string, string, error) {
 	if input == nil {
 		input = strings.NewReader("")

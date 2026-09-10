@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,34 @@ func TestParseSemver(t *testing.T) {
 	for _, tt := range tests {
 		if got := parseSemver(tt.in); got != tt.want {
 			t.Errorf("parseSemver(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestWindsurfGeneratedHooksAvoidDuplicateShellWiring(t *testing.T) {
+	t.Parallel()
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".windsurf", "hooks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Hooks map[string][]struct {
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	for event, hooks := range config.Hooks {
+		if len(hooks) != 1 {
+			t.Fatalf("%s has %d generated hooks, want one", event, len(hooks))
+		}
+		if strings.Contains(hooks[0].Command, "windsurf-shell-") {
+			t.Fatalf("%s contains a duplicate shell hook: %q", event, hooks[0].Command)
 		}
 	}
 }

@@ -31,3 +31,194 @@
     """
   }
 }
+
+@hooks {
+  factory-shell-pre: {
+    event: "pre-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute_command|Terminal"
+    command: ["git-byline", "checkpoint", "portable-factory", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-shell state"
+    enabled: false
+    targets: { factory: { enabled: true } }
+  }
+  factory-shell-post: {
+    event: "post-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute_command|Terminal"
+    command: ["git-byline", "checkpoint", "portable-factory", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI shell changes"
+    enabled: false
+    targets: { factory: { enabled: true } }
+  }
+
+  claude-shell-pre: {
+    event: "pre-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute_command|Terminal"
+    command: ["git-byline", "checkpoint", "portable-claude", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-shell state"
+    enabled: false
+    targets: { claude: { enabled: true } }
+  }
+  claude-shell-post: {
+    event: "post-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute_command|Terminal"
+    command: ["git-byline", "checkpoint", "portable-claude", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI shell changes"
+    enabled: false
+    targets: { claude: { enabled: true } }
+  }
+
+  copilot-shell-pre: {
+    event: "pre-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-copilot", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-shell state"
+    enabled: false
+    targets: { github: { enabled: true } }
+  }
+  copilot-shell-post: {
+    event: "post-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-copilot", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI shell changes"
+    enabled: false
+    targets: { github: { enabled: true } }
+  }
+
+  vscode-shell-pre: {
+    event: "pre-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-vscode", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-shell state"
+    enabled: false
+    targets: { vscode: { enabled: true } }
+  }
+  vscode-shell-post: {
+    event: "post-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-vscode", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI shell changes"
+    enabled: false
+    targets: { vscode: { enabled: true } }
+  }
+
+  cursor-shell-pre: {
+    event: "pre-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-cursor", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-shell state"
+    enabled: false
+    targets: { cursor: { enabled: true } }
+  }
+  cursor-shell-post: {
+    event: "post-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-cursor", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI shell changes"
+    enabled: false
+    targets: { cursor: { enabled: true } }
+  }
+
+  codex-shell-pre: {
+    event: "pre-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-codex", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-shell state"
+    enabled: false
+    targets: { codex: { enabled: true } }
+  }
+  codex-shell-post: {
+    event: "post-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-codex", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI shell changes"
+    enabled: false
+    targets: { codex: { enabled: true } }
+  }
+
+  gemini-shell-pre: {
+    event: "pre-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-gemini", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-shell state"
+    enabled: false
+    targets: { gemini: { enabled: true } }
+  }
+  gemini-shell-post: {
+    event: "post-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-gemini", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI shell changes"
+    enabled: false
+    targets: { gemini: { enabled: true } }
+  }
+
+  windsurf-shell-pre: {
+    event: "pre-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-windsurf", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-shell state"
+    enabled: false
+    targets: { windsurf: { enabled: false } }
+  }
+  windsurf-shell-post: {
+    event: "post-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-windsurf", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI shell changes"
+    enabled: false
+    targets: { windsurf: { enabled: false } }
+  }
+
+  grok-shell-pre: {
+    event: "pre-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-grok", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing pre-shell state"
+    enabled: false
+    targets: { grok: { enabled: true } }
+  }
+  grok-shell-post: {
+    event: "post-tool-use"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
+    command: ["git-byline", "checkpoint", "portable-grok", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    statusMessage: "git-byline: capturing AI shell changes"
+    enabled: false
+    targets: { grok: { enabled: true } }
+  }
+}

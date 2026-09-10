@@ -26,7 +26,11 @@ const (
 	maxBlameCollectionFiles = notes.MaxFiles
 	maxBlameCollectionLines = 100_000
 	maxBlameCollectionBytes = 16 << 20
+	maxShellPaths           = 500
+	maxShellSnapshotBytes   = 16 << 20
 )
+
+var errShellPathLimit = errors.New("shell event contains more than 500 paths")
 
 // CaptureResult reports a checkpoint write.
 type CaptureResult struct {
@@ -34,8 +38,25 @@ type CaptureResult struct {
 	Warnings []string
 }
 
-// Capture snapshots paths from one normalized agent event.
+// Capture records one normalized agent event.
 func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResult, error) {
+	kind := event.Kind
+	if kind == "" {
+		kind = model.CheckpointKindEdit
+	}
+	switch kind {
+	case model.CheckpointKindEdit:
+	case model.CheckpointKindShellPre:
+		if event.Type != model.AuthorHuman {
+			return CaptureResult{}, errors.New("shell_pre event must be human")
+		}
+	case model.CheckpointKindShellPost:
+		if event.Type != model.AuthorAI {
+			return CaptureResult{}, errors.New("shell_post event must be ai")
+		}
+	default:
+		return CaptureResult{}, fmt.Errorf("unsupported checkpoint kind %q", kind)
+	}
 	attribution := model.Attribution{Author: event.Type}
 	if event.Type == model.AuthorAI {
 		attribution.Agent = event.Agent
@@ -44,6 +65,9 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 	}
 	if err := model.ValidateAttribution(attribution); err != nil {
 		return CaptureResult{}, fmt.Errorf("validate event attribution: %w", err)
+	}
+	if err := model.ValidateEventID(event.EventID); err != nil {
+		return CaptureResult{}, fmt.Errorf("validate event identifier: %w", err)
 	}
 	dataStore := store.New(repo.GitDir)
 	held, err := lock.Acquire(dataStore.LockPath(), lockTimeout)
@@ -69,9 +93,43 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 	if len(records) > 0 && records[len(records)-1].Seq >= seq {
 		seq = records[len(records)-1].Seq + 1
 	}
-	snapshots := make([]model.Snapshot, 0, len(event.Paths))
+	paths := append([]string(nil), event.Paths...)
+	var before model.Checkpoint
+	if kind == model.CheckpointKindShellPre {
+		var err error
+		paths, err = shellDirtyPaths(repo)
+		if err != nil {
+			if errors.Is(err, errShellPathLimit) {
+				warnings = append(warnings, "ignored shell event with more than 500 paths")
+				return CaptureResult{Warnings: warnings}, nil
+			}
+			return CaptureResult{}, err
+		}
+	} else if kind == model.CheckpointKindShellPost {
+		var found bool
+		before, found = shellPreForPost(records, event.EventID)
+		if !found {
+			warnings = append(warnings, "ignored shell_post without a matching shell_pre")
+			return CaptureResult{Warnings: warnings}, nil
+		}
+		if before.BaseCommit != head {
+			warnings = append(warnings, "ignored shell_post with a different base commit")
+			return CaptureResult{Warnings: warnings}, nil
+		}
+		var err error
+		paths, err = shellPostPaths(repo, before)
+		if err != nil {
+			if errors.Is(err, errShellPathLimit) {
+				warnings = append(warnings, "ignored shell event with more than 500 paths")
+				return CaptureResult{Warnings: warnings}, nil
+			}
+			return CaptureResult{}, err
+		}
+	}
+	snapshots := make([]model.Snapshot, 0, len(paths))
 	seen := map[string]bool{}
-	for _, path := range event.Paths {
+	var shellBytes int64
+	for _, path := range paths {
 		normalized, err := repo.NormalizeWorktreePath(path)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("skipped %q: %v", path, err))
@@ -81,22 +139,52 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 			continue
 		}
 		seen[normalized] = true
-		snapshot, err := repo.SnapshotWorktree(normalized)
+		var snapshot model.Snapshot
+		var snapshotBytes int64
+		if kind == model.CheckpointKindShellPre || kind == model.CheckpointKindShellPost {
+			remaining := int64(maxShellSnapshotBytes) - shellBytes
+			snapshot, snapshotBytes, err = repo.SnapshotWorktreeWithLimit(normalized, remaining)
+		} else {
+			snapshot, err = repo.SnapshotWorktree(normalized)
+		}
 		if err != nil {
+			if (kind == model.CheckpointKindShellPre || kind == model.CheckpointKindShellPost) &&
+				errors.Is(err, gitcmd.ErrSnapshotBudget) {
+				warnings = append(warnings, "stopped shell snapshot at the 16 MiB aggregate budget")
+				break
+			}
 			warnings = append(warnings, fmt.Sprintf("skipped %q: %v", normalized, err))
 			continue
 		}
+		shellBytes += snapshotBytes
+		if kind == model.CheckpointKindShellPost {
+			previous, err := shellPreviousSnapshot(repo, head, before, normalized)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("skipped %q: %v", normalized, err))
+				continue
+			}
+			if snapshotsEqualWorktree(previous, snapshot) {
+				continue
+			}
+		}
 		snapshots = append(snapshots, snapshot)
 	}
-	if len(snapshots) == 0 {
+	if kind == model.CheckpointKindShellPre && len(records) > 0 &&
+		records[len(records)-1].Kind == model.CheckpointKindShellPre &&
+		records[len(records)-1].EventID == event.EventID &&
+		snapshotsEqualCheckpoints(records[len(records)-1].Files, snapshots) {
+		return CaptureResult{}, nil
+	}
+	if len(snapshots) == 0 && kind == model.CheckpointKindEdit {
 		return CaptureResult{Warnings: warnings}, nil
 	}
 	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i].Path < snapshots[j].Path })
 	record := model.Checkpoint{
 		Version:    model.CheckpointVersion,
-		Kind:       "edit",
+		Kind:       kind,
 		Seq:        seq,
 		BaseCommit: head,
+		EventID:    event.EventID,
 		TS:         now.UTC().Format(time.RFC3339Nano),
 		Type:       event.Type,
 		Files:      snapshots,
@@ -117,6 +205,101 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 		return CaptureResult{}, err
 	}
 	return CaptureResult{Recorded: len(snapshots), Warnings: warnings}, nil
+}
+
+func shellDirtyPaths(repo *gitcmd.Repo) ([]string, error) {
+	paths, err := repo.DirtyPaths()
+	if err != nil {
+		return nil, fmt.Errorf("list shell paths: %w", err)
+	}
+	if len(paths) > maxShellPaths {
+		return nil, errShellPathLimit
+	}
+	return paths, nil
+}
+
+func shellPostPaths(repo *gitcmd.Repo, before model.Checkpoint) ([]string, error) {
+	paths, err := repo.DirtyPaths()
+	if err != nil {
+		return nil, fmt.Errorf("list shell paths: %w", err)
+	}
+	unique := make(map[string]bool, len(paths)+len(before.Files))
+	for _, path := range paths {
+		unique[path] = true
+	}
+	for _, file := range before.Files {
+		unique[file.Path] = true
+	}
+	paths = paths[:0]
+	for path := range unique {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	if len(paths) > maxShellPaths {
+		return nil, errShellPathLimit
+	}
+	return paths, nil
+}
+
+func shellPreForPost(records []model.Checkpoint, eventID string) (model.Checkpoint, bool) {
+	var unpaired []model.Checkpoint
+	for _, record := range records {
+		switch record.Kind {
+		case model.CheckpointKindShellPre:
+			unpaired = append(unpaired, record)
+		case model.CheckpointKindShellPost:
+			index := latestShellPreIndex(unpaired, record.EventID, record.EventID != "")
+			if index >= 0 {
+				unpaired = append(unpaired[:index], unpaired[index+1:]...)
+			}
+		}
+	}
+	index := latestShellPreIndex(unpaired, eventID, eventID != "")
+	if index < 0 {
+		return model.Checkpoint{}, false
+	}
+	return unpaired[index], true
+}
+
+func latestShellPreIndex(records []model.Checkpoint, eventID string, requireID bool) int {
+	for index := len(records) - 1; index >= 0; index-- {
+		if !requireID || records[index].EventID == eventID {
+			return index
+		}
+	}
+	return -1
+}
+
+func shellPreviousSnapshot(repo *gitcmd.Repo, head string, before model.Checkpoint, path string) (model.Snapshot, error) {
+	for _, file := range before.Files {
+		if file.Path == path {
+			return file, nil
+		}
+	}
+	if head == "" {
+		return model.Snapshot{Path: path}, nil
+	}
+	blob, exists, err := repo.BlobID(head, path)
+	if err != nil {
+		return model.Snapshot{}, err
+	}
+	return model.Snapshot{Path: path, Exists: exists, Blob: blob}, nil
+}
+
+func snapshotsEqualWorktree(left, right model.Snapshot) bool {
+	return left.Exists == right.Exists && left.Blob == right.Blob
+}
+
+func snapshotsEqualCheckpoints(left, right []model.Snapshot) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func retainedBlobs(records []model.Checkpoint, state model.State, extra model.Checkpoint) []string {

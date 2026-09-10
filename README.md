@@ -240,9 +240,10 @@ The generic agent-v1 adapter accepts its standard JSON payload through stdin:
 git byline checkpoint agent-v1 --hook-input stdin
 ```
 
-The payload selects the event type itself. Required fields for both `human`
-and `ai_agent` events are `type`, `agent_name`, and `edited_filepaths`;
+The payload selects the event type itself. Required fields for `human` and
+`ai_agent` edit events are `type`, `agent_name`, and `edited_filepaths`;
 `agent_name` identifies the watcher or agent surface, not the author kind.
+Shell events use `shell_pre` or `shell_post` and omit `edited_filepaths`.
 `model` and `conversation_id` are optional:
 
 ```json

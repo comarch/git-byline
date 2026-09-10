@@ -16,12 +16,14 @@ import (
 
 const MaxInputBytes = 1 << 20
 
-// Event is one normalized agent edit.
+// Event is one normalized agent event.
 type Event struct {
+	Kind    string
 	Type    model.Author
 	Agent   string
 	Model   string
 	Session string
+	EventID string
 	Paths   []string
 }
 
@@ -68,29 +70,55 @@ func parseToolHook(agent string, explicit model.Author, data []byte, allowed []s
 		return Event{}, false, errors.New("explicit type must be human or ai")
 	}
 	var payload struct {
-		SessionID string          `json:"session_id"`
-		ToolName  string          `json:"tool_name"`
-		ToolInput json.RawMessage `json:"tool_input"`
-		Model     string          `json:"model"`
+		SessionID       string          `json:"session_id"`
+		SessionIDCamel  string          `json:"sessionId"`
+		ConversationID  string          `json:"conversation_id"`
+		ToolName        string          `json:"tool_name"`
+		ToolNameCamel   string          `json:"toolName"`
+		ToolInput       json.RawMessage `json:"tool_input"`
+		ToolInputCamel  json.RawMessage `json:"toolInput"`
+		Model           string          `json:"model"`
+		ModelName       string          `json:"model_name"`
+		ModelNameCamel  string          `json:"modelName"`
+		ID              string          `json:"id"`
+		EventID         string          `json:"event_id"`
+		EventIDCamel    string          `json:"eventId"`
+		ToolUseID       string          `json:"tool_use_id"`
+		ToolUseIDCamel  string          `json:"toolUseId"`
+		ToolCallID      string          `json:"tool_call_id"`
+		ToolCallIDCamel string          `json:"toolCallId"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return Event{}, false, fmt.Errorf("decode %s hook input: %w", agent, err)
 	}
-	tool := payload.ToolName
+	tool := firstValue(payload.ToolName, payload.ToolNameCamel)
 	if index := strings.LastIndex(tool, "."); index >= 0 {
 		tool = tool[index+1:]
+	}
+	eventID := firstValue(
+		payload.ID, payload.EventID, payload.EventIDCamel,
+		payload.ToolUseID, payload.ToolUseIDCamel,
+		payload.ToolCallID, payload.ToolCallIDCamel,
+	)
+	if isShellOperation(tool) {
+		return shellEvent(agent, explicit, firstValue(payload.Model, payload.ModelName, payload.ModelNameCamel),
+			firstValue(payload.SessionID, payload.SessionIDCamel, payload.ConversationID), eventID)
 	}
 	if !slices.Contains(allowed, tool) {
 		return Event{}, false, nil
 	}
-	if len(payload.ToolInput) == 0 {
+	rawToolInput := payload.ToolInput
+	if len(rawToolInput) == 0 {
+		rawToolInput = payload.ToolInputCamel
+	}
+	if len(rawToolInput) == 0 {
 		return Event{}, false, errors.New("tool_input is missing")
 	}
 	var toolInput struct {
 		FilePath string `json:"file_path"`
 		Patch    string `json:"patch"`
 	}
-	if err := json.Unmarshal(payload.ToolInput, &toolInput); err != nil {
+	if err := json.Unmarshal(rawToolInput, &toolInput); err != nil {
 		return Event{}, false, fmt.Errorf("decode tool_input: %w", err)
 	}
 	var paths []string
@@ -106,7 +134,7 @@ func parseToolHook(agent string, explicit model.Author, data []byte, allowed []s
 		}
 		paths = []string{toolInput.FilePath}
 	}
-	modelName := payload.Model
+	modelName := firstValue(payload.Model, payload.ModelName, payload.ModelNameCamel)
 	if modelName == "" {
 		modelName = "unknown"
 	}
@@ -114,11 +142,11 @@ func parseToolHook(agent string, explicit model.Author, data []byte, allowed []s
 	if len(paths) == 0 {
 		return Event{}, false, errors.New("hook input contains no usable file path")
 	}
-	event := Event{Type: explicit, Paths: paths}
+	event := Event{Kind: model.CheckpointKindEdit, Type: explicit, Paths: paths, EventID: eventID}
 	if explicit == model.AuthorAI {
 		event.Agent = agent
 		event.Model = modelName
-		event.Session = payload.SessionID
+		event.Session = firstValue(payload.SessionID, payload.SessionIDCamel, payload.ConversationID)
 		if err := model.ValidateAttribution(model.Attribution{
 			Author: event.Type, Agent: event.Agent, Model: event.Model, Session: event.Session,
 		}); err != nil {
@@ -135,24 +163,61 @@ func parseAgentV1(data []byte) (Event, bool, error) {
 		Model           string   `json:"model"`
 		ConversationID  string   `json:"conversation_id"`
 		EditedFilepaths []string `json:"edited_filepaths"`
+		ID              string   `json:"id"`
+		EventID         string   `json:"event_id"`
+		EventIDCamel    string   `json:"eventId"`
+		ToolUseID       string   `json:"tool_use_id"`
+		ToolUseIDCamel  string   `json:"toolUseId"`
+		ToolCallID      string   `json:"tool_call_id"`
+		ToolCallIDCamel string   `json:"toolCallId"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return Event{}, false, fmt.Errorf("decode agent-v1 input: %w", err)
 	}
 	var author model.Author
+	kind := model.CheckpointKindEdit
 	switch payload.Type {
 	case "human":
 		author = model.AuthorHuman
 	case "ai_agent":
 		author = model.AuthorAI
+	case model.CheckpointKindShellPre:
+		author = model.AuthorHuman
+		kind = model.CheckpointKindShellPre
+	case model.CheckpointKindShellPost:
+		author = model.AuthorAI
+		kind = model.CheckpointKindShellPost
 	default:
 		return Event{}, false, fmt.Errorf("unsupported agent-v1 type %q", payload.Type)
 	}
 	if payload.AgentName == "" {
 		return Event{}, false, errors.New("agent_name is missing")
 	}
-	if len(payload.EditedFilepaths) == 0 {
+	if kind == model.CheckpointKindEdit && len(payload.EditedFilepaths) == 0 {
 		return Event{}, false, errors.New("edited_filepaths is empty")
+	}
+	if kind != model.CheckpointKindEdit {
+		modelName := payload.Model
+		if modelName == "" {
+			modelName = "unknown"
+		}
+		eventID := firstValue(
+			payload.ID, payload.EventID, payload.EventIDCamel,
+			payload.ToolUseID, payload.ToolUseIDCamel,
+			payload.ToolCallID, payload.ToolCallIDCamel,
+		)
+		event := Event{Kind: kind, Type: author, EventID: eventID}
+		if author == model.AuthorAI {
+			event.Agent = payload.AgentName
+			event.Model = modelName
+			event.Session = payload.ConversationID
+			if err := model.ValidateAttribution(model.Attribution{
+				Author: event.Type, Agent: event.Agent, Model: event.Model, Session: event.Session,
+			}); err != nil {
+				return Event{}, false, err
+			}
+		}
+		return event, true, nil
 	}
 	modelName := payload.Model
 	if modelName == "" {
@@ -162,7 +227,16 @@ func parseAgentV1(data []byte) (Event, bool, error) {
 	if len(paths) == 0 {
 		return Event{}, false, errors.New("edited_filepaths contains no usable path")
 	}
-	event := Event{Type: author, Paths: paths}
+	event := Event{
+		Kind: kind,
+		Type: author,
+		EventID: firstValue(
+			payload.ID, payload.EventID, payload.EventIDCamel,
+			payload.ToolUseID, payload.ToolUseIDCamel,
+			payload.ToolCallID, payload.ToolCallIDCamel,
+		),
+		Paths: paths,
+	}
 	if author == model.AuthorAI {
 		event.Agent = payload.AgentName
 		event.Model = modelName
@@ -196,6 +270,13 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		EventNameCamel       string          `json:"eventName"`
 		ToolName             string          `json:"tool_name"`
 		ToolNameCamel        string          `json:"toolName"`
+		ID                   string          `json:"id"`
+		EventID              string          `json:"event_id"`
+		EventIDCamel         string          `json:"eventId"`
+		ToolUseID            string          `json:"tool_use_id"`
+		ToolUseIDCamel       string          `json:"toolUseId"`
+		ToolCallID           string          `json:"tool_call_id"`
+		ToolCallIDCamel      string          `json:"toolCallId"`
 		ToolInput            json.RawMessage `json:"tool_input"`
 		Arguments            json.RawMessage `json:"arguments"`
 		ToolArgs             json.RawMessage `json:"toolArgs"`
@@ -212,7 +293,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return Event{}, false, fmt.Errorf("decode %s hook input: %w", agent, err)
 	}
-	operation := firstValue(
+	shell := isShellOperation(
 		payload.HookEventName,
 		payload.HookEventNameCamel,
 		payload.EventName,
@@ -220,8 +301,25 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		payload.ToolName,
 		payload.ToolNameCamel,
 	)
-	if (agent == "windsurf" || agent == "vscode") && operation == "" {
-		return Event{}, false, nil
+	modelName := payload.Model
+	if modelName == "" {
+		modelName = firstValue(payload.ModelName, payload.ModelNameCamel, "unknown")
+	}
+	session := firstValue(
+		payload.SessionID,
+		payload.SessionIDCamel,
+		payload.ConversationID,
+		payload.ConversationIDCamel,
+		payload.ThreadID,
+		payload.ThreadIDCamel,
+	)
+	eventID := firstValue(
+		payload.ID, payload.EventID, payload.EventIDCamel,
+		payload.ToolUseID, payload.ToolUseIDCamel,
+		payload.ToolCallID, payload.ToolCallIDCamel,
+	)
+	if shell {
+		return shellEvent(agent, explicit, modelName, session, eventID)
 	}
 	if readOnlyOperation(payload.HookEventName) ||
 		readOnlyOperation(payload.HookEventNameCamel) ||
@@ -282,19 +380,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 	if len(paths) == 0 {
 		return Event{}, false, nil
 	}
-	modelName := payload.Model
-	if modelName == "" {
-		modelName = firstValue(payload.ModelName, payload.ModelNameCamel, "unknown")
-	}
-	session := firstValue(
-		payload.SessionID,
-		payload.SessionIDCamel,
-		payload.ConversationID,
-		payload.ConversationIDCamel,
-		payload.ThreadID,
-		payload.ThreadIDCamel,
-	)
-	event := Event{Type: explicit, Paths: paths}
+	event := Event{Kind: model.CheckpointKindEdit, Type: explicit, Paths: paths, EventID: eventID}
 	if explicit == model.AuthorAI {
 		event.Agent = agent
 		event.Model = modelName
@@ -306,6 +392,58 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		}
 	}
 	return event, true, nil
+}
+
+func shellEvent(agent string, explicit model.Author, modelName, session, eventID string) (Event, bool, error) {
+	if explicit != model.AuthorHuman && explicit != model.AuthorAI {
+		return Event{}, false, errors.New("explicit type must be human or ai")
+	}
+	if err := model.ValidateEventID(eventID); err != nil {
+		return Event{}, false, err
+	}
+	event := Event{
+		Kind:    model.CheckpointKindShellPre,
+		Type:    explicit,
+		EventID: eventID,
+	}
+	if explicit == model.AuthorAI {
+		if modelName == "" {
+			modelName = "unknown"
+		}
+		event.Kind = model.CheckpointKindShellPost
+		event.Agent = agent
+		event.Model = modelName
+		event.Session = session
+		if err := model.ValidateAttribution(model.Attribution{
+			Author: event.Type, Agent: event.Agent, Model: event.Model, Session: event.Session,
+		}); err != nil {
+			return Event{}, false, err
+		}
+	}
+	return event, true, nil
+}
+
+func isShellOperation(values ...string) bool {
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		value = strings.ReplaceAll(value, "-", "_")
+		value = strings.ReplaceAll(value, " ", "_")
+		if value == "" {
+			continue
+		}
+		switch value {
+		case "bash", "shell", "terminal", "command", "run", "exec", "execute",
+			"run_command", "execute_command", "shell_command", "terminal_command",
+			"run_shell_command", "execute_shell_command", "pre_run_command",
+			"post_run_command", "pre_execute_command", "post_execute_command":
+			return true
+		}
+		if strings.Contains(value, "bash") || strings.Contains(value, "command") ||
+			strings.Contains(value, "shell") || strings.Contains(value, "terminal") {
+			return true
+		}
+	}
+	return false
 }
 
 func firstValue(values ...string) string {

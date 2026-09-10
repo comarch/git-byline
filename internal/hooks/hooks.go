@@ -230,62 +230,75 @@ func changeAgentConfig(path, agent, executable string, install bool) (bool, erro
 	return true, nil
 }
 
-func updateAgentEvents(eventConfig map[string]any, specs map[string]hookSpec, install bool) (bool, error) {
+func updateAgentEvents(eventConfig map[string]any, specs map[string][]hookSpec, install bool) (bool, error) {
 	changed := false
-	for event, spec := range specs {
+	for event, eventSpecs := range specs {
 		values, err := objectArray(eventConfig[event])
 		if err != nil {
 			return false, fmt.Errorf("read %s: %w", event, err)
 		}
-		filtered := make([]any, 0, len(values)+1)
-		found := false
-		for _, value := range values {
-			if install && !found {
-				updated, managed, current := updateManagedHook(value, spec)
-				if managed {
-					filtered = append(filtered, updated)
-					found = true
-					if !current {
-						changed = true
-					}
-					continue
-				}
+		for _, spec := range eventSpecs {
+			var specChanged bool
+			values, specChanged, err = updateAgentEvent(values, spec, install)
+			if err != nil {
+				return false, fmt.Errorf("update %s: %w", event, err)
 			}
-			remaining, removed, current := removeManagedHook(value, spec)
-			if removed {
-				if install && current && !found {
-					filtered = append(filtered, value)
-					found = true
-					continue
-				}
-				if remaining != nil {
-					filtered = append(filtered, remaining)
-				}
-				if install && !found {
-					filtered = append(filtered, managedEntry(spec))
-					found = true
-				}
-				changed = true
-				continue
-			}
-			filtered = append(filtered, value)
+			changed = changed || specChanged
 		}
-		if install && !found {
-			filtered = append(filtered, managedEntry(spec))
-			changed = true
-		}
-		if !install && len(filtered) != len(values) {
-			changed = true
-		}
-		if len(filtered) == 0 {
+		if len(values) == 0 {
 			if _, ok := eventConfig[event]; ok {
 				delete(eventConfig, event)
 			}
 		} else {
-			eventConfig[event] = filtered
+			eventConfig[event] = values
 		}
 	}
 	return changed, nil
+}
+
+func updateAgentEvent(values []any, spec hookSpec, install bool) ([]any, bool, error) {
+	filtered := make([]any, 0, len(values)+1)
+	found := false
+	changed := false
+	for _, value := range values {
+		if install && !found {
+			updated, managed, current := updateManagedHook(value, spec)
+			if managed {
+				filtered = append(filtered, updated)
+				found = true
+				if !current {
+					changed = true
+				}
+				continue
+			}
+		}
+		remaining, removed, current := removeManagedHook(value, spec)
+		if removed {
+			if install && current && !found {
+				filtered = append(filtered, value)
+				found = true
+				continue
+			}
+			if remaining != nil {
+				filtered = append(filtered, remaining)
+			}
+			if install && !found {
+				filtered = append(filtered, managedEntry(spec))
+				found = true
+			}
+			changed = true
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+	if install && !found {
+		filtered = append(filtered, managedEntry(spec))
+		changed = true
+	}
+	if !install && len(filtered) != len(values) {
+		changed = true
+	}
+	return filtered, changed, nil
 }
 
 func updateManagedHook(value any, spec hookSpec) (any, bool, bool) {
@@ -348,23 +361,34 @@ type hookSpec struct {
 	command string
 }
 
-func agentSpecs(agent, executable string) map[string]hookSpec {
-	var matcher string
+func agentSpecs(agent, executable string) map[string][]hookSpec {
+	var editMatcher string
 	switch agent {
 	case "droid":
-		matcher = "Edit|Create|ApplyPatch"
+		editMatcher = "Edit|Create|ApplyPatch"
 	case "claude":
-		matcher = "Write|Edit|MultiEdit"
+		editMatcher = "Write|Edit|MultiEdit"
 	}
-	return map[string]hookSpec{
-		"PreToolUse": {
-			matcher: matcher,
-			command: quoteExecutable(executable) + " checkpoint " + agent + " --managed-by git-byline --type human --hook-input stdin",
-		},
-		"PostToolUse": {
-			matcher: matcher,
-			command: quoteExecutable(executable) + " checkpoint " + agent + " --managed-by git-byline --type ai --hook-input stdin",
-		},
+	editPre := quoteExecutable(executable) + " checkpoint " + agent + " --managed-by git-byline --type human --hook-input stdin"
+	editPost := quoteExecutable(executable) + " checkpoint " + agent + " --managed-by git-byline --type ai --hook-input stdin"
+	shellMatcher := "Bash|Shell|RunCommand|run_command|Execute|execute_command|Terminal"
+	shellPre := quoteExecutable(executable) + " checkpoint " + agent + " --managed-by git-byline --type human --hook-input stdin"
+	shellPost := quoteExecutable(executable) + " checkpoint " + agent + " --managed-by git-byline --type ai --hook-input stdin"
+	return map[string][]hookSpec{
+		"PreToolUse": {{
+			matcher: editMatcher,
+			command: editPre,
+		}, {
+			matcher: shellMatcher,
+			command: shellPre,
+		}},
+		"PostToolUse": {{
+			matcher: editMatcher,
+			command: editPost,
+		}, {
+			matcher: shellMatcher,
+			command: shellPost,
+		}},
 	}
 }
 

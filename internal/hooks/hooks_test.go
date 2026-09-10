@@ -44,12 +44,12 @@ func TestInstallAndUninstallProjectHooks(t *testing.T) {
 	if config["custom"] != true {
 		t.Fatalf("custom config was not preserved: %+v", config)
 	}
-	if len(config["PreToolUse"].([]any)) != 2 || len(config["PostToolUse"].([]any)) != 1 {
+	if len(config["PreToolUse"].([]any)) != 3 || len(config["PostToolUse"].([]any)) != 2 {
 		t.Fatalf("managed hooks missing: %+v", config)
 	}
 	managed := config["PostToolUse"].([]any)[0].(map[string]any)
 	command := managed["hooks"].([]any)[0].(map[string]any)["command"]
-	if command != agentSpecs("droid", "git-byline")["PostToolUse"].command {
+	if command != agentSpecs("droid", "git-byline")["PostToolUse"][0].command {
 		t.Fatalf("project hook command = %q", command)
 	}
 	hookData, err := os.ReadFile(gitHook)
@@ -127,8 +127,14 @@ func TestInstallAllAgentsAndCustomHooksPath(t *testing.T) {
 		}
 	}
 	claude := readObject(t, filepath.Join(root, ".claude", "settings.json"))
-	if _, ok := claude["hooks"].(map[string]any); !ok {
+	hooks, ok := claude["hooks"].(map[string]any)
+	if !ok {
 		t.Fatalf("Claude hooks are not nested under hooks: %+v", claude)
+	}
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		if len(hooks[event].([]any)) != 2 {
+			t.Fatalf("Claude %s hooks = %+v", event, hooks[event])
+		}
 	}
 }
 
@@ -198,7 +204,7 @@ func TestUninstallPreservesCustomHooksInManagedEntry(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"]
+	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"][0]
 	config := map[string]any{
 		"PreToolUse": []any{map[string]any{
 			"matcher": spec.matcher,
@@ -234,7 +240,7 @@ func TestUninstallPreservesManagedEntryMetadata(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"]
+	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"][0]
 	config := map[string]any{
 		"PreToolUse": []any{map[string]any{
 			"matcher":      spec.matcher,
@@ -265,7 +271,7 @@ func TestUninstallPreservesDifferentMatcher(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"]
+	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"][0]
 	config := map[string]any{
 		"PreToolUse": []any{map[string]any{
 			"matcher": "Read",
@@ -296,7 +302,7 @@ func TestInstallDroidUsesRootSchema(t *testing.T) {
 	if _, nested := config["hooks"]; nested {
 		t.Fatalf("Droid hooks unexpectedly nested: %+v", config)
 	}
-	if len(config["PreToolUse"].([]any)) != 1 || len(config["PostToolUse"].([]any)) != 1 {
+	if len(config["PreToolUse"].([]any)) != 2 || len(config["PostToolUse"].([]any)) != 2 {
 		t.Fatalf("root Droid hooks missing: %+v", config)
 	}
 }
@@ -315,7 +321,7 @@ func TestInstallDroidPreservesNestedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := readObject(t, path)
-	if len(config["PreToolUse"].([]any)) != 1 || len(config["PostToolUse"].([]any)) != 1 {
+	if len(config["PreToolUse"].([]any)) != 2 || len(config["PostToolUse"].([]any)) != 2 {
 		t.Fatalf("root Droid hooks missing: %+v", config)
 	}
 	nested, ok := config["hooks"].(map[string]any)
@@ -331,7 +337,7 @@ func TestUninstallRemovesLegacyNestedDroidHooks(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"]
+	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"][0]
 	config := map[string]any{
 		"hooks": map[string]any{
 			"custom": true,
@@ -364,7 +370,7 @@ func TestCustomHookWithManagedSuffixIsPreserved(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"]
+	spec := agentSpecs("droid", "/old/git-byline")["PreToolUse"][0]
 	custom := "audit-wrapper && " + spec.command
 	config := map[string]any{
 		"PreToolUse": []any{map[string]any{
@@ -396,7 +402,7 @@ func TestLegacyManagedAgentHookIsMigrated(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	current := agentSpecs("droid", "/old/git-byline")["PreToolUse"]
+	current := agentSpecs("droid", "/old/git-byline")["PreToolUse"][0]
 	legacy := strings.Replace(current.command, " --managed-by git-byline", "", 1)
 	config := map[string]any{
 		"PreToolUse": []any{map[string]any{
@@ -428,7 +434,7 @@ func TestManagedAgentHookUpdatesInPlace(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	old := agentSpecs("droid", "/old/git-byline")["PreToolUse"]
+	old := agentSpecs("droid", "/old/git-byline")["PreToolUse"][0]
 	config := map[string]any{
 		"PreToolUse": []any{map[string]any{
 			"matcher": old.matcher,
@@ -455,7 +461,7 @@ func TestManagedAgentHookUpdatesInPlace(t *testing.T) {
 	for _, value := range hooks {
 		commands = append(commands, value.(map[string]any)["command"].(string))
 	}
-	want := []string{"echo before", agentSpecs("droid", "git-byline")["PreToolUse"].command, "echo after"}
+	want := []string{"echo before", agentSpecs("droid", "git-byline")["PreToolUse"][0].command, "echo after"}
 	if strings.Join(commands, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("commands = %q, want %q", commands, want)
 	}
@@ -486,7 +492,7 @@ func TestSingleExecutableCommandRecognition(t *testing.T) {
 
 func TestManagedAgentCommandRequiresMarkerOrBinary(t *testing.T) {
 	t.Parallel()
-	spec := agentSpecs("droid", "/old/git-byline")["PostToolUse"]
+	spec := agentSpecs("droid", "/old/git-byline")["PostToolUse"][0]
 	signature := spec.command[strings.Index(spec.command, " checkpoint "):]
 	legacy := strings.Replace(signature, " --managed-by git-byline", "", 1)
 	if managedAgentCommand(`'/path/audit-wrapper'`+legacy, spec) {
