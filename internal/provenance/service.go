@@ -27,7 +27,10 @@ const (
 	maxBlameCollectionLines = 100_000
 	maxBlameCollectionBytes = 16 << 20
 	maxShellPaths           = 500
+	maxShellSnapshotBytes   = 16 << 20
 )
+
+var errShellPathLimit = errors.New("shell event contains more than 500 paths")
 
 // CaptureResult reports a checkpoint write.
 type CaptureResult struct {
@@ -63,6 +66,9 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 	if err := model.ValidateAttribution(attribution); err != nil {
 		return CaptureResult{}, fmt.Errorf("validate event attribution: %w", err)
 	}
+	if err := model.ValidateEventID(event.EventID); err != nil {
+		return CaptureResult{}, fmt.Errorf("validate event identifier: %w", err)
+	}
 	dataStore := store.New(repo.GitDir)
 	held, err := lock.Acquire(dataStore.LockPath(), lockTimeout)
 	if err != nil {
@@ -93,17 +99,19 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 		var err error
 		paths, err = shellDirtyPaths(repo)
 		if err != nil {
+			if errors.Is(err, errShellPathLimit) {
+				warnings = append(warnings, "ignored shell event with more than 500 paths")
+				return CaptureResult{Warnings: warnings}, nil
+			}
 			return CaptureResult{}, err
 		}
 	} else if kind == model.CheckpointKindShellPost {
-		if len(records) > 0 && records[len(records)-1].Kind == model.CheckpointKindShellPost {
-			return CaptureResult{}, nil
-		}
-		if len(records) == 0 || records[len(records)-1].Kind != model.CheckpointKindShellPre {
+		var found bool
+		before, found = shellPreForPost(records, event.EventID)
+		if !found {
 			warnings = append(warnings, "ignored shell_post without a matching shell_pre")
 			return CaptureResult{Warnings: warnings}, nil
 		}
-		before = records[len(records)-1]
 		if before.BaseCommit != head {
 			warnings = append(warnings, "ignored shell_post with a different base commit")
 			return CaptureResult{Warnings: warnings}, nil
@@ -111,11 +119,16 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 		var err error
 		paths, err = shellPostPaths(repo, before)
 		if err != nil {
+			if errors.Is(err, errShellPathLimit) {
+				warnings = append(warnings, "ignored shell event with more than 500 paths")
+				return CaptureResult{Warnings: warnings}, nil
+			}
 			return CaptureResult{}, err
 		}
 	}
 	snapshots := make([]model.Snapshot, 0, len(paths))
 	seen := map[string]bool{}
+	var shellBytes int64
 	for _, path := range paths {
 		normalized, err := repo.NormalizeWorktreePath(path)
 		if err != nil {
@@ -126,11 +139,24 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 			continue
 		}
 		seen[normalized] = true
-		snapshot, err := repo.SnapshotWorktree(normalized)
+		var snapshot model.Snapshot
+		var snapshotBytes int64
+		if kind == model.CheckpointKindShellPre || kind == model.CheckpointKindShellPost {
+			remaining := int64(maxShellSnapshotBytes) - shellBytes
+			snapshot, snapshotBytes, err = repo.SnapshotWorktreeWithLimit(normalized, remaining)
+		} else {
+			snapshot, err = repo.SnapshotWorktree(normalized)
+		}
 		if err != nil {
+			if (kind == model.CheckpointKindShellPre || kind == model.CheckpointKindShellPost) &&
+				errors.Is(err, gitcmd.ErrSnapshotBudget) {
+				warnings = append(warnings, "stopped shell snapshot at the 16 MiB aggregate budget")
+				break
+			}
 			warnings = append(warnings, fmt.Sprintf("skipped %q: %v", normalized, err))
 			continue
 		}
+		shellBytes += snapshotBytes
 		if kind == model.CheckpointKindShellPost {
 			previous, err := shellPreviousSnapshot(repo, head, before, normalized)
 			if err != nil {
@@ -145,6 +171,7 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 	}
 	if kind == model.CheckpointKindShellPre && len(records) > 0 &&
 		records[len(records)-1].Kind == model.CheckpointKindShellPre &&
+		records[len(records)-1].EventID == event.EventID &&
 		snapshotsEqualCheckpoints(records[len(records)-1].Files, snapshots) {
 		return CaptureResult{}, nil
 	}
@@ -157,6 +184,7 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 		Kind:       kind,
 		Seq:        seq,
 		BaseCommit: head,
+		EventID:    event.EventID,
 		TS:         now.UTC().Format(time.RFC3339Nano),
 		Type:       event.Type,
 		Files:      snapshots,
@@ -185,7 +213,7 @@ func shellDirtyPaths(repo *gitcmd.Repo) ([]string, error) {
 		return nil, fmt.Errorf("list shell paths: %w", err)
 	}
 	if len(paths) > maxShellPaths {
-		paths = paths[:maxShellPaths]
+		return nil, errShellPathLimit
 	}
 	return paths, nil
 }
@@ -208,9 +236,38 @@ func shellPostPaths(repo *gitcmd.Repo, before model.Checkpoint) ([]string, error
 	}
 	sort.Strings(paths)
 	if len(paths) > maxShellPaths {
-		paths = paths[:maxShellPaths]
+		return nil, errShellPathLimit
 	}
 	return paths, nil
+}
+
+func shellPreForPost(records []model.Checkpoint, eventID string) (model.Checkpoint, bool) {
+	var unpaired []model.Checkpoint
+	for _, record := range records {
+		switch record.Kind {
+		case model.CheckpointKindShellPre:
+			unpaired = append(unpaired, record)
+		case model.CheckpointKindShellPost:
+			index := latestShellPreIndex(unpaired, record.EventID, record.EventID != "")
+			if index >= 0 {
+				unpaired = append(unpaired[:index], unpaired[index+1:]...)
+			}
+		}
+	}
+	index := latestShellPreIndex(unpaired, eventID, eventID != "")
+	if index < 0 {
+		return model.Checkpoint{}, false
+	}
+	return unpaired[index], true
+}
+
+func latestShellPreIndex(records []model.Checkpoint, eventID string, requireID bool) int {
+	for index := len(records) - 1; index >= 0; index-- {
+		if !requireID || records[index].EventID == eventID {
+			return index
+		}
+	}
+	return -1
 }
 
 func shellPreviousSnapshot(repo *gitcmd.Repo, head string, before model.Checkpoint, path string) (model.Snapshot, error) {

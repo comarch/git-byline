@@ -77,7 +77,7 @@
 
   copilot-shell-pre: {
     event: "pre-tool-use"
-    matcher: "Bash|Shell|RunCommand|run_command|execute|execute_command|terminal|shell"
+    matcher: "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell"
     command: ["git-byline", "checkpoint", "portable-copilot", "--type", "human", "--hook-input", "stdin"]
     cwd: "project"
     timeoutMs: 30000
@@ -188,7 +188,7 @@
     timeoutMs: 30000
     statusMessage: "git-byline: capturing pre-shell state"
     enabled: false
-    targets: { windsurf: { enabled: true } }
+    targets: { windsurf: { enabled: false } }
   }
   windsurf-shell-post: {
     event: "post-tool-use"
@@ -198,7 +198,7 @@
     timeoutMs: 30000
     statusMessage: "git-byline: capturing AI shell changes"
     enabled: false
-    targets: { windsurf: { enabled: true } }
+    targets: { windsurf: { enabled: false } }
   }
 
   grok-shell-pre: {

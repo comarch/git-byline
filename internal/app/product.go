@@ -1,13 +1,17 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"time"
 	"unicode"
 
 	"github.com/comarch/git-byline/internal/dashboard"
@@ -17,6 +21,8 @@ import (
 	"github.com/comarch/git-byline/internal/preset"
 	"github.com/comarch/git-byline/internal/provenance"
 )
+
+var checkpointInputTimeoutNanos atomic.Int64
 
 func runCheckpoint(env *Env, command *command, args []string) (int, error) {
 	if len(args) == 0 {
@@ -49,7 +55,11 @@ func runCheckpoint(env *Env, command *command, args []string) (int, error) {
 	} else if explicit != model.AuthorHuman && explicit != model.AuthorAI {
 		return commandUsageError(env, command, errors.New("--type must be human or ai"))
 	}
-	event, handled, parseErr := preset.Parse(presetName, explicit, env.Stdin)
+	input, err := readCheckpointInput(env.Stdin)
+	if err != nil {
+		return operationalError(env, command.name, err)
+	}
+	event, handled, parseErr := preset.Parse(presetName, explicit, bytes.NewReader(input))
 	if parseErr == nil && !handled {
 		return ExitSuccess, nil
 	}
@@ -69,6 +79,39 @@ func runCheckpoint(env *Env, command *command, args []string) (int, error) {
 	}
 	writeWarnings(env, result.Warnings)
 	return ExitSuccess, nil
+}
+
+func readCheckpointInput(input io.Reader) ([]byte, error) {
+	if input == nil {
+		return nil, errors.New("hook input is nil")
+	}
+	type result struct {
+		data []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		data, err := io.ReadAll(io.LimitReader(input, preset.MaxInputBytes+1))
+		done <- result{data: data, err: err}
+	}()
+	timeout := time.Duration(checkpointInputTimeoutNanos.Load())
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case value := <-done:
+		if value.err != nil {
+			return nil, fmt.Errorf("read hook input: %w", value.err)
+		}
+		if len(value.data) > preset.MaxInputBytes {
+			return nil, fmt.Errorf("hook input exceeds %d bytes", preset.MaxInputBytes)
+		}
+		return value.data, nil
+	case <-timer.C:
+		return nil, fmt.Errorf("read hook input timed out after %s", timeout)
+	}
 }
 
 func runDashboard(env *Env, command *command, args []string) (int, error) {

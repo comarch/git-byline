@@ -48,7 +48,11 @@ Shell hooks are supported for Droid, Claude Code, and the nine portable agent
 surfaces. The pre-shell checkpoint records the dirty worktree paths and their
 blob IDs. The post-shell checkpoint records only paths whose current blob
 differs from the pre-shell snapshot. Paths come from Git status, not from the
-shell payload.
+shell payload. When a shell payload carries a tool call or event identifier,
+git-byline stores it and pairs the post event with the matching pre event.
+Without an identifier, it pairs the post event with the latest unpaired
+pre-shell checkpoint. Concurrent overlapping shell commands without
+identifiers remain a documented race limitation.
 
 Blob comparison avoids claiming unrelated dirty files merely because they were
 already present. It does not remove the concurrent-edit race: a human edit to a

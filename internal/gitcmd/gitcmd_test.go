@@ -227,6 +227,36 @@ func TestExtendedRepositoryOperations(t *testing.T) {
 	}
 }
 
+func TestDirtyPathsDisablesFSMonitor(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX helper script")
+	}
+	root := t.TempDir()
+	argsPath := filepath.Join(root, "args")
+	script := filepath.Join(root, "git")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$BYLINE_TEST_ARGS\"\nprintf '?? file\\000'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BYLINE_TEST_ARGS", argsPath)
+	repo := &Repo{Root: root, gitBin: script}
+	paths, err := repo.DirtyPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(paths, []string{"file"}) {
+		t.Fatalf("DirtyPaths() = %v", paths)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSpace(string(data)), "\n")
+	want := []string{"-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z", "-uall"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DirtyPaths arguments = %v, want %v", got, want)
+	}
+}
+
 func TestWorktreePathSafety(t *testing.T) {
 	t.Parallel()
 	root := initRepository(t)
@@ -242,7 +272,7 @@ func TestWorktreePathSafety(t *testing.T) {
 	if _, err := repo.NormalizeWorktreePath(filepath.Join(root, "file.go")); err != nil {
 		t.Fatalf("NormalizeWorktreePath absolute: %v", err)
 	}
-	for _, path := range []string{"", "../outside", ".git/config", ".GIT/config", "/outside", "bad\npath", "bad\x1bpath"} {
+	for _, path := range []string{"", "../outside", ".git/config", ".GIT/config", "dir/.git/config", "/outside", "bad\npath", "bad\x1bpath"} {
 		if _, err := repo.NormalizeWorktreePath(path); err == nil {
 			t.Fatalf("NormalizeWorktreePath accepted %q", path)
 		}

@@ -191,6 +191,21 @@ func TestParsePortableHooks(t *testing.T) {
 			}
 		})
 	}
+	for _, agent := range []string{"vscode", "windsurf"} {
+		agent := agent
+		t.Run("path-only-"+agent, func(t *testing.T) {
+			t.Parallel()
+			event, handled, err := Parse("portable-"+agent, model.AuthorAI,
+				strings.NewReader(`{"path":"path-only.go"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !handled || event.Kind != model.CheckpointKindEdit ||
+				len(event.Paths) != 1 || event.Paths[0] != "path-only.go" {
+				t.Fatalf("path-only event = %+v, handled = %t", event, handled)
+			}
+		})
+	}
 	if _, _, err := Parse("portable-other", model.AuthorAI, strings.NewReader(`{"file":"a"}`)); err == nil {
 		t.Fatal("Parse accepted an unknown portable agent")
 	}
@@ -200,6 +215,18 @@ func TestParsePortableHooks(t *testing.T) {
 	if _, handled, err := Parse("portable-windsurf", model.AuthorAI,
 		strings.NewReader(`{"hook_event_name":"post_read_code","file_path":"a.go"}`)); err != nil || handled {
 		t.Fatalf("read-only portable event = handled %t, error %v", handled, err)
+	}
+}
+
+func TestShellEventIdentifier(t *testing.T) {
+	t.Parallel()
+	event, handled, err := Parse("droid", model.AuthorAI,
+		strings.NewReader(`{"tool_name":"Bash","tool_call_id":"call-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || event.EventID != "call-1" || event.Kind != model.CheckpointKindShellPost {
+		t.Fatalf("shell event = %+v, handled = %t", event, handled)
 	}
 }
 

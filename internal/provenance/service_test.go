@@ -540,6 +540,161 @@ func TestCaptureSkipsUnsafePaths(t *testing.T) {
 	}
 }
 
+func TestShellPrePairing(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		records []model.Checkpoint
+		eventID string
+		wantSeq uint64
+		found   bool
+	}{
+		{
+			name: "identifier",
+			records: []model.Checkpoint{
+				{Kind: model.CheckpointKindShellPre, Seq: 1, EventID: "first"},
+				{Kind: model.CheckpointKindShellPre, Seq: 2, EventID: "second"},
+			},
+			eventID: "first", wantSeq: 1, found: true,
+		},
+		{
+			name: "latest unpaired fallback",
+			records: []model.Checkpoint{
+				{Kind: model.CheckpointKindShellPre, Seq: 1, EventID: "first"},
+				{Kind: model.CheckpointKindShellPre, Seq: 2, EventID: "second"},
+				{Kind: model.CheckpointKindShellPost, Seq: 3, EventID: "first"},
+			},
+			wantSeq: 2, found: true,
+		},
+		{
+			name: "missing identifier",
+			records: []model.Checkpoint{
+				{Kind: model.CheckpointKindShellPre, Seq: 1, EventID: "first"},
+			},
+			eventID: "missing", found: false,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got, found := shellPreForPost(test.records, test.eventID)
+			if found != test.found {
+				t.Fatalf("found = %t, want %t", found, test.found)
+			}
+			if found && got.Seq != test.wantSeq {
+				t.Fatalf("paired seq = %d, want %d", got.Seq, test.wantSeq)
+			}
+		})
+	}
+}
+
+func TestShellCaptureKeepsOverlappingIdentifiedPres(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "a.txt", "a\n")
+	write(t, root, "b.txt", "b\n")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, eventID := range []string{"first", "second"} {
+		if result, err := Capture(repo, preset.Event{
+			Kind: model.CheckpointKindShellPre, Type: model.AuthorHuman, EventID: eventID,
+		}, time.Now()); err != nil || result.Recorded != 2 {
+			t.Fatalf("Capture(shell_pre %s) = %+v, %v", eventID, result, err)
+		}
+	}
+	write(t, root, "a.txt", "a changed\n")
+	if result, err := Capture(repo, preset.Event{
+		Kind: model.CheckpointKindShellPost, Type: model.AuthorAI,
+		Agent: "droid", Model: "model", Session: "session", EventID: "first",
+	}, time.Now()); err != nil || result.Recorded != 1 {
+		t.Fatalf("Capture(shell_post first) = %+v, %v", result, err)
+	}
+	write(t, root, "b.txt", "b changed\n")
+	if result, err := Capture(repo, preset.Event{
+		Kind: model.CheckpointKindShellPost, Type: model.AuthorAI,
+		Agent: "droid", Model: "model", Session: "session", EventID: "second",
+	}, time.Now()); err != nil || result.Recorded != 2 {
+		t.Fatalf("Capture(shell_post second) = %+v, %v", result, err)
+	}
+	records, _, err := store.New(repo.GitDir).ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 4 || records[2].EventID != "first" || records[3].EventID != "second" {
+		t.Fatalf("identified shell checkpoints = %+v", records)
+	}
+}
+
+func TestShellPathLimit(t *testing.T) {
+	t.Parallel()
+	for _, count := range []int{maxShellPaths, maxShellPaths + 1} {
+		count := count
+		t.Run(fmt.Sprintf("%d paths", count), func(t *testing.T) {
+			t.Parallel()
+			root := testRepo(t)
+			for index := 0; index < count; index++ {
+				write(t, root, fmt.Sprintf("file-%03d.go", index), "content\n")
+			}
+			repo, err := gitcmd.Discover(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := Capture(repo, preset.Event{
+				Kind: model.CheckpointKindShellPre,
+				Type: model.AuthorHuman,
+			}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count == maxShellPaths {
+				if result.Recorded != count || len(result.Warnings) != 0 {
+					t.Fatalf("Capture(%d) = %+v", count, result)
+				}
+				return
+			}
+			if result.Recorded != 0 || len(result.Warnings) != 1 {
+				t.Fatalf("Capture(%d) = %+v", count, result)
+			}
+			if records, _, err := store.New(repo.GitDir).ReadCheckpoints(); err != nil || len(records) != 0 {
+				t.Fatalf("oversized shell checkpoint records = %v, error = %v", records, err)
+			}
+		})
+	}
+}
+
+func TestShellSnapshotBudgetStopsLoop(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "a.txt", strings.Repeat("a", maxShellSnapshotBytes/2))
+	write(t, root, "b.txt", strings.Repeat("b", maxShellSnapshotBytes/2))
+	write(t, root, "c.txt", "c\n")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Capture(repo, preset.Event{
+		Kind: model.CheckpointKindShellPre,
+		Type: model.AuthorHuman,
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Recorded != 2 || len(result.Warnings) != 1 ||
+		!strings.Contains(result.Warnings[0], "16 MiB") {
+		t.Fatalf("Capture() = %+v", result)
+	}
+	records, _, err := store.New(repo.GitDir).ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || len(records[0].Files) != 2 {
+		t.Fatalf("budget checkpoint = %+v", records)
+	}
+}
+
 func TestShellCaptureUsesBlobDifferences(t *testing.T) {
 	t.Parallel()
 	root := testRepo(t)

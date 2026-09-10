@@ -160,8 +160,14 @@ func validateCheckpoint(record model.Checkpoint) error {
 	if record.Kind == model.CheckpointKindShellPost && record.Type != model.AuthorAI {
 		return errors.New("shell_post checkpoint must be ai")
 	}
+	if record.Kind != model.CheckpointKindEdit && len(record.Files) > 500 {
+		return errors.New("shell checkpoint contains more than 500 files")
+	}
 	if record.Seq == 0 {
 		return errors.New("sequence must be positive")
+	}
+	if err := model.ValidateEventID(record.EventID); err != nil {
+		return err
 	}
 	attr := model.Attribution{
 		Author:  record.Type,
@@ -189,6 +195,9 @@ func validateCheckpoint(record model.Checkpoint) error {
 	for _, file := range record.Files {
 		if file.Path == "" {
 			return errors.New("file path is empty")
+		}
+		if hasGitPathComponent(file.Path) {
+			return fmt.Errorf("file path %q is a Git administrative path", file.Path)
 		}
 		if seen[file.Path] {
 			return fmt.Errorf("duplicate file path %q", file.Path)
@@ -495,6 +504,9 @@ func validateState(state model.State) error {
 		if path == "" {
 			return errors.New("pending file path is empty")
 		}
+		if hasGitPathComponent(path) {
+			return fmt.Errorf("pending file path %q is a Git administrative path", path)
+		}
 		if !model.ValidObjectID(file.Blob) {
 			return fmt.Errorf("pending file %q has invalid blob", path)
 		}
@@ -507,6 +519,15 @@ func validateState(state model.State) error {
 		}
 	}
 	return nil
+}
+
+func hasGitPathComponent(path string) bool {
+	for _, component := range strings.Split(filepath.ToSlash(path), "/") {
+		if strings.EqualFold(component, ".git") {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeStrict(data []byte, target any) error {

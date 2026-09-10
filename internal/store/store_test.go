@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -196,6 +197,42 @@ func TestCheckpointValidation(t *testing.T) {
 		if err := (New(t.TempDir())).AppendCheckpoint(record); err == nil {
 			t.Fatalf("case %d accepted invalid checkpoint", i)
 		}
+	}
+}
+
+func TestShellCheckpointPathLimit(t *testing.T) {
+	t.Parallel()
+	for _, count := range []int{500, 501} {
+		count := count
+		t.Run(fmt.Sprintf("%d files", count), func(t *testing.T) {
+			t.Parallel()
+			record := validCheckpoint(1)
+			record.Kind = model.CheckpointKindShellPre
+			record.Files = make([]model.Snapshot, count)
+			for index := range record.Files {
+				record.Files[index] = model.Snapshot{
+					Path:   fmt.Sprintf("file-%03d.go", index),
+					Exists: true,
+					Blob:   "abcd1234",
+				}
+			}
+			err := New(t.TempDir()).AppendCheckpoint(record)
+			if count == 500 && err != nil {
+				t.Fatalf("AppendCheckpoint(500) = %v", err)
+			}
+			if count == 501 && err == nil {
+				t.Fatal("AppendCheckpoint(501) accepted oversized shell checkpoint")
+			}
+		})
+	}
+}
+
+func TestCheckpointValidationRejectsGitAdministrativePath(t *testing.T) {
+	t.Parallel()
+	record := validCheckpoint(1)
+	record.Files[0].Path = "dir/.git/config"
+	if err := New(t.TempDir()).AppendCheckpoint(record); err == nil {
+		t.Fatal("AppendCheckpoint accepted path containing .git component")
 	}
 }
 

@@ -66,6 +66,7 @@ type Checkpoint struct {
 	Kind       string     `json:"kind"`
 	Seq        uint64     `json:"seq"`
 	BaseCommit string     `json:"base_commit,omitempty"`
+	EventID    string     `json:"event_id,omitempty"`
 	TS         string     `json:"ts"`
 	Type       Author     `json:"type"`
 	Session    string     `json:"session,omitempty"`
@@ -156,6 +157,22 @@ func ValidateAttribution(value Attribution) error {
 		}
 	default:
 		return fmt.Errorf("unknown author %q", value.Author)
+	}
+	return nil
+}
+
+// ValidateEventID validates an optional hook event identifier.
+func ValidateEventID(value string) error {
+	if len(value) > maxAttributionValueBytes {
+		return fmt.Errorf("event id exceeds %d bytes", maxAttributionValueBytes)
+	}
+	if !utf8.ValidString(value) {
+		return errors.New("event id is not valid UTF-8")
+	}
+	for _, char := range value {
+		if unicode.IsControl(char) {
+			return errors.New("event id contains a control character")
+		}
 	}
 	return nil
 }
