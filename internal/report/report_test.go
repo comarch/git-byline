@@ -121,6 +121,30 @@ func TestCollectRejectsInvalidCoverage(t *testing.T) {
 	}
 }
 
+func TestCollectDecodeWarningDoesNotEchoNoteContent(t *testing.T) {
+	t.Parallel()
+	root := reportTestRepository(t)
+	writeReportFile(t, root, "file", "one\n")
+	head := reportCommit(t, root, "first")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	garbage := "garbage-report-note-content-that-must-not-be-echoed"
+	if err := repo.WriteNote(head, []byte(garbage)); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Collect(repo, "", head, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Warnings) != 1 || strings.Contains(got.Warnings[0], garbage) ||
+		!strings.Contains(got.Warnings[0], "malformed JSON") {
+		t.Fatalf("warnings = %v", got.Warnings)
+	}
+}
+
 func TestCollectRangeCounts(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

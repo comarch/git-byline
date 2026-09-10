@@ -74,7 +74,7 @@ func parseRevisionRange(args []string, commandName string) (string, string, erro
 }
 
 func writeStatsText(out io.Writer, result report.Aggregate) {
-	fmt.Fprintf(out, "Range: %s..%s\n", valueOrHead(result.From), valueOrHead(result.To))
+	fmt.Fprintf(out, "Range: %s\n", displayRevisionRange(result.From, result.To))
 	fmt.Fprintf(out, "Commits: %d total, %d annotated\n", result.Commits.Total, result.Commits.Annotated)
 	fmt.Fprintf(out, "Lines: %d\n", result.Totals.Lines)
 	fmt.Fprintf(out, "Human: %d\n", result.Totals.Human)
@@ -113,9 +113,15 @@ func writeStatsText(out io.Writer, result report.Aggregate) {
 	}
 }
 
-func valueOrHead(value string) string {
-	if value == "" {
+func displayRevisionRange(from, to string) string {
+	switch {
+	case from != "" && to != "":
+		return from + ".." + to
+	case from != "":
+		return from + "..HEAD"
+	case to != "":
+		return to
+	default:
 		return "HEAD"
 	}
-	return value
 }

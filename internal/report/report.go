@@ -149,7 +149,11 @@ func Collect(repo *gitcmd.Repo, from, to string, limit int) (Aggregate, error) {
 		}
 		note, err := notes.Decode(data)
 		if err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("ignored attribution note on %s: %v", commit, err))
+			result.Warnings = append(result.Warnings, fmt.Sprintf(
+				"ignored attribution note on %s: invalid note (%s)",
+				commit,
+				noteDecodeErrorClass(err),
+			))
 			continue
 		}
 		timestamp, err := repo.CommitTime(commit)
@@ -202,6 +206,29 @@ func Collect(repo *gitcmd.Repo, from, to string, limit int) (Aggregate, error) {
 	})
 	result.Warnings = uniqueWarnings(result.Warnings)
 	return result, nil
+}
+
+func noteDecodeErrorClass(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "unsupported note version"),
+		strings.Contains(message, "version changed"):
+		return "unsupported version"
+	case strings.Contains(message, "unknown field"):
+		return "unknown field"
+	case strings.Contains(message, "exceeds"),
+		strings.Contains(message, "more than"):
+		return "size limit"
+	case strings.Contains(message, "invalid character"),
+		strings.Contains(message, "unexpected end"),
+		strings.Contains(message, "multiple JSON values"):
+		return "malformed JSON"
+	default:
+		return "validation"
+	}
 }
 
 func rangeLineCount(value model.Range) (int, error) {

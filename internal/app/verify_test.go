@@ -123,6 +123,59 @@ func TestVerifyReportsBlobMismatchAndInvalidRanges(t *testing.T) {
 	}
 }
 
+func TestVerifyReportsNonBlobTreeEntry(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "one\n")
+	appCommit(t, root, "one")
+	commit := appHead(t, root)
+	appGit(t, root, "update-index", "--add", "--cacheinfo", "160000,"+commit+",submodule")
+	appGit(t, root, "commit", "-m", "gitlink")
+	commit = appHead(t, root)
+
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(commit, "file.txt")
+	if err != nil || !exists {
+		t.Fatalf("BlobID = %q, %t, %v", blob, exists, err)
+	}
+	writeVerifyNote(t, repo, commit, model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file.txt": {
+				Blob: blob,
+				Ranges: []model.Range{{
+					Start: 1, End: 1,
+					Attribution: model.Attribution{Author: model.AuthorHuman},
+				}},
+			},
+			"submodule": {
+				Blob: commit,
+				Ranges: []model.Range{{
+					Start: 1, End: 1,
+					Attribution: model.Attribution{Author: model.AuthorHuman},
+				}},
+			},
+		},
+	})
+
+	code, stdout, stderr, err := appRun(root, zeroTime(), nil, "verify", "--json")
+	if code != ExitFailure || err == nil || stderr != "" {
+		t.Fatalf("verify gitlink = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	var got verifyResult
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Commits.Annotated != 1 || len(got.Issues) != 1 ||
+		got.Issues[0].Path != "submodule" ||
+		got.Issues[0].Message != "non-blob tree entry" {
+		t.Fatalf("gitlink issues = %+v", got.Issues)
+	}
+}
+
 func TestVerifyRejectsUnnormalizedPathAndCommitRangeLimit(t *testing.T) {
 	t.Parallel()
 	root := appRepo(t)
@@ -151,6 +204,34 @@ func TestVerifyRejectsUnnormalizedPathAndCommitRangeLimit(t *testing.T) {
 	}
 	if len(got.Issues) != 1 || !strings.Contains(got.Issues[0].Message, "decode note") {
 		t.Fatalf("path issues = %+v", got.Issues)
+	}
+}
+
+func TestVerifyDecodeDiagnosticsDoNotEchoNoteContent(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "one\n")
+	appCommit(t, root, "one")
+	commit := appHead(t, root)
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	garbage := "garbage-note-content-that-must-not-be-echoed"
+	if err := repo.WriteNote(commit, []byte(garbage)); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr, err := appRun(root, zeroTime(), nil, "verify", "--json")
+	if code != ExitFailure || err == nil || stderr != "" {
+		t.Fatalf("verify garbage = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	if strings.Contains(stdout, garbage) || strings.Contains(stderr, garbage) ||
+		strings.Contains(err.Error(), garbage) {
+		t.Fatalf("garbage note content leaked: stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if !strings.Contains(stdout, "malformed JSON") {
+		t.Fatalf("garbage issue = %q", stdout)
 	}
 }
 

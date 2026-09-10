@@ -166,7 +166,10 @@ func verifyRepository(repo *gitcmd.Repo, from, to string, deep bool) (verifyResu
 func verifyNote(repo *gitcmd.Repo, commit string, data []byte, deep bool) ([]verifyIssue, error) {
 	note, err := notes.Decode(data)
 	if err != nil {
-		return []verifyIssue{{Commit: commit, Message: fmt.Sprintf("decode note: %v", err)}}, nil
+		return []verifyIssue{{
+			Commit:  commit,
+			Message: fmt.Sprintf("decode note: %s", noteDecodeErrorClass(err)),
+		}}, nil
 	}
 	paths := make([]string, 0, len(note.Files))
 	for path := range note.Files {
@@ -215,6 +218,14 @@ func verifyNote(repo *gitcmd.Repo, commit string, data []byte, deep bool) ([]ver
 
 		blob, exists, blobErr := repo.BlobID(commit, path)
 		if blobErr != nil {
+			if isTreeEntryIssue(blobErr) {
+				issues = append(issues, verifyIssue{
+					Commit:  commit,
+					Path:    path,
+					Message: "non-blob tree entry",
+				})
+				continue
+			}
 			return nil, fmt.Errorf("inspect %q: %w", path, blobErr)
 		}
 		if !exists {
@@ -287,6 +298,41 @@ func verifyNote(repo *gitcmd.Repo, commit string, data []byte, deep bool) ([]ver
 		}
 	}
 	return issues, nil
+}
+
+func isTreeEntryIssue(err error) bool {
+	if err == nil {
+		return false
+	}
+	switch err.Error() {
+	case "git returned invalid tree entry", "git returned non-blob tree entry":
+		return true
+	default:
+		return false
+	}
+}
+
+func noteDecodeErrorClass(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "unsupported note version"),
+		strings.Contains(message, "version changed"):
+		return "unsupported version"
+	case strings.Contains(message, "unknown field"):
+		return "unknown field"
+	case strings.Contains(message, "exceeds"),
+		strings.Contains(message, "more than"):
+		return "size limit"
+	case strings.Contains(message, "invalid character"),
+		strings.Contains(message, "unexpected end"),
+		strings.Contains(message, "multiple JSON values"):
+		return "malformed JSON"
+	default:
+		return "validation"
+	}
 }
 
 func verifyRangeCoverage(ranges []model.Range) (int, error) {

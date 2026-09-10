@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/comarch/git-byline/internal/gitcmd"
+	"github.com/comarch/git-byline/internal/notes"
 	"github.com/comarch/git-byline/internal/report"
 )
 
@@ -241,14 +242,37 @@ func missingNoteViolations(repo *gitcmd.Repo, from, to string) ([]policyViolatio
 	}
 	result := make([]policyViolation, 0)
 	for _, commit := range commits {
-		if annotated[commit] {
+		if !annotated[commit] {
+			result = append(result, policyViolation{
+				Rule:    "require-note",
+				Commit:  commit,
+				Message: fmt.Sprintf("commit %s has no attribution note", commit),
+			})
 			continue
 		}
-		result = append(result, policyViolation{
-			Rule:    "require-note",
-			Commit:  commit,
-			Message: fmt.Sprintf("commit %s has no attribution note", commit),
-		})
+		data, found, err := repo.ReadNote(commit)
+		if err != nil {
+			return nil, fmt.Errorf("read attribution note on %s: %w", commit, err)
+		}
+		if !found {
+			result = append(result, policyViolation{
+				Rule:    "require-note",
+				Commit:  commit,
+				Message: fmt.Sprintf("commit %s has no attribution note", commit),
+			})
+			continue
+		}
+		if _, err := notes.Decode(data); err != nil {
+			result = append(result, policyViolation{
+				Rule:   "require-note",
+				Commit: commit,
+				Message: fmt.Sprintf(
+					"commit %s has an invalid attribution note (%s)",
+					commit,
+					noteDecodeErrorClass(err),
+				),
+			})
+		}
 	}
 	return result, nil
 }
@@ -268,7 +292,7 @@ func percentOf(value, total int) float64 {
 }
 
 func writeCheckText(env *Env, result checkResult) {
-	fmt.Fprintf(env.Stdout, "Range: %s..%s\n", valueOrHead(result.From), valueOrHead(result.To))
+	fmt.Fprintf(env.Stdout, "Range: %s\n", displayRevisionRange(result.From, result.To))
 	fmt.Fprintf(env.Stdout, "Commits: %d total, %d annotated\n", result.Commits.Total, result.Commits.Annotated)
 	fmt.Fprintf(env.Stdout, "Lines: %d (AI %.2f%%, untracked %.2f%%)\n",
 		result.Totals.Lines,
