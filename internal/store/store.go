@@ -385,7 +385,11 @@ func (store Store) ReadState() (model.State, error) {
 	if state.Version != model.StateVersion {
 		return model.State{}, fmt.Errorf("unsupported state version %d", state.Version)
 	}
-	if state.NotesVersion != model.NoteVersion {
+	switch state.NotesVersion {
+	case model.NoteVersionV1:
+		state.NotesVersion = model.NoteVersion
+	case model.NoteVersion:
+	default:
 		return model.State{}, fmt.Errorf("unsupported notes version %d", state.NotesVersion)
 	}
 	if state.Pending.Files == nil {

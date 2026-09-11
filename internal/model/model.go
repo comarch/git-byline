@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -15,8 +16,12 @@ const (
 	CheckpointVersion = 1
 	// StateVersion is the supported state file format.
 	StateVersion = 1
+	// NoteVersionV1 is the legacy git note format used by persisted state.
+	NoteVersionV1 = 1
 	// NoteVersion is the supported git note format.
 	NoteVersion = 2
+	// NoteSessionSeparator separates an agent from a session map key.
+	NoteSessionSeparator = "::"
 	// MaxTextLines bounds attribution memory for one file.
 	MaxTextLines = 1_000_000
 
@@ -122,6 +127,11 @@ type Note struct {
 	Sessions map[string]NoteSession `json:"sessions"`
 }
 
+// NoteSessionKey returns the deterministic key for one agent session.
+func NoteSessionKey(agent, session string) string {
+	return agent + NoteSessionSeparator + session
+}
+
 var objectIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{4,128}$`)
 
 const maxAttributionValueBytes = 1024
@@ -150,6 +160,9 @@ func ValidateAttribution(value Attribution) error {
 }
 
 func validateAgentMetadata(value Attribution) error {
+	if strings.Contains(value.Agent, NoteSessionSeparator) {
+		return fmt.Errorf("%s attribution agent contains reserved separator", value.Author)
+	}
 	for _, field := range []struct {
 		name  string
 		value string

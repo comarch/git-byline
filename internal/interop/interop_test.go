@@ -316,6 +316,67 @@ func TestExportGitAIAndAgentTraceAreDeterministic(t *testing.T) {
 	}
 }
 
+func TestExportHumanOverrideAsHuman(t *testing.T) {
+	t.Parallel()
+	root := interopRepo(t)
+	writeInteropFile(t, root, "file.txt", "override\n")
+	commit := commitInterop(t, root, "human override")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(commit, "file.txt")
+	if err != nil || !exists {
+		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
+	}
+	encoded, err := notes.Encode(model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file.txt": {
+				Blob: blob,
+				Ranges: []model.Range{{
+					Start: 1, End: 1,
+					Attribution: model.Attribution{
+						Author: model.AuthorHumanOverride,
+						Agent:  "droid", Model: "model", Session: "session-1",
+					},
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(commit, encoded); err != nil {
+		t.Fatal(err)
+	}
+	gitAI, err := ExportGitAI(repo, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := DecodeGitAI(gitAI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	humanKey := gitAIHumanID(syntheticHumanAuthor)
+	if got := parsed.Files["file.txt"]; len(got) != 1 ||
+		got[0].Key != humanKey || got[0].Ranges[0] != (GitAILineRange{Start: 1, End: 1}) {
+		t.Fatalf("Git AI human override = %+v", got)
+	}
+	traceData, err := ExportAgentTrace(repo, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trace AgentTraceRecord
+	if err := json.Unmarshal(traceData, &trace); err != nil {
+		t.Fatal(err)
+	}
+	if len(trace.Files) != 1 || len(trace.Files[0].Conversations) != 1 ||
+		trace.Files[0].Conversations[0].Contributor.Type != "human" {
+		t.Fatalf("Agent Trace human override = %+v", trace.Files)
+	}
+}
+
 func TestExportGitAIUsesGoldenBytes(t *testing.T) {
 	t.Parallel()
 	root := interopRepo(t)

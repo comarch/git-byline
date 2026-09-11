@@ -16,6 +16,7 @@ func TestValidateAttribution(t *testing.T) {
 		{"ai missing agent", Attribution{Author: AuthorAI}, false},
 		{"human override missing agent", Attribution{Author: AuthorHumanOverride}, false},
 		{"ai control character", Attribution{Author: AuthorAI, Agent: "droid\nother"}, false},
+		{"ai session separator in agent", Attribution{Author: AuthorAI, Agent: "droid::other"}, false},
 		{"ai oversized model", Attribution{Author: AuthorAI, Agent: "droid", Model: string(make([]byte, maxAttributionValueBytes+1))}, false},
 		{"ai invalid timestamp", Attribution{Author: AuthorAI, Agent: "droid", TS: "invalid"}, false},
 		{"human metadata", Attribution{Author: AuthorHuman, Agent: "droid"}, false},

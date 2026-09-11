@@ -693,12 +693,16 @@ func transitionsFor(repo *gitcmd.Repo, records []model.Checkpoint, sourcePath, t
 
 func addTransitionSessionMetrics(sessions sessionMetrics, stats []engine.TransitionStats) {
 	for _, value := range stats {
-		if value.Attribution.Author != model.AuthorAI || value.Attribution.Session == "" {
-			continue
+		if value.Attribution.Author == model.AuthorAI && value.Attribution.Session != "" {
+			session := ensureSession(sessions, value.Attribution)
+			session.Added += value.Added
+			session.Deleted += value.Deleted
 		}
-		session := ensureSession(sessions, value.Attribution)
-		session.Added += value.Added
-		session.Deleted += value.Deleted
+		for _, attribution := range value.Overridden {
+			if attribution.Session != "" {
+				ensureSession(sessions, attribution).Overridden++
+			}
+		}
 	}
 }
 
@@ -710,14 +714,13 @@ func addCommittedSessionMetrics(sessions sessionMetrics, snapshot engine.Snapsho
 		switch attribution.Author {
 		case model.AuthorAI:
 			ensureSession(sessions, attribution).Accepted++
-		case model.AuthorHumanOverride:
-			ensureSession(sessions, attribution).Overridden++
 		}
 	}
 }
 
 func ensureSession(sessions sessionMetrics, attribution model.Attribution) *model.NoteSession {
-	session := sessions[attribution.Session]
+	key := model.NoteSessionKey(attribution.Agent, attribution.Session)
+	session := sessions[key]
 	if session == nil {
 		session = &model.NoteSession{}
 	}
@@ -735,7 +738,7 @@ func ensureSession(sessions sessionMetrics, attribution model.Attribution) *mode
 			session.LastTS = attribution.TS
 		}
 	}
-	sessions[attribution.Session] = session
+	sessions[key] = session
 	return session
 }
 

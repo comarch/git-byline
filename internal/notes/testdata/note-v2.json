@@ -17,7 +17,7 @@
     }
   },
   "sessions": {
-    "session-1": {
+    "droid::session-1": {
       "agent": "droid",
       "model": "model",
       "first_ts": "2026-01-02T03:04:05Z",

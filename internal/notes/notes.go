@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -66,7 +67,7 @@ func Decode(data []byte) (model.Note, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return model.Note{}, fmt.Errorf("decode note header: %w", err)
 	}
-	if header.Version != 1 && header.Version != 2 {
+	if header.Version != model.NoteVersionV1 && header.Version != model.NoteVersion {
 		return model.Note{}, fmt.Errorf("unsupported note version %d", header.Version)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -76,7 +77,7 @@ func Decode(data []byte) (model.Note, error) {
 		Files    map[string]model.NoteFile `json:"files"`
 		Sessions map[string]*noteSession   `json:"sessions"`
 	}
-	if header.Version == 1 {
+	if header.Version == model.NoteVersionV1 {
 		var legacy struct {
 			Version int                       `json:"version"`
 			Files   map[string]model.NoteFile `json:"files"`
@@ -105,7 +106,7 @@ func Decode(data []byte) (model.Note, error) {
 		}
 	}
 	note := model.Note{Version: wire.Version, Files: wire.Files}
-	if wire.Version == 2 {
+	if wire.Version == model.NoteVersion {
 		note.Sessions = make(map[string]model.NoteSession, len(wire.Sessions))
 		for name, session := range wire.Sessions {
 			if err := validateSession(name, *session); err != nil {
@@ -185,8 +186,8 @@ func CheckFileCount(data []byte, limit int) error {
 }
 
 func validateNote(note model.Note) error {
-	if note.Version != 2 && len(note.Sessions) > 0 {
-		return errors.New("note sessions require version 2")
+	if note.Version != model.NoteVersion && len(note.Sessions) > 0 {
+		return fmt.Errorf("note sessions require version %d", model.NoteVersion)
 	}
 	for name, session := range note.Sessions {
 		if err := validateSession(name, session); err != nil {
@@ -232,6 +233,16 @@ func validateSession(name string, session model.NoteSession) error {
 		if unicode.IsControl(char) {
 			return fmt.Errorf("note session %q has invalid name", name)
 		}
+	}
+	if session.Agent == "" {
+		return fmt.Errorf("note session %q agent must not be empty", name)
+	}
+	if strings.Contains(session.Agent, model.NoteSessionSeparator) {
+		return fmt.Errorf("note session %q agent contains reserved separator", name)
+	}
+	prefix := model.NoteSessionKey(session.Agent, "")
+	if !strings.HasPrefix(name, prefix) || len(name) == len(prefix) {
+		return fmt.Errorf("note session %q must use agent::session key", name)
 	}
 	for _, field := range []struct {
 		name  string

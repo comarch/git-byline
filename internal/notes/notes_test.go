@@ -26,7 +26,7 @@ func TestEncodeDecode(t *testing.T) {
 			"a.go": {Blob: "aaaa"},
 		},
 		Sessions: map[string]model.NoteSession{
-			"session-1": {
+			"droid::session-1": {
 				Agent: "droid", Model: "model",
 				FirstTS: "2026-01-02T03:04:05Z", LastTS: "2026-01-02T03:04:06Z",
 				Added: 2, Deleted: 1, Accepted: 1, Overridden: 1,
@@ -74,9 +74,33 @@ func TestDecodeGoldenVersions(t *testing.T) {
 		if !ok || len(file.Ranges) != 1 || file.Ranges[0].Author != model.AuthorAI {
 			t.Fatalf("Decode(v%d) files = %+v", version, note.Files)
 		}
-		if version == 2 && note.Sessions["session-1"].Accepted != 1 {
+		if version == 2 && note.Sessions["droid::session-1"].Accepted != 1 {
 			t.Fatalf("Decode(v2) sessions = %+v", note.Sessions)
 		}
+	}
+}
+
+func TestSessionKeysIncludeAgent(t *testing.T) {
+	t.Parallel()
+	note := model.Note{
+		Version: model.NoteVersion,
+		Sessions: map[string]model.NoteSession{
+			model.NoteSessionKey("droid", "shared"):  {Agent: "droid", Model: "model-a"},
+			model.NoteSessionKey("claude", "shared"): {Agent: "claude", Model: "model-b"},
+		},
+	}
+	data, err := Encode(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 2 ||
+		got.Sessions[model.NoteSessionKey("droid", "shared")].Model != "model-a" ||
+		got.Sessions[model.NoteSessionKey("claude", "shared")].Model != "model-b" {
+		t.Fatalf("session keys = %+v", got.Sessions)
 	}
 }
 
@@ -114,26 +138,26 @@ func TestDecodeV2Sessions(t *testing.T) {
 	}{
 		{
 			name: "unknown field",
-			data: `{"version":2,"files":{},"sessions":{"session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":1,"deleted":0,"accepted":1,"overridden":0,"extra":true}}}`,
+			data: `{"version":2,"files":{},"sessions":{"droid::session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":1,"deleted":0,"accepted":1,"overridden":0,"extra":true}}}`,
 			err:  true,
 		},
 		{
 			name: "wrong field type",
-			data: `{"version":2,"files":{},"sessions":{"session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":"one","deleted":0,"accepted":1,"overridden":0}}}`,
+			data: `{"version":2,"files":{},"sessions":{"droid::session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":"one","deleted":0,"accepted":1,"overridden":0}}}`,
 			err:  true,
 		},
 		{
 			name: "null session",
-			data: `{"version":2,"files":{},"sessions":{"session-1":null}}`,
+			data: `{"version":2,"files":{},"sessions":{"droid::session-1":null}}`,
 			err:  true,
 		},
 		{
 			name: "valid session",
-			data: `{"version":2,"files":{},"sessions":{"session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":1,"deleted":0,"accepted":1,"overridden":0}}}`,
+			data: `{"version":2,"files":{},"sessions":{"droid::session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":1,"deleted":0,"accepted":1,"overridden":0}}}`,
 		},
 		{
 			name: "negative counter",
-			data: `{"version":2,"files":{},"sessions":{"session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":-1,"deleted":0,"accepted":1,"overridden":0}}}`,
+			data: `{"version":2,"files":{},"sessions":{"droid::session-1":{"agent":"droid","model":"model","first_ts":"2026-01-02T03:04:05Z","last_ts":"2026-01-02T03:04:05Z","added":-1,"deleted":0,"accepted":1,"overridden":0}}}`,
 			err:  true,
 		},
 	}
@@ -164,7 +188,7 @@ func TestEncodeDecodeErrors(t *testing.T) {
 		`{"version":9}`,
 		`{"version":1,"unknown":true}`,
 		`{"version":2,"sessions":[]}`,
-		`{"version":2,"files":{},"sessions":{"":{"agent":"droid","model":"","first_ts":"","last_ts":"","added":0,"deleted":0,"accepted":0,"overridden":0}}}`,
+		`{"version":2,"files":{},"sessions":{"droid::":{"agent":"droid","model":"","first_ts":"","last_ts":"","added":0,"deleted":0,"accepted":0,"overridden":0}}}`,
 		`{"version":1,"files":{"file":{"blob":"bad"}}}`,
 		"{\"version\":1,\"files\":{\"bad\\npath\":{\"blob\":\"abcd\"}}}",
 		`{"version":1,"files":{"file":{"blob":"abcd","ranges":[{"start":2,"end":2,"author":"human"}]}}}`,

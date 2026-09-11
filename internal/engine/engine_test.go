@@ -126,9 +126,63 @@ func TestReplayMarksHumanReplacementAsOverride(t *testing.T) {
 	}
 }
 
+func TestReplayUsesInitialAIAttributionForHumanOverride(t *testing.T) {
+	t.Parallel()
+	ai := model.Attribution{
+		Author:  model.AuthorAI,
+		Agent:   "droid",
+		Model:   "model",
+		Session: "session-1",
+		TS:      "2026-01-02T03:04:05Z",
+	}
+	tests := []struct {
+		name          string
+		initialAuthor model.Attribution
+		wantAuthor    model.Author
+	}{
+		{
+			name:          "parent AI line",
+			initialAuthor: ai,
+			wantAuthor:    model.AuthorHumanOverride,
+		},
+		{
+			name:          "parent untracked line",
+			initialAuthor: model.Attribution{Author: model.AuthorUntracked},
+			wantAuthor:    model.AuthorHuman,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			initial := Snapshot{
+				Lines:        []string{"parent\n"},
+				Attributions: []model.Attribution{test.initialAuthor},
+			}
+			replayed, err := Replay(initial, []Transition{{
+				Content:     []byte("human\n"),
+				Attribution: model.Attribution{Author: model.AuthorHuman},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(replayed.Attributions) != 1 || replayed.Attributions[0].Author != test.wantAuthor {
+				t.Fatalf("Replay() attributions = %+v, want %s", replayed.Attributions, test.wantAuthor)
+			}
+			if test.wantAuthor == model.AuthorHumanOverride &&
+				(replayed.Attributions[0].Agent != ai.Agent ||
+					replayed.Attributions[0].Model != ai.Model ||
+					replayed.Attributions[0].Session != ai.Session ||
+					replayed.Attributions[0].TS != ai.TS) {
+				t.Fatalf("Replay() override metadata = %+v, want %+v", replayed.Attributions[0], ai)
+			}
+		})
+	}
+}
+
 func TestReplayWithStatsReportsTransitionLineChanges(t *testing.T) {
 	t.Parallel()
-	ai := model.Attribution{Author: model.AuthorAI, Agent: "droid"}
+	ai := model.Attribution{Author: model.AuthorAI, Agent: "droid", Session: "session-1"}
 	_, stats, err := ReplayWithStats(Snapshot{}, []Transition{
 		{Content: []byte("agent line\nkept\n"), Attribution: ai},
 		{Content: []byte("human line\nkept\n"), Attribution: model.Attribution{Author: model.AuthorHuman}},
@@ -137,7 +191,8 @@ func TestReplayWithStatsReportsTransitionLineChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(stats) != 2 || stats[0].Added != 2 || stats[0].Deleted != 0 ||
-		stats[1].Added != 1 || stats[1].Deleted != 1 {
+		stats[1].Added != 1 || stats[1].Deleted != 1 ||
+		len(stats[1].Overridden) != 1 {
 		t.Fatalf("ReplayWithStats() = %+v", stats)
 	}
 }

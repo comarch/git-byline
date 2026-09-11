@@ -23,6 +23,7 @@ The mapping is:
 | `s_<14hex>::t_<14hex>` with a `sessions` record | `ai`, with `agent` from `agent_id.tool`, plus `model` and the `s_` session ID |
 | `h_<14hex>` with a `humans` record | `human` |
 | Bare 16-hex or 7-hex key with a `prompts` record | `ai`, with agent and model from the prompt record and the bare key as session |
+| `human-override` range | `human`, using the deterministic synthetic human identity |
 | No attestation for a committed line | `untracked` |
 
 Import resolves each path against the committed blob. It rejects missing,
@@ -63,6 +64,8 @@ The writer targets [Agent Trace
 - line ranges grouped into conversations by attribution;
 - `ai`, `human`, and `unknown` contributors for AI, human, and untracked
   byline ranges;
+- `human-override` ranges are exported as `human` because committed content is
+  human-authored;
 - deterministic UUID and commit timestamp values.
 
 Agent Trace has no required storage location. The export keeps local agent and

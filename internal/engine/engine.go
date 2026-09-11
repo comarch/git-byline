@@ -27,6 +27,7 @@ type TransitionStats struct {
 	Attribution model.Attribution
 	Added       int
 	Deleted     int
+	Overridden  []model.Attribution
 }
 
 // Snapshot is content split into lines with one attribution per line.
@@ -112,8 +113,7 @@ func ReplayWithStats(initial Snapshot, transitions []Transition) (Snapshot, []Tr
 	if len(current.Lines) != len(current.Attributions) {
 		return Snapshot{}, nil, errors.New("initial snapshot line and attribution counts differ")
 	}
-	var latestAI model.Attribution
-	hasLatestAI := false
+	latestAI, hasLatestAI := latestAIAttribution(current.Attributions)
 	stats := make([]TransitionStats, 0, len(transitions))
 	for i, transition := range transitions {
 		if err := model.ValidateAttribution(transition.Attribution); err != nil {
@@ -124,11 +124,26 @@ func ReplayWithStats(initial Snapshot, transitions []Transition) (Snapshot, []Tr
 			return Snapshot{}, nil, fmt.Errorf("transition %d content: %w", i, err)
 		}
 		pairs := equalPairs(current.Lines, nextLines)
-		stats = append(stats, TransitionStats{
+		transitionStats := TransitionStats{
 			Attribution: transition.Attribution,
 			Added:       len(nextLines) - len(pairs),
 			Deleted:     len(current.Lines) - len(pairs),
-		})
+		}
+		for _, gap := range unmatchedGaps(len(current.Lines), len(nextLines), pairs) {
+			for oldIndex := gap.oldStart; oldIndex < gap.oldEnd; oldIndex++ {
+				previous := current.Attributions[oldIndex]
+				if previous.Author != model.AuthorAI || previous.Session == "" {
+					continue
+				}
+				if transition.Attribution.Author == model.AuthorAI &&
+					previous.Agent == transition.Attribution.Agent &&
+					previous.Session == transition.Attribution.Session {
+					continue
+				}
+				transitionStats.Overridden = append(transitionStats.Overridden, previous)
+			}
+		}
+		stats = append(stats, transitionStats)
 		var override model.Attribution
 		if transition.Attribution.Author == model.AuthorHuman && hasLatestAI {
 			override = latestAI
@@ -140,6 +155,18 @@ func ReplayWithStats(initial Snapshot, transitions []Transition) (Snapshot, []Tr
 		}
 	}
 	return current, stats, nil
+}
+
+func latestAIAttribution(values []model.Attribution) (model.Attribution, bool) {
+	var latest model.Attribution
+	found := false
+	for _, value := range values {
+		if value.Author == model.AuthorAI {
+			latest = value
+			found = true
+		}
+	}
+	return latest, found
 }
 
 // Project maps a replayed snapshot onto target content.

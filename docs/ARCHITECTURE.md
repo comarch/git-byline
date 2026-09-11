@@ -141,7 +141,7 @@ Ref: `refs/notes/byline`.
     }
   },
   "sessions": {
-    "session-1": {
+    "droid::session-1": {
       "agent": "droid",
       "model": "model-name",
       "first_ts": "2026-01-02T03:04:05Z",
@@ -160,8 +160,14 @@ and fields serialize deterministically with a trailing newline. Encoders and
 decoders reject notes above 500 files or 16 MiB. Readers accept note versions 1
 and 2. Writers emit version 2. Version 2 adds the per-session metrics map;
 version 1 notes have no session map.
-Sessions whose output does not survive the commit remain listed with zero
-counters.
+Session keys use the deterministic `<agent>::<session>` shape, so identical
+session identifiers under different agents remain separate. Sessions whose
+output does not survive the commit remain listed with zero counters unless
+their lines were overridden by later attribution.
+
+State readers upgrade the legacy `notes_version: 1` marker in state files to
+the current note version before validation. The next successful annotation
+writes a version 2 note and state.
 
 Readers accept only supported note versions. Unknown versions, missing notes,
 and blob mismatches produce warnings and `untracked` output instead of guessed

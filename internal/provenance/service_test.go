@@ -164,13 +164,59 @@ func TestAnnotateRecordsHumanOverrideSessionMetrics(t *testing.T) {
 		ranges[1].Session != "session-1" || ranges[2].Author != model.AuthorAI {
 		t.Fatalf("override ranges = %+v", ranges)
 	}
-	session := note.Sessions["session-1"]
+	session := note.Sessions[model.NoteSessionKey("droid", "session-1")]
 	if session.Agent != "droid" || session.Model != "model" ||
 		session.Added != 2 || session.Deleted != 0 ||
 		session.Accepted != 1 || session.Overridden != 1 ||
 		session.FirstTS != now.Add(time.Second).Format(time.RFC3339Nano) ||
 		session.LastTS != now.Add(time.Second).Format(time.RFC3339Nano) {
 		t.Fatalf("session metrics = %+v", session)
+	}
+}
+
+func TestAnnotateCountsAISessionReplacedByAnotherSession(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	write(t, root, "file.txt", "base\nagent-a\n")
+	if _, err := Capture(repo, preset.Event{
+		Type: model.AuthorAI, Agent: "droid", Model: "model",
+		Session: "session-a", Paths: []string{"file.txt"},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "base\nagent-b\n")
+	if _, err := Capture(repo, preset.Event{
+		Type: model.AuthorAI, Agent: "droid", Model: "model",
+		Session: "session-b", Paths: []string{"file.txt"},
+	}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	head := commit(t, root, "replace")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	data, found, err := repo.ReadNote(head)
+	if err != nil || !found {
+		t.Fatalf("ReadNote() = %t, %v", found, err)
+	}
+	note, err := notes.Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := note.Sessions[model.NoteSessionKey("droid", "session-a")]
+	second := note.Sessions[model.NoteSessionKey("droid", "session-b")]
+	if first.Overridden != 1 || second.Accepted != 1 {
+		t.Fatalf("session metrics = %+v", note.Sessions)
 	}
 }
 
@@ -191,25 +237,124 @@ func TestSessionMetricTimestampsUseChronologicalBounds(t *testing.T) {
 			},
 		},
 	})
-	got := materializeSessionMetrics(sessions)["session-1"]
+	got := materializeSessionMetrics(sessions)[model.NoteSessionKey("droid", "session-1")]
 	if got.FirstTS != "2026-01-02T03:04:05Z" || got.LastTS != "2026-01-02T03:04:06Z" {
 		t.Fatalf("session timestamps = %+v", got)
+	}
+}
+
+func TestSessionMetricsNamespaceIdenticalIDsByAgent(t *testing.T) {
+	t.Parallel()
+	sessions := sessionMetrics{}
+	ensureSession(sessions, model.Attribution{
+		Author: model.AuthorAI, Agent: "droid", Model: "model-a", Session: "shared",
+	})
+	ensureSession(sessions, model.Attribution{
+		Author: model.AuthorAI, Agent: "claude", Model: "model-b", Session: "shared",
+	})
+	got := materializeSessionMetrics(sessions)
+	if len(got) != 2 ||
+		got[model.NoteSessionKey("droid", "shared")].Model != "model-a" ||
+		got[model.NoteSessionKey("claude", "shared")].Model != "model-b" {
+		t.Fatalf("session metrics = %+v", got)
 	}
 }
 
 func TestSessionWithoutSurvivingOutputUsesZeroCounters(t *testing.T) {
 	t.Parallel()
 	sessions := sessionMetrics{
-		"session-1": {
+		model.NoteSessionKey("droid", "session-1"): {
 			Agent: "droid", Model: "model",
 			FirstTS: "2026-01-02T03:04:05Z", LastTS: "2026-01-02T03:04:06Z",
 			Added: 3, Deleted: 2,
 		},
 	}
-	got := materializeSessionMetrics(sessions)["session-1"]
+	got := materializeSessionMetrics(sessions)[model.NoteSessionKey("droid", "session-1")]
 	if got.Added != 0 || got.Deleted != 0 || got.Accepted != 0 || got.Overridden != 0 ||
 		got.Agent != "droid" || got.Model != "model" {
 		t.Fatalf("session counters = %+v", got)
+	}
+}
+
+func TestLegacyStateLoadsAndNextAnnotationWritesV2Note(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	base := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	currentData, found, err := repo.ReadNote(base)
+	if err != nil || !found {
+		t.Fatalf("ReadNote(base) = %t, %v", found, err)
+	}
+	currentNote, err := notes.Decode(currentData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyData, err := json.Marshal(struct {
+		Version int                       `json:"version"`
+		Files   map[string]model.NoteFile `json:"files"`
+	}{Version: model.NoteVersionV1, Files: currentNote.Files})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyData = append(legacyData, '\n')
+	git(t, root, "notes", "--ref=refs/notes/byline", "remove", base)
+	if err := repo.WriteNote(base, legacyData); err != nil {
+		t.Fatal(err)
+	}
+	stateStore := store.New(repo.GitDir)
+	stateData, err := os.ReadFile(stateStore.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(stateData), `"notes_version":2`) {
+		t.Fatalf("state does not contain current notes version: %s", stateData)
+	}
+	stateData = []byte(strings.Replace(string(stateData), `"notes_version":2`, `"notes_version":1`, 1))
+	if err := os.WriteFile(stateStore.StatePath(), stateData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := stateStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.NotesVersion != model.NoteVersion {
+		t.Fatalf("ReadState() notes version = %d, want %d", loaded.NotesVersion, model.NoteVersion)
+	}
+	write(t, root, "file.txt", "base\nnext\n")
+	if _, err := Capture(repo, preset.Event{
+		Type: model.AuthorAI, Agent: "droid", Model: "model",
+		Session: "session-1", Paths: []string{"file.txt"},
+	}, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	head := commit(t, root, "v2")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	data, found, err := repo.ReadNote(head)
+	if err != nil || !found {
+		t.Fatalf("ReadNote() = %t, %v", found, err)
+	}
+	note, err := notes.Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if note.Version != model.NoteVersion {
+		t.Fatalf("note version = %d, want %d", note.Version, model.NoteVersion)
+	}
+	finalState, err := os.ReadFile(stateStore.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(finalState), `"notes_version":2`) {
+		t.Fatalf("state was not upgraded: %s", finalState)
 	}
 }
 

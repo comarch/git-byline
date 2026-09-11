@@ -740,7 +740,7 @@ func gitAIEntries(
 				)
 			}
 			sessions[sessionID] = session
-		case model.AuthorHuman:
+		case model.AuthorHuman, model.AuthorHumanOverride:
 			authorID := gitAIHumanID(syntheticHumanAuthor)
 			key = authorID
 			humans[authorID] = gitAIHumanWire{Author: syntheticHumanAuthor}
@@ -1243,7 +1243,7 @@ func traceConversations(path string, ranges []model.Range) ([]AgentTraceConversa
 		case model.AuthorAI:
 			contributor.Type = "ai"
 			contributor.ModelID = value.Model
-		case model.AuthorHuman:
+		case model.AuthorHuman, model.AuthorHumanOverride:
 			contributor.Type = "human"
 		case model.AuthorUntracked:
 			contributor.Type = "unknown"
