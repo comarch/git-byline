@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -17,8 +16,9 @@ import (
 )
 
 const (
-	blockStart = "# >>> git-byline managed >>>"
-	blockEnd   = "# <<< git-byline managed <<<"
+	blockStart   = "# >>> git-byline managed >>>"
+	blockEnd     = "# <<< git-byline managed <<<"
+	maxHookBytes = 1 << 20
 )
 
 // Options selects hook systems and scope.
@@ -252,8 +252,14 @@ func changeAgentConfig(path, agent, executable string, install bool) (bool, erro
 		return false, nil
 	}
 	if existed {
-		if err := createBackup(path, mode); err != nil {
-			return false, err
+		var backupErr error
+		if install {
+			backupErr = refreshBackup(path, mode)
+		} else {
+			backupErr = createBackup(path, mode)
+		}
+		if backupErr != nil {
+			return false, backupErr
 		}
 	}
 	if !install && len(config) == 0 && !existed {
@@ -433,9 +439,6 @@ func agentSpecs(agent, executable string) map[string][]hookSpec {
 }
 
 func quoteExecutable(path string) string {
-	if runtime.GOOS == "windows" {
-		return `"` + strings.ReplaceAll(path, `"`, `\"`) + `"`
-	}
 	return "'" + strings.ReplaceAll(path, "'", "'\"'\"'") + "'"
 }
 
@@ -506,7 +509,7 @@ func removeManagedHook(value any, spec hookSpec) (any, bool, bool) {
 func managedAgentCommand(candidate string, spec hookSpec) bool {
 	signature := spec.command[strings.Index(spec.command, " checkpoint "):]
 	legacySignature := strings.Replace(signature, " --managed-by git-byline", "", 1)
-	return commandHasSingleExecutable(candidate, signature) ||
+	return commandHasGitBylineExecutable(candidate, signature) ||
 		commandHasGitBylineExecutable(candidate, legacySignature)
 }
 
@@ -559,7 +562,18 @@ func commandHasGitBylineExecutable(command, signature string) bool {
 	if index := strings.LastIndexByte(base, '/'); index >= 0 {
 		base = base[index+1:]
 	}
-	return base == "git-byline" || strings.EqualFold(base, "git-byline.exe")
+	if base == "git-byline" || strings.EqualFold(base, "git-byline.exe") {
+		return true
+	}
+	current, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	current, err = filepath.Abs(current)
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(filepath.FromSlash(value)) == filepath.Clean(current)
 }
 
 func objectArray(value any) ([]any, error) {
@@ -584,9 +598,12 @@ func readJSONObject(path string) (map[string]any, os.FileMode, bool, error) {
 	if !info.Mode().IsRegular() {
 		return nil, 0, false, fmt.Errorf("refuse non-regular configuration %s", path)
 	}
-	data, err := os.ReadFile(path)
+	data, err := readCappedFile(path)
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("read %s: %w", path, err)
+	}
+	if len(data) > maxHookBytes {
+		return nil, 0, false, fmt.Errorf("configuration %s exceeds %d bytes", path, maxHookBytes)
 	}
 	var object map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -608,7 +625,7 @@ func readJSONObject(path string) (map[string]any, os.FileMode, bool, error) {
 }
 
 func createBackup(path string, mode os.FileMode) error {
-	data, err := os.ReadFile(path)
+	data, err := readCappedFile(path)
 	if err != nil {
 		return fmt.Errorf("read backup source %s: %w", path, err)
 	}
@@ -632,6 +649,43 @@ func createBackup(path string, mode os.FileMode) error {
 		return fmt.Errorf("close backup %s: %w", backup, err)
 	}
 	return nil
+}
+
+func refreshBackup(path string, mode os.FileMode) error {
+	data, err := readCappedFile(path)
+	if err != nil {
+		return fmt.Errorf("read backup source %s: %w", path, err)
+	}
+	if err := atomicWrite(path+".git-byline.bak", data, mode); err != nil {
+		return fmt.Errorf("refresh backup %s: %w", path+".git-byline.bak", err)
+	}
+	return nil
+}
+
+func readCappedFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("refuse non-regular file %s", path)
+	}
+	if info.Size() > maxHookBytes {
+		return nil, fmt.Errorf("file exceeds %d bytes", maxHookBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxHookBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxHookBytes {
+		return nil, fmt.Errorf("file exceeds %d bytes", maxHookBytes)
+	}
+	return data, nil
 }
 
 func gitHookPath(repo *gitcmd.Repo, name string) (string, error) {
@@ -696,12 +750,26 @@ func changeGitHook(path, command string, install bool) (bool, error) {
 		return false, fmt.Errorf("refuse non-regular hook %s", path)
 	} else {
 		mode = info.Mode().Perm() | 0o100
+		if info.Size() > maxHookBytes {
+			return false, fmt.Errorf("hook %s exceeds %d bytes", path, maxHookBytes)
+		}
 	}
 	var data []byte
 	if existed {
-		data, err = os.ReadFile(path)
+		file, openErr := os.Open(path)
+		if openErr != nil {
+			return false, fmt.Errorf("read %s: %w", path, openErr)
+		}
+		data, err = io.ReadAll(io.LimitReader(file, maxHookBytes+1))
+		closeErr := file.Close()
 		if err != nil {
 			return false, fmt.Errorf("read %s: %w", path, err)
+		}
+		if closeErr != nil {
+			return false, fmt.Errorf("close %s: %w", path, closeErr)
+		}
+		if len(data) > maxHookBytes {
+			return false, fmt.Errorf("hook %s exceeds %d bytes", path, maxHookBytes)
 		}
 	}
 	if bytes.IndexByte(data, 0) >= 0 {
@@ -723,6 +791,9 @@ func changeGitHook(path, command string, install bool) (bool, error) {
 		}
 		block := text[start : end+len(blockEnd)]
 		if !managedGitHookBlock(block) {
+			if !install {
+				return false, nil
+			}
 			return false, fmt.Errorf("hook %s contains an unrecognized git-byline block", path)
 		}
 	}
@@ -784,7 +855,11 @@ func changeGitHook(path, command string, install bool) (bool, error) {
 	}
 	removeGeneratedHook := !install && strings.TrimSpace(text) == "#!/bin/sh" && !backupExisted
 	if existed && !removeGeneratedHook {
-		if err := createBackup(path, mode); err != nil {
+		if install {
+			if err := refreshBackup(path, mode); err != nil {
+				return false, err
+			}
+		} else if err := createBackup(path, mode); err != nil {
 			return false, err
 		}
 	}
@@ -810,11 +885,11 @@ func managedGitHookBlock(block string) bool {
 	command := strings.TrimSuffix(strings.TrimPrefix(block, prefix), suffix)
 	return command == notesPushCommand() ||
 		isPostCommitCommand(command) ||
-		commandHasSingleExecutable(command, " annotate || exit 1") ||
-		commandHasSingleExecutable(command, " annotate") ||
-		commandHasSingleExecutable(command, ` rewrite --mode post-rewrite --hook-input stdin "$@" || exit 1`) ||
-		commandHasSingleExecutable(command, ` rewrite --mode post-merge --hook-input stdin "$@" || exit 1`) ||
-		commandHasSingleExecutable(command, ` rewrite --mode post-checkout --hook-input stdin "$@" || true`) ||
+		commandHasGitBylineExecutable(command, " annotate || exit 1") ||
+		commandHasGitBylineExecutable(command, " annotate") ||
+		commandHasGitBylineExecutable(command, ` rewrite --mode post-rewrite --hook-input stdin "$@" || exit 1`) ||
+		commandHasGitBylineExecutable(command, ` rewrite --mode post-merge --hook-input stdin "$@" || exit 1`) ||
+		commandHasGitBylineExecutable(command, ` rewrite --mode post-checkout --hook-input stdin "$@" || true`) ||
 		isReferenceTransactionCommand(command)
 }
 
@@ -823,8 +898,8 @@ func isPostCommitCommand(command string) bool {
 	if len(lines) != 2 {
 		return false
 	}
-	return commandHasSingleExecutable(lines[0], ` rewrite --mode post-merge --hook-input stdin || exit 1`) &&
-		commandHasSingleExecutable(lines[1], " annotate || exit 1")
+	return commandHasGitBylineExecutable(lines[0], ` rewrite --mode post-merge --hook-input stdin || exit 1`) &&
+		commandHasGitBylineExecutable(lines[1], " annotate || exit 1")
 }
 
 func isReferenceTransactionCommand(command string) bool {
@@ -832,7 +907,7 @@ func isReferenceTransactionCommand(command string) bool {
 	if !strings.HasPrefix(command, prefix) {
 		return false
 	}
-	return commandHasSingleExecutable(
+	return commandHasGitBylineExecutable(
 		strings.TrimPrefix(command, prefix),
 		` rewrite --mode ref-txn --hook-input stdin "$@" || true`,
 	)
