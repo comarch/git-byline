@@ -110,6 +110,13 @@ func commands() []*command {
 			run: runCheck,
 		},
 		{
+			name:  "rewrite",
+			short: "preserve attribution across Git rewrites",
+			usage: "Usage: git-byline rewrite --mode <post-rewrite|post-checkout|post-merge|ref-txn> --hook-input stdin [hook arguments]\n\n" +
+				"Reproject attribution for Git history and worktree transitions.",
+			run: runRewrite,
+		},
+		{
 			name:  "export",
 			short: "export attribution to an interop format",
 			usage: "Usage: git-byline export --format gitai|agent-trace [--commit REV] [--output FILE]\n\n" +

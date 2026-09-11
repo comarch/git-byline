@@ -126,6 +126,23 @@ func (repo *Repo) Head() (string, error) {
 	return value, nil
 }
 
+// PreviousHead returns the previous HEAD value from the current reflog entry.
+func (repo *Repo) PreviousHead() (string, bool, error) {
+	out, err := repo.run("read previous HEAD", nil, "rev-parse", "--verify", "HEAD@{1}")
+	if err != nil {
+		var commandErr *CommandError
+		if errors.As(err, &commandErr) && commandErr.ExitCode == 128 {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	value := strings.TrimSpace(string(out))
+	if !model.ValidObjectID(value) {
+		return "", false, errors.New("git returned invalid previous HEAD object ID")
+	}
+	return value, true, nil
+}
+
 // Parent returns the first parent of commit, or empty for a root commit.
 func (repo *Repo) Parent(commit string) (string, error) {
 	parents, err := repo.Parents(commit)
@@ -341,6 +358,18 @@ func (repo *Repo) CommitTime(commit string) (string, error) {
 		}
 	}
 	return value, nil
+}
+
+// CommitMessage returns the full commit message for one commit.
+func (repo *Repo) CommitMessage(commit string) (string, error) {
+	if err := validateRevision(commit, "commit revision"); err != nil {
+		return "", err
+	}
+	out, err := repo.run("read commit message", nil, "show", "-s", "--format=%B", commit)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // MergeBase returns the best common ancestor of two revisions.
@@ -697,6 +726,45 @@ func (repo *Repo) WriteNote(commit string, data []byte) error {
 	return repo.WriteNoteRef(bylineNotesRef, commit, data)
 }
 
+// DeleteNoteRef removes a note when it exists.
+func (repo *Repo) DeleteNoteRef(ref, commit string) error {
+	if err := validateNoteRef(ref); err != nil {
+		return err
+	}
+	if !model.ValidObjectID(commit) {
+		return errors.New("invalid commit object ID")
+	}
+	_, err := repo.run("remove attribution note", nil, "notes", "--ref="+ref, "remove", commit)
+	if err == nil {
+		return nil
+	}
+	var commandErr *CommandError
+	if errors.As(err, &commandErr) && commandErr.ExitCode == 1 {
+		return nil
+	}
+	return err
+}
+
+// RefValue returns a validated object ID stored in ref.
+func (repo *Repo) RefValue(ref string) (string, bool, error) {
+	if err := validateRefName(ref); err != nil {
+		return "", false, err
+	}
+	out, err := repo.run("read ref", nil, "rev-parse", "--verify", ref)
+	if err != nil {
+		var commandErr *CommandError
+		if errors.As(err, &commandErr) && commandErr.ExitCode == 128 {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	value := strings.TrimSpace(string(out))
+	if !model.ValidObjectID(value) {
+		return "", false, errors.New("git returned invalid ref object ID")
+	}
+	return value, true, nil
+}
+
 func validateRevision(value, name string) error {
 	if value == "" {
 		return fmt.Errorf("%s is empty", name)
@@ -708,6 +776,16 @@ func validateRevision(value, name string) error {
 		if unicode.IsControl(char) || unicode.IsSpace(char) {
 			return fmt.Errorf("%s contains whitespace or a control character", name)
 		}
+	}
+	return nil
+}
+
+func validateRefName(value string) error {
+	if value == "" || strings.ContainsRune(value, 0) ||
+		strings.ContainsAny(value, " \t\r\n~^:?*[\\") ||
+		strings.Contains(value, "..") || strings.Contains(value, "@{") ||
+		strings.HasPrefix(value, "-") {
+		return errors.New("invalid Git reference")
 	}
 	return nil
 }

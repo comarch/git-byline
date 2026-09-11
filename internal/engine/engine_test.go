@@ -88,6 +88,88 @@ func TestReplayAndProject(t *testing.T) {
 	}
 }
 
+func TestProjectLayeredLaterSourceWins(t *testing.T) {
+	t.Parallel()
+	first := Snapshot{
+		Lines: []string{"one\n", "same\n"},
+		Attributions: []model.Attribution{
+			{Author: model.AuthorAI, Agent: "first", Model: "model"},
+			{Author: model.AuthorHuman},
+		},
+	}
+	second := Snapshot{
+		Lines: []string{"same\n", "two\n"},
+		Attributions: []model.Attribution{
+			{Author: model.AuthorAI, Agent: "second", Model: "model"},
+			{Author: model.AuthorAI, Agent: "second", Model: "model"},
+		},
+	}
+	got, err := ProjectLayered(
+		[]Snapshot{first, second},
+		[]byte("one\nsame\ntwo\nnew\n"),
+		model.Attribution{Author: model.AuthorUntracked},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []model.Attribution{
+		{Author: model.AuthorAI, Agent: "first", Model: "model"},
+		{Author: model.AuthorAI, Agent: "second", Model: "model"},
+		{Author: model.AuthorAI, Agent: "second", Model: "model"},
+		{Author: model.AuthorUntracked},
+	}
+	if !reflect.DeepEqual(got.Attributions, want) {
+		t.Fatalf("ProjectLayered() attributions = %+v, want %+v", got.Attributions, want)
+	}
+	ranges, err := got.Ranges()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := model.ValidateRanges(ranges, len(got.Lines)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProjectLayeredRejectsInvalidSource(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		sources  []Snapshot
+		target   []byte
+		fallback model.Attribution
+	}{
+		{
+			name:     "mismatched source",
+			sources:  []Snapshot{{Lines: []string{"one\n"}}},
+			target:   []byte("one\n"),
+			fallback: model.Attribution{Author: model.AuthorHuman},
+		},
+		{
+			name: "invalid source attribution",
+			sources: []Snapshot{{
+				Lines:        []string{"one\n"},
+				Attributions: []model.Attribution{{Author: "bad"}},
+			}},
+			target:   []byte("one\n"),
+			fallback: model.Attribution{Author: model.AuthorHuman},
+		},
+		{
+			name:     "invalid fallback",
+			target:   []byte("one\n"),
+			fallback: model.Attribution{Author: "bad"},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := ProjectLayered(test.sources, test.target, test.fallback); err == nil {
+				t.Fatal("ProjectLayered accepted invalid input")
+			}
+		})
+	}
+}
+
 func TestReplayMarksHumanReplacementAsOverride(t *testing.T) {
 	t.Parallel()
 	ai := model.Attribution{

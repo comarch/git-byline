@@ -184,6 +184,39 @@ func Project(source Snapshot, target []byte, fallback model.Attribution) (Snapsh
 	return projectLines(source, lines, fallback), nil
 }
 
+// ProjectLayered maps ordered source snapshots onto target content.
+// A later source replaces attribution for lines it matches.
+func ProjectLayered(sources []Snapshot, target []byte, fallback model.Attribution) (Snapshot, error) {
+	if err := model.ValidateAttribution(fallback); err != nil {
+		return Snapshot{}, fmt.Errorf("fallback attribution: %w", err)
+	}
+	lines, err := SplitLines(target)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	attrs := make([]model.Attribution, len(lines))
+	for index := range attrs {
+		attrs[index] = fallback
+	}
+	for index, source := range sources {
+		if len(source.Lines) != len(source.Attributions) {
+			return Snapshot{}, fmt.Errorf(
+				"source snapshot %d line and attribution counts differ",
+				index,
+			)
+		}
+		for line, attribution := range source.Attributions {
+			if err := model.ValidateAttribution(attribution); err != nil {
+				return Snapshot{}, fmt.Errorf("source snapshot %d line %d: %w", index, line+1, err)
+			}
+		}
+		for _, pair := range equalPairs(source.Lines, lines) {
+			attrs[pair.new] = source.Attributions[pair.old]
+		}
+	}
+	return Snapshot{Lines: lines, Attributions: attrs}, nil
+}
+
 func projectLines(source Snapshot, target []string, fallback model.Attribution) Snapshot {
 	return projectLinesWithOverride(source, target, fallback, model.Attribution{})
 }
