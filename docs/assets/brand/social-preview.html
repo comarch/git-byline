@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>git-byline social preview</title>
+		<style>
+			html,
+			body {
+				margin: 0;
+				padding: 0;
+				background: #000000;
+			}
+			.card {
+				position: relative;
+				box-sizing: border-box;
+				width: 1280px;
+				height: 640px;
+				background: #000000;
+				color: #ffffff;
+				font-family: "Cera Pro", Inter, Arial, sans-serif;
+				letter-spacing: -0.01em;
+				display: flex;
+				flex-direction: column;
+				gap: 30px;
+				padding: 56px 44px 44px;
+			}
+			.rule {
+				position: absolute;
+				left: 0;
+				right: 0;
+				top: 0;
+				height: 6px;
+				background: linear-gradient(
+					90deg,
+					#00ffff 0%,
+					#6400be 50%,
+					#ff0000 100%
+				);
+			}
+			header {
+				display: flex;
+				align-items: baseline;
+				gap: 28px;
+			}
+			.dots {
+				display: flex;
+				gap: 10px;
+				align-self: center;
+				margin-right: 4px;
+			}
+			.dots span {
+				width: 13px;
+				height: 13px;
+				border-radius: 50%;
+			}
+			.dots span:nth-child(1) {
+				background: #00ffff;
+			}
+			.dots span:nth-child(2) {
+				background: #6400be;
+			}
+			.dots span:nth-child(3) {
+				background: #ff0000;
+			}
+			h1 {
+				margin: 0;
+				font-size: 56px;
+				font-weight: 800;
+				line-height: 1;
+				letter-spacing: -0.03em;
+			}
+			.tagline {
+				font-size: 26px;
+				color: #bfbfbf;
+			}
+			.blame {
+				box-sizing: border-box;
+				flex: 1;
+				overflow: hidden;
+				background: #1a1a1a;
+				border: 1px solid #404040;
+				border-radius: 14px;
+				padding: 20px 24px;
+				font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+				font-size: 17px;
+				line-height: 1.72;
+				tab-size: 4;
+			}
+			.blame div {
+				display: grid;
+				grid-template-columns: 48ch 3ch auto;
+				white-space: pre;
+			}
+			.num {
+				color: #a6a6a6;
+				text-align: right;
+			}
+			.src {
+				color: #bfbfbf;
+				padding-left: 2ch;
+			}
+			footer {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				font-size: 20px;
+				color: #a6a6a6;
+			}
+			.legend {
+				display: flex;
+				gap: 26px;
+			}
+			.legend span::before {
+				content: "";
+				display: inline-block;
+				width: 12px;
+				height: 12px;
+				border-radius: 3px;
+				margin-right: 9px;
+				background: currentColor;
+			}
+			.ai {
+				color: #00ffff;
+			}
+			.human {
+				color: #b280df;
+			}
+			.override {
+				color: #ff009b;
+			}
+			.untracked {
+				color: #a6a6a6;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="card">
+			<div class="rule"></div>
+			<header>
+				<div class="dots" aria-hidden="true">
+					<span></span><span></span><span></span>
+				</div>
+				<h1>git-byline</h1>
+				<div class="tagline">Line-level human and AI authorship for Git</div>
+			</header>
+			<div class="blame">
+				<div><span class="human">human:john.doe</span><span class="num">9</span><span class="src">func (p Plan) Valid() bool {</span></div>
+				<div><span class="human">human:john.doe</span><span class="num">10</span><span class="src">	return p.Name != &quot;&quot; &amp;&amp; p.Seats &gt; 0</span></div>
+				<div><span class="human">human:john.doe</span><span class="num">11</span><span class="src">}</span></div>
+				<div><span class="ai">ai:droid/claude-sonnet-4-5</span><span class="num">12</span><span class="src"> </span></div>
+				<div><span class="ai">ai:droid/claude-sonnet-4-5</span><span class="num">13</span><span class="src">// Total returns the plan price for one billing period.</span></div>
+				<div><span class="ai">ai:droid/claude-sonnet-4-5</span><span class="num">14</span><span class="src">func (p Plan) Total(unit int) int {</span></div>
+				<div><span class="override">human-override:john.doe/droid/claude-sonnet-4-5</span><span class="num">15</span><span class="src">	// Volume discount applies from the eleventh seat.</span></div>
+				<div><span class="override">human-override:john.doe/droid/claude-sonnet-4-5</span><span class="num">16</span><span class="src">	if p.Seats &gt; 10 {</span></div>
+				<div><span class="override">human-override:john.doe/droid/claude-sonnet-4-5</span><span class="num">17</span><span class="src">		return unit * p.Seats * 9 / 10</span></div>
+				<div><span class="override">human-override:john.doe/droid/claude-sonnet-4-5</span><span class="num">18</span><span class="src">	}</span></div>
+				<div><span class="override">human-override:john.doe/droid/claude-sonnet-4-5</span><span class="num">19</span><span class="src">	return unit * p.Seats</span></div>
+				<div><span class="ai">ai:droid/claude-sonnet-4-5</span><span class="num">20</span><span class="src">}</span></div>
+			</div>
+			<footer>
+				<div class="legend">
+					<span class="human">41 human</span>
+					<span class="ai">39 AI</span>
+					<span class="override">10 override</span>
+					<span class="untracked">8 untracked</span>
+				</div>
+				<div>One Go binary. No cloud. No telemetry.</div>
+			</footer>
+		</div>
+	</body>
+</html>

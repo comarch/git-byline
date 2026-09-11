@@ -1,5 +1,22 @@
 # Documentation assets
 
+## Brand images
+
+`icon.png` (512 by 512) is the square mark: the attribution gutter beside four
+lines, one per state, in the palette from [design](../DESIGN.md).
+`social-preview.png` (1280 by 640) is the repository social preview. Its code
+block is real `git byline blame src/pricing.go` output from the demo
+repository, lines 9 to 20, and the totals in the footer are the real
+`git byline stats HEAD~6..HEAD` result for the same repository.
+
+Both are rendered from HTML with headless Chrome:
+
+```sh
+docs/assets/brand/render-brand.sh
+```
+
+The script takes the browser from `CHROME` when that variable is set.
+
 ## `integrations.png`
 
 Composed for git-byline from these public sources:
