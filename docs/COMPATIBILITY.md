@@ -78,6 +78,30 @@ Track native support in
 - Partial commits preserve excluded provenance for the next commit.
 - Renames preserve provenance through Git rename detection.
 
+## History rewrite matrix
+
+| Operation | Status | Hook or command | Coverage |
+| --- | --- | --- | --- |
+| Rebase | Supported | `post-rewrite` | Plain, reordered, squashed, split, dropped, conflicted and aborted rebases |
+| Amend | Supported | `post-rewrite` and `post-commit` | Unstaged and partially staged amend |
+| Cherry-pick | Supported | `post-commit` | Normal and `--no-commit` cherry-pick |
+| Merge | Supported | `post-merge` and `post-commit` | First parent authoritative; conflict resolution is untracked |
+| Pull with rebase | Supported | `post-rewrite` | Rewritten local commits |
+| Reset soft | Supported | `reference-transaction` | Pending ranges reproject onto worktree |
+| Reset mixed | Supported | `reference-transaction` | Pending ranges reproject onto worktree |
+| Reset hard | Supported | `reference-transaction` | Pending state is cleared; existing notes stay unchanged |
+| Reset with pathspec | Supported | `git byline rewrite` | Invoke after a path-limited index reset |
+| Branch switch | Supported | `post-checkout` | Pending ranges reproject onto checked-out worktree |
+| Stash push | Supported | `reference-transaction` | Pending ranges stored under `refs/notes/byline-stash` |
+| Stash apply | Supported | `git byline rewrite` | Restores pending ranges; stash note remains |
+| Stash pop | Supported | `reference-transaction` | Restores pending ranges and removes consumed stash note |
+| Stash pathspec | Supported | `git byline rewrite` | Selected paths follow the same stash note rules |
+
+Run `git byline rewrite --mode <mode> --hook-input stdin` only when a Git hook
+does not run automatically, including path-limited reset and stash apply.
+Rewritten content with no exact or whitespace-only line match is `untracked`.
+Dropped commits do not contribute attribution to later content.
+
 ## Attribution matching
 
 The matcher first pairs exact equal lines. A second layer runs only between

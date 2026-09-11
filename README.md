@@ -225,6 +225,7 @@ configuration are preserved. Non-shell hooks, symlinked paths, external
 | `stats [<rev-range>] [--json]` | Aggregate attribution statistics without reading blobs |
 | `verify [<rev-range>] [--deep] [--json]` | Verify attribution notes and blob-pinned ranges |
 | `check [<rev-range>] [--max-ai-percent N] [--max-untracked-percent N] [--require-note] [--json]` | Check attribution policy limits |
+| `rewrite --mode MODE --hook-input stdin` | Preserve attribution across rewrites, resets, switches, and stash transitions |
 | `install-hooks` | Merge agent hooks plus Git annotation and note-sharing hooks |
 | `uninstall` | Remove only git-byline-managed hooks |
 | `version` | Print the build version |
@@ -293,6 +294,7 @@ git-byline stores:
 - pending snapshot blobs in the Git object database
 - `refs/worktree/byline/checkpoints`
 - `refs/notes/byline`
+- `refs/notes/byline-stash`
 
 Linked worktrees keep checkpoint state separate. Notes are shared within the
 common repository. After `install-hooks --git`, the managed `pre-push` hook
@@ -326,7 +328,9 @@ content was reviewed for sharing.
 - Files above 64 MiB or 1,000,000 lines are skipped.
 - Binary, invalid UTF-8, symlink, submodule, device, and ignored paths are
   skipped.
-- Rebase and amend leave existing notes on old commit IDs.
+- Rebase, amend, cherry-pick, reset, branch switch, and stash hooks reproject
+  attribution when Git supplies the required transition data. Use
+  `git byline rewrite` manually after a path-limited reset or stash apply.
 - Merge commits use first-parent history. Unmatched merge result content is
   `untracked`.
 - Duplicate equal lines in partial commits are resolved deterministically, but

@@ -24,6 +24,16 @@ forbidden in production code and checked by validation. The managed
 `pre-push` hook invokes Git to publish attribution notes to the selected
 remote unless installation used `--local-notes`.
 
+The managed `reference-transaction` hook has the opposite failure contract.
+It exits immediately when `GIT_BYLINE_NESTED` is set, ignores refs outside
+`HEAD`, `refs/heads/*`, and `refs/stash`, and always exits zero. This hook runs
+on the critical path of commands such as `git status`, reset, stash, and
+branch switching. A provenance failure must not break repository operations.
+The `post-rewrite` and `post-merge` hooks fail closed because their work is
+recoverable and an incomplete rewrite could otherwise leave attribution
+silently detached. `post-checkout` also fails open because checkout must not
+be blocked by pending attribution repair.
+
 ## Threats and controls
 
 | Threat | Prevention | Detection | Recovery |
@@ -40,6 +50,7 @@ remote unless installation used `--local-notes`.
 | Oversized attribution note exhausts memory | Reject notes above 16 MiB or 500 files before full decode | Note limit regression tests | Inspect or replace the invalid note |
 | Attribution metadata is shared unexpectedly | Installation output and documentation disclose default note sharing; `--local-notes` opts out | Inspect managed `pre-push` hook and remote notes ref | Reinstall with `--local-notes`, then remove remote notes deliberately |
 | Note publication fails | Managed pre-push exits non-zero and stops the branch push | Git push error | Fix remote access or opt out with `--local-notes` |
+| Reference transaction attribution fails | Nested and irrelevant refs exit immediately; all other failures are swallowed and hook exits zero | Hook and rewrite tests | Run `git byline rewrite` manually after the repository operation |
 | Dashboard content injects HTML or script | Validate attribution, escape untrusted values with `html/template`, restrictive CSP | Renderer and CLI tests | Delete report and regenerate |
 | Dashboard exposes source or metadata | Private temporary file mode, no external resources, no automatic publication | User review and repository scans | Delete local report |
 | Hook config overwrite | Structural merge, backup, managed markers | Idempotency and preservation tests | Restore `.git-byline.bak` |
