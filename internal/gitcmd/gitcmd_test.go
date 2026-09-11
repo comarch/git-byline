@@ -80,6 +80,12 @@ func TestRepositoryOperations(t *testing.T) {
 	if err != nil || len(changes) != 1 || changes[0].Path != "a file.txt" {
 		t.Fatalf("Changes() = %+v, %v", changes, err)
 	}
+	if message, err := repo.CommitMessage(second); err != nil || !strings.Contains(message, "second") {
+		t.Fatalf("CommitMessage() = %q, %v", message, err)
+	}
+	if previous, found, err := repo.PreviousHead(); err != nil || !found || previous != first {
+		t.Fatalf("PreviousHead() = %q, %t, %v", previous, found, err)
+	}
 	history, err := repo.FirstParentHistory(second)
 	if err != nil || len(history) != 2 {
 		t.Fatalf("FirstParentHistory() = %v, %v", history, err)
@@ -218,6 +224,15 @@ func TestExtendedRepositoryOperations(t *testing.T) {
 	commits, err := repo.NoteCommits("refs/notes/custom")
 	if err != nil || len(commits) != 1 || commits[0] != second {
 		t.Fatalf("NoteCommits() = %v, %v", commits, err)
+	}
+	if value, found, err := repo.RefValue("refs/notes/custom"); err != nil || !found || value == "" {
+		t.Fatalf("RefValue() = %q, %t, %v", value, found, err)
+	}
+	if err := repo.DeleteNoteRef("refs/notes/custom", second); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := repo.ReadNoteRef("refs/notes/custom", second); err != nil || found {
+		t.Fatalf("deleted custom note = %t, %v", found, err)
 	}
 
 	writeFile(t, root, "z-dirty", "dirty\n")

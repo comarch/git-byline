@@ -2,6 +2,23 @@ package model
 
 import "testing"
 
+func TestSessionKeyAndEventID(t *testing.T) {
+	t.Parallel()
+	if got := NoteSessionKey("droid", "session"); got != "droid::session" {
+		t.Fatalf("NoteSessionKey() = %q", got)
+	}
+	for _, value := range []string{"", "event-1", "unicode"} {
+		if err := ValidateEventID(value); err != nil {
+			t.Fatalf("ValidateEventID(%q) = %v", value, err)
+		}
+	}
+	for _, value := range []string{"bad\nid", "bad\x00id"} {
+		if err := ValidateEventID(value); err == nil {
+			t.Fatalf("ValidateEventID(%q) accepted invalid input", value)
+		}
+	}
+}
+
 func TestValidateAttribution(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
