@@ -27,7 +27,9 @@ type rangePageView struct {
 	FileCount      int
 	AgentCount     int
 	ModelCount     int
-	Authors        []rangeTotalsView
+	PeopleCount    int
+	Classes        []rangeTotalsView
+	People         []rangeTotalsView
 	Files          []rangeTotalsView
 	Agents         []rangeTotalsView
 	Models         []rangeTotalsView
@@ -215,15 +217,34 @@ func buildRangeView(aggregate report.Aggregate) (rangePageView, error) {
 		return trend[i].Commit < trend[j].Commit
 	})
 
-	authors := []rangeTotalsView{
+	classes := []rangeTotalsView{
 		rangeTotalsView{Name: string(model.AuthorHuman), Lines: aggregate.Totals.Human},
 		{Name: string(model.AuthorHumanOverride), Lines: aggregate.Totals.HumanOverride},
 		{Name: string(model.AuthorAI), Lines: aggregate.Totals.AI},
 		{Name: string(model.AuthorUntracked), Lines: aggregate.Totals.Untracked},
 	}
-	for index := range authors {
-		authors[index].Percent = percent(authors[index].Lines, aggregate.Totals.Lines)
+	for index := range classes {
+		classes[index].Percent = percent(classes[index].Lines, aggregate.Totals.Lines)
 	}
+
+	people := make([]rangeTotalsView, 0, len(aggregate.Authors))
+	for _, author := range aggregate.Authors {
+		if err := model.ValidateIdentity(author.Identity); err != nil {
+			return rangePageView{}, fmt.Errorf("dashboard range author: %w", err)
+		}
+		if err := validateRangeTotals("author "+author.Identity, author.Totals); err != nil {
+			return rangePageView{}, err
+		}
+		sourceBytes += len(author.Identity)
+		people = append(people, rangeTotalsView{
+			Name:          rangeIdentityName(author.Identity),
+			Lines:         author.Lines,
+			Human:         author.Human,
+			HumanOverride: author.HumanOverride,
+			Percent:       percent(author.Lines, aggregate.Totals.Lines),
+		})
+	}
+	sort.Slice(people, func(i, j int) bool { return people[i].Name < people[j].Name })
 
 	warnings := uniqueStrings(aggregate.Warnings)
 	for _, warning := range warnings {
@@ -250,7 +271,9 @@ func buildRangeView(aggregate report.Aggregate) (rangePageView, error) {
 		FileCount:      len(files),
 		AgentCount:     len(agents),
 		ModelCount:     len(models),
-		Authors:        authors,
+		PeopleCount:    len(people),
+		Classes:        classes,
+		People:         people,
 		Files:          files,
 		Agents:         agents,
 		Models:         models,
@@ -336,6 +359,14 @@ func validateRangeText(name, value string, emptyOK bool) error {
 	return nil
 }
 
+// rangeIdentityName labels human lines stored before identities existed.
+func rangeIdentityName(identity string) string {
+	if identity == "" {
+		return "(unidentified)"
+	}
+	return identity
+}
+
 func displayRange(from, to string) string {
 	switch {
 	case from != "" && to != "":
@@ -357,19 +388,40 @@ var rangeReportTemplate = template.Must(template.New("dashboard-range").Parse(`<
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>git-byline dashboard - {{.Range}}</title>
   <style>
+    /*
+      Same palette and type tokens as the commit report. See
+      docs/DESIGN.md.
+    */
     :root {
       color-scheme: dark;
-      --bg: #050b14;
-      --surface: #0d1828;
-      --surface-strong: #111f33;
-      --border: #263952;
-      --text: #f8fafc;
-      --muted: #8fa3bd;
-      --faint: #60738d;
-      --green: #22c55e;
-      --human: #60a5fa;
-      --human-override: #f59e0b;
-      --untracked: #94a3b8;
+      --cl-cyan: #00FFFF;
+      --cl-violet-200: #B280DF;
+      --cl-magenta: #FF009B;
+      --cl-red-300: #FF4040;
+      --cl-black: #000000;
+      --cl-black-600: #333333;
+      --cl-black-700: #1A1A1A;
+      --cl-grey-400: #BFBFBF;
+      --cl-grey-500: #A6A6A6;
+      --cl-grey-800: #404040;
+      --cl-gradient-primary: linear-gradient(90deg, #00FFFF 0%, #6400BE 50%, #FF0000 100%);
+      --cl-font: "Cera Pro", Inter, Arial, sans-serif;
+      /* Monospace is outside the brand families and stays a system stack. */
+      --cl-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+      --bg: var(--cl-black);
+      --surface: var(--cl-black-700);
+      --surface-strong: var(--cl-black-600);
+      --border: var(--cl-grey-800);
+      --text: #FFFFFF;
+      --muted: var(--cl-grey-400);
+      --faint: var(--cl-grey-500);
+      --ok: var(--cl-cyan);
+      --alert: var(--cl-red-300);
+      --human: var(--cl-violet-200);
+      --human-override: var(--cl-magenta);
+      --untracked: var(--cl-grey-500);
+      --ai: var(--cl-cyan);
     }
     * { box-sizing: border-box; }
     body {
@@ -377,47 +429,57 @@ var rangeReportTemplate = template.Must(template.New("dashboard-range").Parse(`<
       min-width: 320px;
       color: var(--text);
       background:
-        radial-gradient(circle at 82% 0%, rgba(249, 115, 22, 0.16), transparent 34rem),
-        radial-gradient(circle at 8% 90%, rgba(37, 99, 235, 0.12), transparent 38rem),
+        radial-gradient(circle at 85% 0%, rgba(0, 255, 255, 0.10), transparent 32rem),
+        radial-gradient(circle at 5% 95%, rgba(100, 0, 190, 0.14), transparent 36rem),
         var(--bg);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--cl-font);
+      font-size: 1rem;
+      line-height: 1.4;
+      letter-spacing: -0.01em;
     }
     header {
+      position: relative;
       display: flex;
       align-items: center;
       gap: 1rem;
       min-height: 5.5rem;
       padding: 1rem 2rem;
-      border-bottom: 1px solid rgba(38, 57, 82, 0.8);
-      background: rgba(5, 11, 20, 0.9);
+      background: rgba(0, 0, 0, 0.92);
+    }
+    header::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0 0;
+      height: 3px;
+      background: var(--cl-gradient-primary);
     }
     h1, h2, h3, p { margin: 0; }
-    h1 { font-size: clamp(1.35rem, 2.2vw, 2rem); letter-spacing: -0.03em; }
-    h2 { font-size: 1.25rem; }
+    h1 { font-size: clamp(1.5rem, 2.4vw, 2.5rem); font-weight: 800; line-height: 1.2; letter-spacing: -0.02em; }
+    h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; }
     .subtitle { color: var(--muted); margin-top: 0.3rem; }
     .range {
       margin-left: auto;
       padding: 0.65rem 1rem;
-      border: 1px solid #334764;
+      border: 1px solid var(--border);
       border-radius: 999px;
-      color: #dce7f5;
-      background: #17243a;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--text);
+      background: var(--surface-strong);
+      font-family: var(--cl-mono);
       font-size: 0.8rem;
     }
     main { width: min(1500px, calc(100% - 2rem)); margin: 0 auto; padding: 1.5rem 0 3rem; }
     .card {
       border: 1px solid var(--border);
       border-radius: 1.15rem;
-      background: rgba(13, 24, 40, 0.94);
-      box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.18);
+      background: var(--surface);
+      box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.45);
     }
     .kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; }
     .kpi { padding: 1.25rem 1.35rem; }
-    .kpi strong { display: block; font-size: 2rem; line-height: 1.1; }
+    .kpi strong { display: block; font-size: 2.5rem; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; }
     .kpi span { display: block; margin-top: 0.55rem; color: var(--muted); }
-    .accent { color: #c084fc; }
-    .healthy { color: var(--green); }
+    .accent { color: var(--ai); }
+    .healthy { color: var(--ok); }
     .panel { margin-top: 1rem; padding: 1.5rem; }
     .breakdowns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
     .breakdowns .panel { margin-top: 1rem; }
@@ -425,20 +487,24 @@ var rangeReportTemplate = template.Must(template.New("dashboard-range").Parse(`<
     table {
       width: 100%;
       border-collapse: collapse;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-family: var(--cl-mono);
       font-size: 0.82rem;
     }
-    th, td { padding: 0.55rem 0.65rem; border-bottom: 1px solid #1e3048; text-align: right; white-space: nowrap; }
+    th, td { padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--cl-black-600); text-align: right; white-space: nowrap; }
     th:first-child, td:first-child { text-align: left; }
     thead th { color: var(--muted); font-weight: 600; }
     tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.012); }
     .muted { margin-top: 1rem; color: var(--muted); }
-    .warning { margin-top: 1rem; padding: 0.8rem 1rem; border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 0.8rem; color: #fcd34d; background: rgba(245, 158, 11, 0.08); }
+    .warning { margin-top: 1rem; padding: 0.8rem 1rem; border: 1px solid var(--alert); border-radius: 0.8rem; color: var(--alert); background: rgba(255, 0, 0, 0.08); }
     .tone-human { color: var(--human); }
     .tone-human-override { color: var(--human-override); }
-    .tone-ai { color: #c084fc; }
+    .tone-ai { color: var(--ai); }
     .tone-untracked { color: var(--untracked); }
-    footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 1.5rem; color: var(--faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
+    footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 1.5rem; color: var(--faint); font-family: var(--cl-mono); font-size: 0.78rem; }
+    :focus-visible { outline: 2px solid var(--cl-cyan); outline-offset: 2px; }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+    }
     @media (max-width: 1000px) {
       .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .breakdowns { grid-template-columns: 1fr; }
@@ -493,12 +559,27 @@ var rangeReportTemplate = template.Must(template.New("dashboard-range").Parse(`<
           <table aria-label="Attribution by author class">
             <thead><tr><th>Class</th><th>Lines</th><th>Share</th></tr></thead>
             <tbody>
-              {{range .Authors}}
+              {{range .Classes}}
               <tr><td class="tone-{{.Name}}">{{.Name}}</td><td>{{.Lines}}</td><td>{{printf "%.1f" .Percent}}%</td></tr>
               {{end}}
             </tbody>
           </table>
         </div>
+      </div>
+      <div class="card panel">
+        <h2>People</h2>
+        {{if .People}}
+        <div class="table-scroll">
+          <table aria-label="Human lines by identity">
+            <thead><tr><th>Identity</th><th>Lines</th><th>Human</th><th>Human override</th><th>Share</th></tr></thead>
+            <tbody>
+              {{range .People}}
+              <tr><td class="tone-human">{{.Name}}</td><td>{{.Lines}}</td><td>{{.Human}}</td><td>{{.HumanOverride}}</td><td>{{printf "%.1f" .Percent}}%</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{else}}<p class="muted">No human lines in this range.</p>{{end}}
       </div>
       <div class="card panel">
         <h2>Files</h2>

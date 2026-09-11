@@ -22,15 +22,17 @@ const (
 	maxHTMLBytes   = 64 << 20
 )
 
+// palette holds the agent tone classes. Every value is a declared palette
+// token and clears 4.5:1 against the card background.
 var palette = []string{
-	"tone-orange",
-	"tone-coral",
-	"tone-green",
-	"tone-purple",
 	"tone-cyan",
-	"tone-pink",
-	"tone-yellow",
-	"tone-indigo",
+	"tone-magenta",
+	"tone-cyan-deep",
+	"tone-violet-light",
+	"tone-blue",
+	"tone-blue-light",
+	"tone-red-light",
+	"tone-magenta-light",
 }
 
 // Report contains all local data rendered into one HTML file.
@@ -289,14 +291,18 @@ func sourceOf(value model.Attribution) (key, label, kind string) {
 		if modelName == "" {
 			modelName = "unknown"
 		}
-		key = kind + "\x00" + value.Agent + "\x00" + modelName
-		label = value.Agent + "/" + modelName
-		if value.Author == model.AuthorHumanOverride {
-			label = "human-override:" + label
+		key = kind + "\x00" + value.Agent + "\x00" + modelName + "\x00" + value.Identity
+		label = kind + ":"
+		if value.Author == model.AuthorHumanOverride && value.Identity != "" {
+			label += value.Identity + "/"
 		}
+		label += value.Agent + "/" + modelName
 	case model.AuthorHuman:
-		key = kind
-		label = "human/default"
+		key = kind + "\x00" + value.Identity
+		label = kind
+		if value.Identity != "" {
+			label += ":" + value.Identity
+		}
 	case model.AuthorUntracked:
 		key = kind
 		label = "untracked"
@@ -330,21 +336,21 @@ func aiTone(key string) string {
 	if len(parts) > 1 {
 		switch parts[1] {
 		case "droid", "factory":
-			return "tone-orange"
-		case "claude":
-			return "tone-coral"
-		case "codex":
-			return "tone-green"
-		case "gemini":
-			return "tone-purple"
-		case "copilot":
-			return "tone-indigo"
-		case "vscode", "windsurf":
 			return "tone-cyan"
+		case "claude":
+			return "tone-magenta-light"
+		case "codex":
+			return "tone-cyan-deep"
+		case "gemini":
+			return "tone-violet-light"
+		case "copilot":
+			return "tone-blue"
+		case "vscode", "windsurf":
+			return "tone-blue-light"
 		case "cursor":
-			return "tone-yellow"
+			return "tone-red-light"
 		case "grok":
-			return "tone-pink"
+			return "tone-magenta"
 		}
 	}
 	hash := fnv.New32a()
@@ -440,20 +446,50 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>git-byline dashboard - {{.CommitShort}}</title>
   <style>
+    /*
+      Palette and type tokens for the report. Values are fixed: a tone is
+      a declared token, never an ad hoc color, so a stray accent cannot
+      slip in. The scale carries only cyan, blue, violet, magenta, red,
+      and grey, which is why success reads as cyan and failure as red.
+      Every foreground below clears 4.5:1 against the surface it sits on.
+      See docs/DESIGN.md.
+    */
     :root {
       color-scheme: dark;
-      --bg: #050b14;
-      --surface: #0d1828;
-      --surface-strong: #111f33;
-      --border: #263952;
-      --text: #f8fafc;
-      --muted: #8fa3bd;
-      --faint: #60738d;
-      --green: #22c55e;
-      --human: #60a5fa;
-      --human-override: #f59e0b;
-      --untracked: #94a3b8;
-      --orange: #f97316;
+      --cl-cyan: #00FFFF;
+      --cl-cyan-700: #00AAAA;
+      --cl-blue-100: #BFBFFF;
+      --cl-blue-200: #8080FF;
+      --cl-violet-100: #D8BFEF;
+      --cl-violet-200: #B280DF;
+      --cl-magenta: #FF009B;
+      --cl-magenta-200: #FF80CD;
+      --cl-red-200: #FF8080;
+      --cl-red-300: #FF4040;
+      --cl-black: #000000;
+      --cl-black-600: #333333;
+      --cl-black-700: #1A1A1A;
+      --cl-grey-400: #BFBFBF;
+      --cl-grey-500: #A6A6A6;
+      --cl-grey-800: #404040;
+      --cl-gradient-primary: linear-gradient(90deg, #00FFFF 0%, #6400BE 50%, #FF0000 100%);
+      --cl-font: "Cera Pro", Inter, Arial, sans-serif;
+      /* Monospace is outside the brand families and stays a system stack. */
+      --cl-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+      --bg: var(--cl-black);
+      --surface: var(--cl-black-700);
+      --surface-strong: var(--cl-black-600);
+      --border: var(--cl-grey-800);
+      --text: #FFFFFF;
+      --muted: var(--cl-grey-400);
+      --faint: var(--cl-grey-500);
+      --ok: var(--cl-cyan);
+      --alert: var(--cl-red-300);
+      --human: var(--cl-violet-200);
+      --human-override: var(--cl-magenta);
+      --untracked: var(--cl-grey-500);
+      --ai: var(--cl-cyan);
     }
     * { box-sizing: border-box; }
     body {
@@ -461,13 +497,17 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
       min-width: 320px;
       color: var(--text);
       background:
-        radial-gradient(circle at 82% 0%, rgba(249, 115, 22, 0.16), transparent 34rem),
-        radial-gradient(circle at 8% 90%, rgba(37, 99, 235, 0.12), transparent 38rem),
+        radial-gradient(circle at 85% 0%, rgba(0, 255, 255, 0.10), transparent 32rem),
+        radial-gradient(circle at 5% 95%, rgba(100, 0, 190, 0.14), transparent 36rem),
         var(--bg);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--cl-font);
+      font-size: 1rem;
+      line-height: 1.4;
+      letter-spacing: -0.01em;
     }
     header {
       position: sticky;
+      isolation: isolate;
       top: 0;
       z-index: 10;
       display: flex;
@@ -475,76 +515,86 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
       gap: 1rem;
       min-height: 5.5rem;
       padding: 1rem 2rem;
-      border-bottom: 1px solid rgba(38, 57, 82, 0.8);
-      background: rgba(5, 11, 20, 0.9);
+      background: rgba(0, 0, 0, 0.92);
       backdrop-filter: blur(18px);
+    }
+    header::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0 0;
+      height: 3px;
+      background: var(--cl-gradient-primary);
     }
     .traffic { display: flex; gap: 0.55rem; }
     .traffic span { width: 0.78rem; height: 0.78rem; border-radius: 50%; }
-    .traffic span:nth-child(1) { background: #ff5f57; }
-    .traffic span:nth-child(2) { background: #febc2e; }
-    .traffic span:nth-child(3) { background: #28c840; }
+    .traffic span:nth-child(1) { background: #00FFFF; }
+    .traffic span:nth-child(2) { background: #6400BE; }
+    .traffic span:nth-child(3) { background: #FF0000; }
     h1, h2, h3, p { margin: 0; }
-    h1 { font-size: clamp(1.35rem, 2.2vw, 2rem); letter-spacing: -0.03em; }
-    h2 { font-size: 1.35rem; }
-    h3 { font-size: 1rem; }
+    h1 { font-size: clamp(1.5rem, 2.4vw, 2.5rem); font-weight: 800; line-height: 1.2; letter-spacing: -0.02em; }
+    h2 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; }
+    h3 { font-size: 1rem; font-weight: 700; }
     .subtitle { color: var(--muted); margin-top: 0.3rem; }
     .commit {
       margin-left: auto;
       padding: 0.65rem 1rem;
-      border: 1px solid #334764;
+      border: 1px solid var(--border);
       border-radius: 999px;
-      color: #dce7f5;
-      background: #17243a;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--text);
+      background: var(--surface-strong);
+      font-family: var(--cl-mono);
       font-size: 0.8rem;
     }
-    .commit::before { content: ""; display: inline-block; width: 0.65rem; height: 0.65rem; margin-right: 0.65rem; border-radius: 50%; background: var(--green); }
+    .commit::before { content: ""; display: inline-block; width: 0.65rem; height: 0.65rem; margin-right: 0.65rem; border-radius: 50%; background: var(--ok); }
     main { width: min(1500px, calc(100% - 2rem)); margin: 0 auto; padding: 1.5rem 0 3rem; }
     .card {
       border: 1px solid var(--border);
       border-radius: 1.15rem;
-      background: rgba(13, 24, 40, 0.94);
-      box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.18);
+      background: var(--surface);
+      box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.45);
     }
     .kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; }
     .kpi { padding: 1.25rem 1.35rem; }
-    .kpi strong { display: block; font-size: 2rem; line-height: 1.1; }
+    .kpi strong { display: block; font-size: 2.5rem; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; }
     .kpi span { display: block; margin-top: 0.55rem; color: var(--muted); }
-    .accent { color: #c084fc; }
-    .healthy { color: var(--green); }
+    .accent { color: var(--ai); }
+    .healthy { color: var(--ok); }
     .overview { display: grid; grid-template-columns: minmax(18rem, 0.75fr) minmax(30rem, 1.25fr); gap: 1rem; margin-top: 1rem; }
     .panel { padding: 1.5rem; }
     .donut-wrap { display: grid; grid-template-columns: 13rem 1fr; align-items: center; gap: 1rem; margin-top: 1.25rem; }
     .donut { width: 13rem; height: 13rem; transform: rotate(-90deg); }
     .donut circle { fill: none; stroke-width: 10; }
-    .donut .track { stroke: #19283d; }
+    .donut .track { stroke: var(--cl-black-600); }
     .donut .human { stroke: var(--human); }
     .donut .human-override { stroke: var(--human-override); }
     .donut .untracked { stroke: var(--untracked); }
-    .donut .ai { stroke: #c084fc; stroke-linecap: round; }
+    .donut .ai { stroke: var(--ai); stroke-linecap: round; }
     .donut-label { position: absolute; text-align: center; pointer-events: none; }
-    .donut-label strong { display: block; font-size: 2.1rem; }
+    .donut-label strong { display: block; font-size: 2.5rem; font-weight: 800; letter-spacing: -0.02em; }
     .donut-label span { color: var(--muted); }
     .donut-box { position: relative; display: grid; place-items: center; }
-    .legend { display: grid; gap: 0.8rem; }
+    .legend { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.8rem; }
     .legend-row, .source-head, .health-row { display: flex; align-items: center; gap: 0.65rem; }
-    .legend-row strong, .source-head strong { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; }
+    .legend-row strong, .source-head strong { margin-left: auto; flex: 0 0 auto; font-family: var(--cl-mono); font-size: 0.82rem; }
     .dot { width: 0.65rem; height: 0.65rem; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
-    .source-list { display: grid; gap: 1rem; margin-top: 1.3rem; }
+    .source-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; margin-top: 1.3rem; }
     .source-head { margin-bottom: 0.45rem; }
-    .source-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* A nowrap flex item keeps its full min-content width unless min-width
+       is cleared, which pushes long agent labels out of the card. */
+    .legend-row span, .source-head span, .health-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .bar { display: block; width: 100%; height: 0.65rem; }
-    .bar .track { fill: #19283d; }
+    .bar .track { fill: var(--cl-black-600); }
     .bar .fill { fill: currentColor; }
     .health { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.8rem 1.5rem; margin-top: 1.2rem; }
-    .health-row { min-height: 2.8rem; padding: 0 0.85rem; border: 1px solid #24364f; border-radius: 0.8rem; background: #101e31; }
-    .health-row::before { content: "✓"; display: grid; place-items: center; width: 1.25rem; height: 1.25rem; border-radius: 50%; color: var(--green); background: rgba(34, 197, 94, 0.15); font-weight: 800; }
+    .health-row { min-height: 2.75rem; padding: 0 0.85rem; border: 1px solid var(--border); border-radius: 0.8rem; background: var(--surface-strong); }
+    .health-row::before { content: "✓"; display: grid; place-items: center; width: 1.25rem; height: 1.25rem; border-radius: 50%; color: var(--cl-black); background: var(--ok); font-weight: 800; }
     .health-row code { margin-left: auto; color: var(--muted); }
-    .warning { margin-top: 1rem; padding: 0.8rem 1rem; border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 0.8rem; color: #fcd34d; background: rgba(245, 158, 11, 0.08); }
+    .warning { margin-top: 1rem; padding: 0.8rem 1rem; border: 1px solid var(--alert); border-radius: 0.8rem; color: var(--alert); background: rgba(255, 0, 0, 0.08); }
     .files-title { display: flex; align-items: center; gap: 1rem; margin: 1.5rem 0 1rem; }
     select {
       min-width: min(32rem, 60vw);
+      /* 44 px minimum touch target: implementation guardrail. */
+      min-height: 44px;
       padding: 0.7rem 2.5rem 0.7rem 0.85rem;
       color: var(--text);
       border: 1px solid var(--border);
@@ -552,35 +602,37 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
       background: var(--surface-strong);
       font: inherit;
     }
+    :focus-visible { outline: 2px solid var(--cl-cyan); outline-offset: 2px; }
     .file-view { display: none; grid-template-columns: 19rem minmax(0, 1fr); gap: 1rem; }
     .file-view.active { display: grid; }
     .file-summary { padding: 1.25rem; align-self: start; position: sticky; top: 7rem; }
     .file-summary code { color: var(--muted); word-break: break-all; }
     .file-summary .source-list { margin-top: 1.5rem; }
     .code-card { overflow: hidden; }
-    .code-head { display: flex; align-items: center; gap: 1rem; min-height: 3.2rem; padding: 0 1rem; border-bottom: 1px solid var(--border); background: #101c2d; }
-    .code-head code { color: #9fb0c5; }
+    .code-head { display: flex; align-items: center; gap: 1rem; min-height: 3.2rem; padding: 0 1rem; border-bottom: 1px solid var(--border); background: var(--surface-strong); }
+    .code-head code { color: var(--muted); }
     .code-head span { margin-left: auto; color: var(--faint); font-size: 0.8rem; }
     .code-scroll { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; }
+    table { width: 100%; border-collapse: collapse; font-family: var(--cl-mono); font-size: 0.82rem; }
     tr:nth-child(even) { background: rgba(255, 255, 255, 0.012); }
     td { height: 1.55rem; vertical-align: top; }
     .line-source { width: 0.28rem; background: currentColor; }
-    .line-number { width: 4rem; padding: 0.22rem 0.85rem; color: #536781; text-align: right; user-select: none; }
-    .line-code { min-width: 28rem; padding: 0.22rem 0.5rem; color: #d6e2f0; white-space: pre; }
+    .line-number { width: 4rem; padding: 0.22rem 0.85rem; color: var(--faint); text-align: right; user-select: none; }
+    .line-code { min-width: 28rem; padding: 0.22rem 0.5rem; color: var(--text); white-space: pre; }
     .line-label { width: 13rem; padding: 0.22rem 0.8rem; color: currentColor; white-space: nowrap; }
-    footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 1.5rem; color: var(--faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
-    .tone-human { color: #60a5fa; }
-    .tone-human-override { color: #f59e0b; }
-    .tone-untracked { color: #94a3b8; }
-    .tone-orange { color: #f97316; }
-    .tone-coral { color: #e98163; }
-    .tone-green { color: #10b981; }
-    .tone-purple { color: #a78bfa; }
-    .tone-cyan { color: #22d3ee; }
-    .tone-pink { color: #f472b6; }
-    .tone-yellow { color: #facc15; }
-    .tone-indigo { color: #818cf8; }
+    footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 1.5rem; color: var(--faint); font-family: var(--cl-mono); font-size: 0.78rem; }
+    .tone-human { color: var(--human); }
+    .tone-human-override { color: var(--human-override); }
+    .tone-untracked { color: var(--untracked); }
+    .tone-ai { color: var(--ai); }
+    .tone-cyan { color: var(--cl-cyan); }
+    .tone-cyan-deep { color: var(--cl-cyan-700); }
+    .tone-blue { color: var(--cl-blue-200); }
+    .tone-blue-light { color: var(--cl-blue-100); }
+    .tone-violet-light { color: var(--cl-violet-100); }
+    .tone-magenta { color: var(--cl-magenta); }
+    .tone-magenta-light { color: var(--cl-magenta-200); }
+    .tone-red-light { color: var(--cl-red-200); }
     @media (max-width: 1000px) {
       .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .overview, .file-view { grid-template-columns: 1fr; }
@@ -597,6 +649,9 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
       .health { grid-template-columns: 1fr; }
       .files-title { align-items: stretch; flex-direction: column; }
       select { width: 100%; min-width: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
     }
     @media print {
       header { position: static; }
@@ -639,8 +694,8 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
             <div class="donut-label"><strong>{{printf "%.1f" .AIPercent}}%</strong><span>AI observed</span></div>
           </div>
           <div class="legend">
-            <div class="legend-row tone-purple"><span class="dot"></span><span>AI observed</span><strong>{{.AILines}}</strong></div>
-            <div class="legend-row tone-human"><span class="dot"></span><span>human/default</span><strong>{{.HumanLines}}</strong></div>
+            <div class="legend-row tone-ai"><span class="dot"></span><span>AI observed</span><strong>{{.AILines}}</strong></div>
+            <div class="legend-row tone-human"><span class="dot"></span><span>human</span><strong>{{.HumanLines}}</strong></div>
             <div class="legend-row tone-human-override"><span class="dot"></span><span>human override</span><strong>{{.HumanOverrideLines}}</strong></div>
             <div class="legend-row tone-untracked"><span class="dot"></span><span>untracked</span><strong>{{.UntrackedLines}}</strong></div>
           </div>
@@ -693,7 +748,7 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
         {{range .Warnings}}<div class="warning">{{.}}</div>{{end}}
       </aside>
       <div class="card code-card">
-        <div class="code-head"><code>{{.Path}}</code><span>human / human override / agent / model</span></div>
+        <div class="code-head"><code>{{.Path}}</code><span>class : author / agent / model</span></div>
         <div class="code-scroll">
           <table aria-label="Line attribution for {{.Path}}">
             <tbody>
@@ -718,17 +773,21 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
     (() => {
       const picker = document.getElementById("file-picker");
       const views = Array.from(document.querySelectorAll("[data-file-view]"));
-      const show = (id) => {
+      const show = (id, link) => {
         const selected = views.some((view) => view.id === id) ? id : views[0]?.id;
         views.forEach((view) => view.classList.toggle("active", view.id === selected));
         if (selected) {
           picker.value = selected;
-          history.replaceState(null, "", "#" + selected);
+          // Writing the fragment on load makes the browser jump to the
+          // file section, so only an explicit choice updates the URL.
+          if (link) {
+            history.replaceState(null, "", "#" + selected);
+          }
         }
       };
-      picker.addEventListener("change", () => show(picker.value));
-      window.addEventListener("hashchange", () => show(location.hash.slice(1)));
-      show(location.hash.slice(1));
+      picker.addEventListener("change", () => show(picker.value, true));
+      window.addEventListener("hashchange", () => show(location.hash.slice(1), false));
+      show(location.hash.slice(1), false);
     })();
   </script>
 </body>
