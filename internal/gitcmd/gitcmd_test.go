@@ -406,6 +406,9 @@ func TestRewriteRepositoryHelpers(t *testing.T) {
 }
 
 func TestReadNoteRefEnforcesNoteOutputLimit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fake git is not executable on Windows")
+	}
 	t.Parallel()
 	root := t.TempDir()
 	gitBin := filepath.Join(root, "fake-git")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode"
 
@@ -154,7 +155,8 @@ func writeDisclosureOutputWithLink(
 	if err != nil {
 		return fmt.Errorf("stat published disclosure %s: %w", path, err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		// Windows exposes a read-only flag instead of Unix permission bits.
 		return fmt.Errorf("published disclosure %s has permissions %o, want 600", path, info.Mode().Perm())
 	}
 	success = true

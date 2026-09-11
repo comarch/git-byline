@@ -21,3 +21,10 @@ LICENSE.* text
 # Windows scripts must keep CRLF
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Keep byte-exact test fixtures LF on every platform.
+internal/disclosure/testdata/** text eol=lf
+internal/interop/testdata/** text eol=lf
+internal/notes/testdata/** text eol=lf
+tools/validate/testdata/** text eol=lf
+*.golden text eol=lf
