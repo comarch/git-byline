@@ -58,6 +58,26 @@ func checkInstallers(root string) error {
 			return fmt.Errorf("install.ps1 is missing %q", required)
 		}
 	}
+	// Agent detection must stay opt-out and must never guess a user-level
+	// path for an agent git-byline cannot configure itself.
+	for _, required := range []string{
+		"--no-agent-hooks",
+		"install-hooks --agent",
+		"marketplace/harness",
+	} {
+		if !strings.Contains(string(shell), required) {
+			return fmt.Errorf("install.sh is missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"NoAgentHooks",
+		"install-hooks",
+		"marketplace/harness",
+	} {
+		if !strings.Contains(string(powerShell), required) {
+			return fmt.Errorf("install.ps1 is missing %q", required)
+		}
+	}
 	if sh, err := exec.LookPath("sh"); err == nil {
 		if _, err := runCapture(sh, root, "-n", shellPath); err != nil {
 			return fmt.Errorf("install.sh syntax: %w", err)

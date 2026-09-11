@@ -141,12 +141,25 @@ matching release archive and `checksums.txt`, verifies SHA-256 and binary
 version, installs to `$HOME/.local/bin`, and adds the current repository Git
 hook when run inside a worktree.
 
+It then detects the coding agents present on the machine, by their command
+name or their configuration directory, and never writes during detection:
+
+- Factory and Claude Code get a user-level agent hook, which covers every
+  repository, because git-byline installs those two itself.
+- Every other detected agent reads a project hook file that git-byline does
+  not own. The installer prints the one command that copies that file into
+  the current project and does not guess a user-level path for it.
+
+Pass `--no-agent-hooks` to skip detection. The per-agent files and their copy
+targets are listed in
+[agent setup templates](../marketplace/harness/README.md).
+
 Override defaults:
 
 ```sh
 GIT_BYLINE_VERSION=v0.1.0 \
 GIT_BYLINE_BIN_DIR="$HOME/bin" \
-sh install.sh --no-git-hook
+sh install.sh --no-git-hook --no-agent-hooks
 ```
 
 ## Windows PowerShell
@@ -158,7 +171,8 @@ irm https://raw.githubusercontent.com/comarch/git-byline/main/install.ps1 | iex
 ```
 
 The script supports Windows on amd64 and arm64. It performs the same checksum
-and binary-version checks and installs to `$HOME\bin`.
+and binary-version checks, installs to `$HOME\bin`, and runs the same agent
+detection. Pass `-NoAgentHooks` to skip it.
 
 Run a reviewed local script with custom options:
 
@@ -229,6 +243,9 @@ The short one-liners execute a mutable script from the protected `main`
 branch. Use the reviewed-script or checksum-first method when that trust model
 is not acceptable. Installers never use `sudo`, never disable TLS checks, and
 never execute a downloaded git-byline binary before its archive checksum is
-verified. When run inside a Git worktree, installers enable automatic
+verified. They install for the current user only: a system-wide location would
+need elevation, which they never request. Agent detection reads a command name
+and a directory name, writes nothing of its own, and only ever calls
+`git-byline install-hooks`. When run inside a Git worktree, installers enable automatic
 attribution-note sharing unless `--no-git-hook` is used and hooks are later
 installed with `--local-notes`.
