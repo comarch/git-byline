@@ -47,6 +47,13 @@ type FileTotals struct {
 	Totals
 }
 
+// AuthorTotals contains human and human-override totals for one identity.
+// An empty identity collects lines recorded before identities were stored.
+type AuthorTotals struct {
+	Identity string `json:"identity"`
+	Totals
+}
+
 // SessionTotals contains totals for one attribution session.
 type SessionTotals struct {
 	Session string `json:"session"`
@@ -73,6 +80,7 @@ type Aggregate struct {
 	} `json:"commits"`
 	Totals   Totals          `json:"totals"`
 	Agents   []AgentTotals   `json:"agents"`
+	Authors  []AuthorTotals  `json:"authors"`
 	Files    []FileTotals    `json:"files"`
 	Sessions []SessionTotals `json:"sessions"`
 	Commit   []CommitTotals  `json:"commit"`
@@ -124,6 +132,7 @@ func Collect(repo *gitcmd.Repo, from, to string, limit int) (Aggregate, error) {
 		From:     from,
 		To:       to,
 		Agents:   make([]AgentTotals, 0),
+		Authors:  make([]AuthorTotals, 0),
 		Files:    make([]FileTotals, 0),
 		Sessions: make([]SessionTotals, 0),
 		Commit:   make([]CommitTotals, 0),
@@ -133,6 +142,7 @@ func Collect(repo *gitcmd.Repo, from, to string, limit int) (Aggregate, error) {
 	agents := map[string]*AgentTotals{}
 	models := map[string]map[string]*ModelTotals{}
 	sessions := map[string]*SessionTotals{}
+	authors := map[string]*AuthorTotals{}
 	for _, commit := range commits {
 		if !annotated[commit] {
 			continue
@@ -189,11 +199,15 @@ func Collect(repo *gitcmd.Repo, from, to string, limit int) (Aggregate, error) {
 				if err := addAgentTotals(agents, models, sessions, item.Attribution, count); err != nil {
 					return Aggregate{}, fmt.Errorf("aggregate %s %s: %w", commit, path, err)
 				}
+				if err := addAuthorTotals(authors, item.Attribution, count); err != nil {
+					return Aggregate{}, fmt.Errorf("aggregate %s %s: %w", commit, path, err)
+				}
 			}
 		}
 		result.Commit = append(result.Commit, commitTotals)
 	}
 	result.Agents = sortedAgents(agents, models)
+	result.Authors = sortedAuthors(authors)
 	result.Files = sortedFiles(files)
 	result.Sessions = sortedSessions(sessions)
 	sort.Slice(result.Commit, func(i, j int) bool {
@@ -322,6 +336,27 @@ func addAgentTotals(
 		sessions[key] = session
 	}
 	return addTotals(&session.Totals, attribution, count)
+}
+
+func addAuthorTotals(authors map[string]*AuthorTotals, attribution model.Attribution, count int) error {
+	if attribution.Author != model.AuthorHuman && attribution.Author != model.AuthorHumanOverride {
+		return nil
+	}
+	author := authors[attribution.Identity]
+	if author == nil {
+		author = &AuthorTotals{Identity: attribution.Identity}
+		authors[attribution.Identity] = author
+	}
+	return addTotals(&author.Totals, attribution, count)
+}
+
+func sortedAuthors(values map[string]*AuthorTotals) []AuthorTotals {
+	authors := make([]AuthorTotals, 0, len(values))
+	for _, value := range values {
+		authors = append(authors, *value)
+	}
+	sort.Slice(authors, func(i, j int) bool { return authors[i].Identity < authors[j].Identity })
+	return authors
 }
 
 func sortedAgents(values map[string]*AgentTotals, models map[string]map[string]*ModelTotals) []AgentTotals {
