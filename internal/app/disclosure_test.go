@@ -97,6 +97,62 @@ func TestDisclosureCommandWritesAllFormats(t *testing.T) {
 	}
 }
 
+func TestDisclosureCommandWritesDocumentToStdoutWithoutOutputFile(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("TMPDIR", tempDir)
+	root := appRepo(t)
+	appWrite(t, root, "file.go", "one\n")
+	appCommit(t, root, "one")
+	head := appHead(t, root)
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := notes.Encode(model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file.go": {
+				Blob: "deadbeef",
+				Ranges: []model.Range{{
+					Start: 1,
+					End:   1,
+					Attribution: model.Attribution{
+						Author: model.AuthorAI,
+						Agent:  "droid",
+						Model:  "model-a",
+					},
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(head, data); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr, err := appRun(root, time.Time{}, nil,
+		"disclosure", "--range", head)
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("disclosure stdout = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(stdout), &document); err != nil {
+		t.Fatalf("stdout is not the full document: %v", err)
+	}
+	if document["format"] != "git-byline-disclosure" {
+		t.Fatalf("stdout document format = %v", document["format"])
+	}
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("stdout mode created files: %v", entries)
+	}
+}
+
 func TestDisclosureCommandRefusesOutputReplacementAndInvalidPaths(t *testing.T) {
 	t.Parallel()
 	root := appRepo(t)
@@ -118,6 +174,13 @@ func TestDisclosureCommandRefusesOutputReplacementAndInvalidPaths(t *testing.T) 
 	if string(data) != existing {
 		t.Fatalf("existing disclosure changed to %q", data)
 	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
+		t.Fatalf("failed publish left temporary files: %v", entries)
+	}
 	for _, output := range []string{"bad\nname.json", "bad\tname.json", "-"} {
 		code, _, _, err := appRun(root, time.Time{}, nil,
 			"disclosure", "--output", output)
@@ -130,5 +193,31 @@ func TestDisclosureCommandRefusesOutputReplacementAndInvalidPaths(t *testing.T) 
 	if code != ExitUsage || err == nil || stdout != "" ||
 		!strings.Contains(stderr, "--format must be") {
 		t.Fatalf("disclosure format = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+}
+
+func TestDisclosureOutputFailureRemovesTemporaryFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "disclosure.json")
+	file, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	err = writeDisclosureOutputWithLink(file, path, []byte("document\n"),
+		func(string, string) error { return os.ErrPermission })
+	if err == nil {
+		t.Fatal("failed disclosure publish succeeded")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("failed publish left files: %v", entries)
 	}
 }

@@ -115,7 +115,7 @@ func commands() []*command {
 			name:  "disclosure",
 			short: "write machine-readable AI disclosure input",
 			usage: "Usage: git-byline disclosure [--range <rev-range>] [--format json|spdx|cyclonedx] [--output FILE]\n\n" +
-				"Write private, deterministic disclosure input from attribution notes.\n" +
+				"Write private, deterministic disclosure input to stdout or --output FILE.\n" +
 				"The output is not a compliance certificate and existing files are not replaced.",
 			run: runDisclosure,
 		},

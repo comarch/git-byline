@@ -80,6 +80,115 @@ func TestRenderRejectsUnsupportedFormatAndNegativeTotals(t *testing.T) {
 	}
 }
 
+func TestRenderRejectsInvalidNestedTotals(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		mutate   func(*report.Aggregate)
+		wantName string
+	}{
+		{
+			name: "aggregate negative",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Totals.AI = -1
+			},
+			wantName: "aggregate",
+		},
+		{
+			name: "aggregate mismatch",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Totals.Lines++
+			},
+			wantName: "aggregate",
+		},
+		{
+			name: "agent negative",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Agents[0].Totals.AI = -1
+			},
+			wantName: `agent "droid"`,
+		},
+		{
+			name: "agent mismatch",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Agents[0].Totals.Lines++
+			},
+			wantName: `agent "droid"`,
+		},
+		{
+			name: "model negative",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Agents[0].Models[0].Totals.AI = -1
+			},
+			wantName: `agent "droid" model "model-a"`,
+		},
+		{
+			name: "model mismatch",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Agents[0].Models[0].Totals.Lines++
+			},
+			wantName: `agent "droid" model "model-a"`,
+		},
+		{
+			name: "file negative",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Files[0].Totals.Human = -1
+			},
+			wantName: `file "file.go"`,
+		},
+		{
+			name: "file mismatch",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Files[0].Totals.Lines++
+			},
+			wantName: `file "file.go"`,
+		},
+		{
+			name: "session negative",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Sessions[0].Totals.AI = -1
+			},
+			wantName: `session "session-a"`,
+		},
+		{
+			name: "session mismatch",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Sessions[0].Totals.Lines++
+			},
+			wantName: `session "session-a"`,
+		},
+		{
+			name: "commit negative",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Commit[0].Totals.AI = -1
+			},
+			wantName: `commit "bbbb"`,
+		},
+		{
+			name: "commit mismatch",
+			mutate: func(aggregate *report.Aggregate) {
+				aggregate.Commit[0].Totals.Lines++
+			},
+			wantName: `commit "bbbb"`,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			aggregate := disclosureFixture()
+			tt.mutate(&aggregate)
+			if _, err := Render("json", aggregate, time.Time{}, "dev"); err == nil ||
+				!strings.Contains(err.Error(), tt.wantName) {
+				t.Fatalf("Render() error = %v, want entry %q", err, tt.wantName)
+			}
+		})
+	}
+	if _, err := Render("json", disclosureFixture(), time.Time{}, "dev"); err != nil {
+		t.Fatalf("valid aggregate rejected: %v", err)
+	}
+}
+
 func disclosureFixture() report.Aggregate {
 	return report.Aggregate{
 		Version: 2,

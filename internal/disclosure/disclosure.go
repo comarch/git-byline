@@ -26,6 +26,12 @@ const (
 	spdxCreationDateTime = "2006-01-02T15:04:05Z"
 )
 
+var (
+	errDisclosureNegativeTotals = errors.New("disclosure aggregate contains negative totals")
+	errDisclosureTotalsOverflow = errors.New("disclosure totals overflow while summing class counts")
+	errDisclosureTotalsMismatch = errors.New("disclosure totals do not match class counts")
+)
+
 // Render converts an aggregate into one of the supported disclosure formats.
 func Render(format string, aggregate report.Aggregate, generatedAt time.Time, toolVersion string) ([]byte, error) {
 	if err := validateAggregate(aggregate); err != nil {
@@ -561,10 +567,71 @@ func spdxFileID(path string) string {
 }
 
 func validateAggregate(aggregate report.Aggregate) error {
-	if aggregate.Totals.Lines < 0 || aggregate.Totals.AI < 0 ||
-		aggregate.Totals.Human < 0 || aggregate.Totals.Untracked < 0 ||
-		aggregate.Totals.HumanOverride < 0 {
-		return errors.New("disclosure aggregate contains negative totals")
+	if err := validateTotals("aggregate", aggregate.Totals); err != nil {
+		return err
+	}
+	for _, agent := range aggregate.Agents {
+		name := fmt.Sprintf("agent %q", agent.Agent)
+		if err := validateTotals(name, agent.Totals); err != nil {
+			return err
+		}
+		for _, model := range agent.Models {
+			if err := validateTotals(
+				fmt.Sprintf("%s model %q", name, model.Model),
+				model.Totals,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	for _, file := range aggregate.Files {
+		if err := validateTotals(fmt.Sprintf("file %q", file.Path), file.Totals); err != nil {
+			return err
+		}
+	}
+	for _, session := range aggregate.Sessions {
+		if err := validateTotals(
+			fmt.Sprintf("session %q (agent %q, model %q)", session.Session, session.Agent, session.Model),
+			session.Totals,
+		); err != nil {
+			return err
+		}
+	}
+	for _, commit := range aggregate.Commit {
+		if err := validateTotals(fmt.Sprintf("commit %q", commit.Commit), commit.Totals); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTotals(name string, totals report.Totals) error {
+	fields := []struct {
+		name  string
+		value int
+	}{
+		{name: "human", value: totals.Human},
+		{name: "ai", value: totals.AI},
+		{name: "untracked", value: totals.Untracked},
+		{name: "human override", value: totals.HumanOverride},
+		{name: "lines", value: totals.Lines},
+	}
+	for _, field := range fields {
+		if field.value < 0 {
+			return fmt.Errorf("%s: %w (%s count)", name, errDisclosureNegativeTotals, field.name)
+		}
+	}
+	sum := 0
+	for _, value := range []int{totals.Human, totals.AI, totals.Untracked, totals.HumanOverride} {
+		maxInt := int(^uint(0) >> 1)
+		if sum > maxInt-value {
+			return fmt.Errorf("%s: %w", name, errDisclosureTotalsOverflow)
+		}
+		sum += value
+	}
+	if totals.Lines != sum {
+		return fmt.Errorf("%s: %w (lines %d, class total %d)",
+			name, errDisclosureTotalsMismatch, totals.Lines, sum)
 	}
 	return nil
 }

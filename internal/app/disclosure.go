@@ -29,7 +29,13 @@ func runDisclosure(env *Env, command *command, args []string) (int, error) {
 		rangeSpecified = true
 		return nil
 	})
-	outputPath := flags.String("output", "", "output file")
+	outputPath := ""
+	outputSpecified := false
+	flags.Func("output", "output file", func(value string) error {
+		outputPath = value
+		outputSpecified = true
+		return nil
+	})
 	if err := flags.Parse(args); err != nil {
 		return flagError(env, command, output.String(), err)
 	}
@@ -59,7 +65,13 @@ func runDisclosure(env *Env, command *command, args []string) (int, error) {
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
-	file, path, err := createDisclosureOutput(env, *outputPath)
+	if !outputSpecified {
+		if _, err := env.Stdout.Write(data); err != nil {
+			return operationalError(env, command.name, fmt.Errorf("write disclosure: %w", err))
+		}
+		return ExitSuccess, nil
+	}
+	file, path, err := createDisclosureOutput(env, outputPath)
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
@@ -72,11 +84,7 @@ func runDisclosure(env *Env, command *command, args []string) (int, error) {
 
 func createDisclosureOutput(env *Env, requested string) (*os.File, string, error) {
 	if requested == "" {
-		file, err := os.CreateTemp("", "git-byline-disclosure-*.json")
-		if err != nil {
-			return nil, "", fmt.Errorf("create disclosure temp file: %w", err)
-		}
-		return file, file.Name(), nil
+		return nil, "", errors.New("disclosure output path is required")
 	}
 	if requested == "-" {
 		return nil, "", errors.New("disclosure output must be a file")
@@ -96,29 +104,58 @@ func createDisclosureOutput(env *Env, requested string) (*os.File, string, error
 		}
 		path = filepath.Join(dir, filepath.Clean(requested))
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
 	if err != nil {
-		return nil, "", fmt.Errorf("create disclosure %s: %w", path, err)
+		return nil, "", fmt.Errorf("create disclosure temp file for %s: %w", path, err)
+	}
+	tempPath := file.Name()
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tempPath)
+		return nil, "", fmt.Errorf("set disclosure temp permissions for %s: %w", path, err)
 	}
 	return file, path, nil
 }
 
 func writeDisclosureOutput(file *os.File, path string, data []byte) error {
+	return writeDisclosureOutputWithLink(file, path, data, os.Link)
+}
+
+func writeDisclosureOutputWithLink(
+	file *os.File,
+	path string,
+	data []byte,
+	link func(string, string) error,
+) error {
+	tempPath := file.Name()
 	success := false
+	published := false
 	defer func() {
 		_ = file.Close()
-		if !success {
+		_ = os.Remove(tempPath)
+		if published && !success {
 			_ = os.Remove(path)
 		}
 	}()
 	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("write disclosure %s: %w", path, err)
+		return fmt.Errorf("write disclosure temp file for %s: %w", path, err)
 	}
 	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync disclosure %s: %w", path, err)
+		return fmt.Errorf("sync disclosure temp file for %s: %w", path, err)
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("close disclosure %s: %w", path, err)
+		return fmt.Errorf("close disclosure temp file for %s: %w", path, err)
+	}
+	if err := link(tempPath, path); err != nil {
+		return fmt.Errorf("publish disclosure %s: %w", path, err)
+	}
+	published = true
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat published disclosure %s: %w", path, err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		return fmt.Errorf("published disclosure %s has permissions %o, want 600", path, info.Mode().Perm())
 	}
 	success = true
 	return nil
