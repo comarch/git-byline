@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -587,6 +588,9 @@ func TestExportGitAIUnmatchedAIIsUntracked(t *testing.T) {
 }
 
 func TestGitAIPathLeadingQuoteRoundTrip(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not allow file names with a leading quote")
+	}
 	t.Parallel()
 	root := interopRepo(t)
 	path := `"quoted.txt`

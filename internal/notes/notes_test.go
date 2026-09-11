@@ -104,9 +104,9 @@ func TestSessionKeysIncludeAgent(t *testing.T) {
 	}
 }
 
-func TestEncodeV2Golden(t *testing.T) {
+func TestEncodeCurrentVersionGolden(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join("testdata", "note-v2.json")
+	path := filepath.Join("testdata", "note-v3.json")
 	fixture, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -126,6 +126,42 @@ func TestEncodeV2Golden(t *testing.T) {
 	compactFixture.WriteByte('\n')
 	if string(encoded) != compactFixture.String() {
 		t.Fatalf("Encode() differs from %s:\n%s", path, encoded)
+	}
+}
+
+func TestDecodeLegacyVersionsCarryNoIdentity(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"note-v1.json", "note-v2.json"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fixture, err := os.ReadFile(filepath.Join("testdata", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			note, err := Decode(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for path, file := range note.Files {
+				for _, value := range file.Ranges {
+					if value.Identity != "" {
+						t.Fatalf("%s %s carries identity %q", name, path, value.Identity)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDecodeRejectsIdentityBeforeVersion3(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{"version":2,"files":{"a.go":{"blob":"abcd1234",` +
+		`"ranges":[{"start":1,"end":1,"author":"human","identity":"john.doe"}]}},` +
+		`"sessions":{}}`)
+	if _, err := Decode(data); err == nil ||
+		!strings.Contains(err.Error(), "requires version 3") {
+		t.Fatalf("Decode(v2 with identity) error = %v", err)
 	}
 }
 

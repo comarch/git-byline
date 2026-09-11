@@ -123,6 +123,93 @@ func TestCollectCountsHumanOverrideSeparately(t *testing.T) {
 	}
 }
 
+func TestCollectGroupsHumanLinesByIdentity(t *testing.T) {
+	t.Parallel()
+	root := reportTestRepository(t)
+	writeReportFile(t, root, "file", "one\ntwo\nthree\nfour\nfive\n")
+	head := reportCommit(t, root, "people")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReportNote(t, repo, head, model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file": {
+				Blob: "abcd1234",
+				Ranges: []model.Range{
+					{Start: 1, End: 2, Attribution: model.Attribution{
+						Author: model.AuthorHuman, Identity: "maya.chen",
+					}},
+					{Start: 3, End: 3, Attribution: model.Attribution{
+						Author: model.AuthorHuman, Identity: "john.doe",
+					}},
+					{Start: 4, End: 4, Attribution: model.Attribution{
+						Author: model.AuthorHumanOverride, Identity: "john.doe",
+						Agent: "droid", Model: "model", Session: "session-1",
+					}},
+					{Start: 5, End: 5, Attribution: model.Attribution{
+						Author: model.AuthorAI, Agent: "droid", Model: "model", Session: "session-1",
+					}},
+				},
+			},
+		},
+	})
+	got, err := Collect(repo, "", head, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Authors) != 2 {
+		t.Fatalf("authors = %+v", got.Authors)
+	}
+	if got.Authors[0].Identity != "john.doe" || got.Authors[0].Lines != 2 ||
+		got.Authors[0].Human != 1 || got.Authors[0].HumanOverride != 1 {
+		t.Fatalf("first author = %+v", got.Authors[0])
+	}
+	if got.Authors[1].Identity != "maya.chen" || got.Authors[1].Lines != 2 ||
+		got.Authors[1].Human != 2 || got.Authors[1].HumanOverride != 0 {
+		t.Fatalf("second author = %+v", got.Authors[1])
+	}
+	// AI lines belong to an agent, never to a person.
+	total := 0
+	for _, author := range got.Authors {
+		total += author.Lines
+	}
+	if total != got.Totals.Human+got.Totals.HumanOverride {
+		t.Fatalf("author lines %d do not match human totals %+v", total, got.Totals)
+	}
+}
+
+func TestCollectGroupsLegacyHumanLinesUnderEmptyIdentity(t *testing.T) {
+	t.Parallel()
+	root := reportTestRepository(t)
+	writeReportFile(t, root, "file", "one\n")
+	head := reportCommit(t, root, "legacy")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReportNote(t, repo, head, model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file": {
+				Blob: "abcd1234",
+				Ranges: []model.Range{{
+					Start: 1, End: 1,
+					Attribution: model.Attribution{Author: model.AuthorHuman},
+				}},
+			},
+		},
+	})
+	got, err := Collect(repo, "", head, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Authors) != 1 || got.Authors[0].Identity != "" || got.Authors[0].Human != 1 {
+		t.Fatalf("authors = %+v", got.Authors)
+	}
+}
+
 func TestCollectRangeLimitIsActionable(t *testing.T) {
 	t.Parallel()
 	root := reportTestRepository(t)

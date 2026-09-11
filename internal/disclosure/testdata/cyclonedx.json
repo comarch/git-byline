@@ -56,10 +56,6 @@
         "value": "AI share is AI plus human-override lines divided by total lines; zero when total lines are zero."
       },
       {
-        "name": "git-byline:ai-share-definition",
-        "value": "AI share is AI plus human-override lines divided by total lines; zero when total lines are zero."
-      },
-      {
         "name": "git-byline:ai-share-percent",
         "value": "62.50"
       },

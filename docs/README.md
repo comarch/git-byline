@@ -17,13 +17,14 @@ Choose the shortest path to your question.
 | Install the binary or Factory plugin | [Installation](INSTALL.md) |
 | Understand hooks, checkpoints, and notes | [Architecture and data formats](ARCHITECTURE.md) |
 | Exchange attribution with Git AI or Agent Trace | [Interoperability](INTEROP.md) |
-| Generate a private local HTML report | [README dashboard guide](../README.md#local-dashboard-without-a-hosted-service) |
+| Generate a private local HTML report | [README dashboard guide](../README.md#local-dashboard-no-hosted-service) |
 | Diagnose local state | [README troubleshooting](../README.md#troubleshooting) |
 
 ## Build and operate
 
 | Task | Document |
 | --- | --- |
+| Apply or review the report and terminal design | [Design](DESIGN.md) |
 | Run the complete quality gate | [Validation contract](VALIDATION.md) |
 | Prepare or verify a release | [Release procedure](RELEASES.md) |
 | Review dependency and artifact controls | [Supply chain](SUPPLY_CHAIN.md) |

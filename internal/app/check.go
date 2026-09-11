@@ -40,9 +40,12 @@ type checkResult struct {
 		Total     int `json:"total"`
 		Annotated int `json:"annotated"`
 	} `json:"commits"`
-	Totals     report.Totals     `json:"totals"`
-	Violations []policyViolation `json:"violations"`
-	Warnings   []string          `json:"warnings,omitempty"`
+	Totals report.Totals `json:"totals"`
+	// Authors reports human and human-override lines per identity. The
+	// text report stays a terse gate, so this is JSON only.
+	Authors    []report.AuthorTotals `json:"authors"`
+	Violations []policyViolation     `json:"violations"`
+	Warnings   []string              `json:"warnings,omitempty"`
 }
 
 func runCheck(env *Env, command *command, args []string) (int, error) {
@@ -71,8 +74,12 @@ func runCheck(env *Env, command *command, args []string) (int, error) {
 		From:       from,
 		To:         to,
 		Totals:     aggregate.Totals,
+		Authors:    append([]report.AuthorTotals(nil), aggregate.Authors...),
 		Violations: make([]policyViolation, 0),
 		Warnings:   append([]string(nil), aggregate.Warnings...),
+	}
+	if result.Authors == nil {
+		result.Authors = make([]report.AuthorTotals, 0)
 	}
 	result.Commits.Total = aggregate.Commits.Total
 	result.Commits.Annotated = aggregate.Commits.Annotated

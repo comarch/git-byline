@@ -112,6 +112,72 @@ func TestStatsCommandRevisionRangeAndUsage(t *testing.T) {
 	}
 }
 
+func TestWriteStatsTextReportsPeople(t *testing.T) {
+	t.Parallel()
+	aggregate := report.Aggregate{
+		Version: model.NoteVersion,
+		From:    "aaaa",
+		To:      "bbbb",
+		Totals:  report.Totals{Human: 6, HumanOverride: 2, Lines: 8},
+		Authors: []report.AuthorTotals{
+			{Identity: "", Totals: report.Totals{Human: 2, Lines: 2}},
+			{Identity: "john.doe", Totals: report.Totals{Human: 4, HumanOverride: 2, Lines: 6}},
+		},
+		Commit: []report.CommitTotals{{
+			Commit:    "0123456789abcdef0123456789abcdef01234567",
+			Timestamp: "2026-01-02T03:04:05Z",
+			Totals:    report.Totals{Human: 8, Lines: 8},
+		}},
+	}
+	var out strings.Builder
+	writeStatsText(&out, aggregate)
+	text := out.String()
+	for _, want := range []string{
+		"Range: aaaa..bbbb",
+		"Authors:",
+		"  (unidentified): 2 lines (human 2, human override 0)",
+		"  john.doe: 6 lines (human 4, human override 2)",
+		"  0123456789ab (2026-01-02T03:04:05Z)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("stats text = %q, want %q", text, want)
+		}
+	}
+	if strings.Contains(text, "0123456789abcdef0123456789abcdef01234567") {
+		t.Error("stats text prints the full commit identifier")
+	}
+}
+
+func TestShortCommitAndDisplayHelpers(t *testing.T) {
+	t.Parallel()
+	if got := shortCommit("0123456789abcdef"); got != "0123456789ab" {
+		t.Fatalf("shortCommit() = %q", got)
+	}
+	if got := shortCommit("abcd"); got != "abcd" {
+		t.Fatalf("shortCommit(short) = %q", got)
+	}
+	if got := displayIdentity(""); got != "(unidentified)" {
+		t.Fatalf("displayIdentity(empty) = %q", got)
+	}
+	if got := displayIdentity("john.doe"); got != "john.doe" {
+		t.Fatalf("displayIdentity() = %q", got)
+	}
+	for _, test := range []struct {
+		from string
+		to   string
+		want string
+	}{
+		{"a", "b", "a..b"},
+		{"a", "", "a..HEAD"},
+		{"", "b", "b"},
+		{"", "", "HEAD"},
+	} {
+		if got := displayRevisionRange(test.from, test.to); got != test.want {
+			t.Fatalf("displayRevisionRange(%q, %q) = %q, want %q", test.from, test.to, got, test.want)
+		}
+	}
+}
+
 func appHead(t *testing.T, root string) string {
 	t.Helper()
 	return strings.TrimSpace(appGit(t, root, "rev-parse", "HEAD"))

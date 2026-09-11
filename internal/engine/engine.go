@@ -294,11 +294,12 @@ func projectLinesWithOverrideAndPairs(
 			}
 			for newIndex := gap.newStart; newIndex < gap.newEnd; newIndex++ {
 				attrs[newIndex] = model.Attribution{
-					Author:  model.AuthorHumanOverride,
-					Agent:   override.Agent,
-					Model:   override.Model,
-					Session: override.Session,
-					TS:      override.TS,
+					Author:   model.AuthorHumanOverride,
+					Identity: fallback.Identity,
+					Agent:    override.Agent,
+					Model:    override.Model,
+					Session:  override.Session,
+					TS:       override.TS,
 				}
 			}
 		}

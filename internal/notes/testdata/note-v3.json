@@ -1,0 +1,47 @@
+{
+  "version": 3,
+  "files": {
+    "src/example.go": {
+      "blob": "abcd1234",
+      "ranges": [
+        {
+          "start": 1,
+          "end": 1,
+          "author": "ai",
+          "agent": "droid",
+          "model": "model",
+          "session": "session-1",
+          "ts": "2026-01-02T03:04:05Z"
+        },
+        {
+          "start": 2,
+          "end": 2,
+          "author": "human",
+          "identity": "john.doe"
+        },
+        {
+          "start": 3,
+          "end": 3,
+          "author": "human-override",
+          "identity": "john.doe",
+          "agent": "droid",
+          "model": "model",
+          "session": "session-1",
+          "ts": "2026-01-02T03:04:05Z"
+        }
+      ]
+    }
+  },
+  "sessions": {
+    "droid::session-1": {
+      "agent": "droid",
+      "model": "model",
+      "first_ts": "2026-01-02T03:04:05Z",
+      "last_ts": "2026-01-02T03:04:05Z",
+      "added": 1,
+      "deleted": 0,
+      "accepted": 1,
+      "overridden": 0
+    }
+  }
+}

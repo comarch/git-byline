@@ -158,6 +158,7 @@ func scanSkipDir(rel string) bool {
 
 var agentConfigDirs = []string{
 	".claude",
+	".claude-plugin",
 	".codex",
 	".cursor",
 	".factory",

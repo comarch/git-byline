@@ -406,6 +406,9 @@ func TestRewriteRepositoryHelpers(t *testing.T) {
 }
 
 func TestReadNoteRefEnforcesNoteOutputLimit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fake git is not executable on Windows")
+	}
 	t.Parallel()
 	root := t.TempDir()
 	gitBin := filepath.Join(root, "fake-git")
@@ -755,6 +758,35 @@ func TestTempFileAndLimitedBuffer(t *testing.T) {
 	}
 	if len(buffer.Bytes()) != maxOutputBytes || len(buffer.String()) != maxOutputBytes {
 		t.Fatalf("limitedBuffer size = %d", len(buffer.Bytes()))
+	}
+}
+
+func TestCommitAuthorReadsNameAndEmail(t *testing.T) {
+	t.Parallel()
+	root := initRepository(t)
+	runGit(t, root, "config", "user.name", "John Doe")
+	runGit(t, root, "config", "user.email", "john.doe@example.invalid")
+	writeFile(t, root, "file.txt", "one\n")
+	commit := commitAll(t, root, "one")
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, email, err := repo.CommitAuthor(commit)
+	if err != nil || name != "John Doe" || email != "john.doe@example.invalid" {
+		t.Fatalf("CommitAuthor() = %q, %q, %v", name, email, err)
+	}
+	if got := model.NormalizeIdentity(name, email); got != "john.doe" {
+		t.Fatalf("NormalizeIdentity() = %q", got)
+	}
+	if _, _, err := repo.CommitAuthor(""); err == nil {
+		t.Fatal("CommitAuthor accepted an empty revision")
+	}
+	if _, _, err := repo.CommitAuthor("--upload-pack=touch"); err == nil {
+		t.Fatal("CommitAuthor accepted an option-like revision")
+	}
+	if _, _, err := repo.CommitAuthor(strings.Repeat("a", 40)); err == nil {
+		t.Fatal("CommitAuthor accepted a missing commit")
 	}
 }
 

@@ -2,12 +2,14 @@ package app
 
 import (
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/notes"
+	"github.com/comarch/git-byline/internal/report"
 )
 
 func TestCheckPolicyViolationReturnsExitOneAndJSONDetails(t *testing.T) {
@@ -250,5 +252,124 @@ func writeCheckNote(t *testing.T, repo *gitcmd.Repo, commit string, note model.N
 	}
 	if err := repo.WriteNote(commit, data); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExceedsPercentAndPercentOf(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		value  int
+		total  int
+		limit  int
+		exceed bool
+	}{
+		{name: "zero total", total: 0, value: 1, limit: 0},
+		{name: "zero value", total: 10, value: 0, limit: 0},
+		{name: "under limit", total: 10, value: 2, limit: 30},
+		{name: "at limit", total: 10, value: 3, limit: 30},
+		{name: "over limit", total: 10, value: 4, limit: 30, exceed: true},
+		{name: "zero limit with lines", total: 10, value: 1, limit: 0, exceed: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := exceedsPercent(test.value, test.total, test.limit); got != test.exceed {
+				t.Fatalf("exceedsPercent(%d, %d, %d) = %t", test.value, test.total, test.limit, got)
+			}
+		})
+	}
+	if got := percentOf(0, 0); got != 0 {
+		t.Fatalf("percentOf(0, 0) = %v", got)
+	}
+	if got := percentOf(1, 4); got != 25 {
+		t.Fatalf("percentOf(1, 4) = %v", got)
+	}
+}
+
+func TestWriteCheckText(t *testing.T) {
+	t.Parallel()
+	var passed checkResult
+	passed.From = "aaaa"
+	passed.To = "bbbb"
+	passed.Commits.Total = 2
+	passed.Commits.Annotated = 2
+	passed.Totals = report.Totals{Human: 3, AI: 1, Lines: 4}
+	var out strings.Builder
+	writeCheckText(&Env{Stdout: &out, Stderr: io.Discard}, passed)
+	for _, want := range []string{
+		"Range: aaaa..bbbb",
+		"Commits: 2 total, 2 annotated",
+		"Lines: 4 (AI 25.00%, untracked 0.00%)",
+		"policy passed",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("check text = %q, want %q", out.String(), want)
+		}
+	}
+
+	failed := passed
+	failed.Violations = []policyViolation{{
+		Rule:          "max-ai-percent",
+		Message:       "AI attribution is 25.00%, above maximum 10%",
+		ActualPercent: 25,
+		LimitPercent:  10,
+	}}
+	out.Reset()
+	writeCheckText(&Env{Stdout: &out, Stderr: io.Discard}, failed)
+	for _, want := range []string{
+		"FAIL max-ai-percent: AI attribution is 25.00%, above maximum 10%",
+		"policy failed with 1 violation(s)",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("failed check text = %q, want %q", out.String(), want)
+		}
+	}
+}
+
+func TestCheckCommandJSONReportsAuthors(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "one\ntwo\n")
+	appCommit(t, root, "two lines")
+	head := appHead(t, root)
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := notes.Encode(model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file.txt": {
+				Blob: "deadbeef",
+				Ranges: []model.Range{
+					{Start: 1, End: 1, Attribution: model.Attribution{
+						Author: model.AuthorHuman, Identity: "john.doe",
+					}},
+					{Start: 2, End: 2, Attribution: model.Attribution{
+						Author: model.AuthorAI, Agent: "droid", Model: "model-a",
+					}},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(head, data); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr, err := appRun(root, zeroTime(), nil, "check", "--json")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("check JSON = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	var got checkResult
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Authors) != 1 || got.Authors[0].Identity != "john.doe" ||
+		got.Authors[0].Human != 1 || got.Authors[0].Lines != 1 {
+		t.Fatalf("check authors = %+v", got.Authors)
 	}
 }

@@ -9,10 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/comarch/git-byline/internal/dashboard"
 	"github.com/comarch/git-byline/internal/gitcmd"
@@ -300,7 +302,7 @@ func runAnnotate(env *Env, command *command, args []string) (int, error) {
 }
 
 func runBlame(env *Env, command *command, args []string) (int, error) {
-	jsonOutput, rest, err := parseJSONFlag(args)
+	jsonOutput, mode, rest, err := parseBlameFlags(args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(env.Stdout, command.usage)
@@ -326,18 +328,70 @@ func runBlame(env *Env, command *command, args []string) (int, error) {
 		return ExitSuccess, nil
 	}
 	writeWarnings(env, result.Warnings)
-	for _, line := range result.Lines {
-		source := string(line.Attribution.Author)
-		if line.Attribution.Author == model.AuthorAI ||
-			line.Attribution.Author == model.AuthorHumanOverride {
-			source += ":" + line.Attribution.Agent
-			if line.Attribution.Model != "" {
-				source += "/" + line.Attribution.Model
-			}
-		}
-		fmt.Fprintf(env.Stdout, "%-24s %6d | %s\n", source, line.Number, line.Content)
-	}
+	writeBlameText(env.Stdout, result.Lines, useColor(mode, env.Stdout))
 	return ExitSuccess, nil
+}
+
+// parseBlameFlags accepts the blame flags without a flag set, so the file
+// argument can follow or precede them.
+func parseBlameFlags(args []string) (bool, colorMode, []string, error) {
+	jsonOutput := false
+	mode := colorAuto
+	colorSet := false
+	var rest []string
+	for _, arg := range args {
+		switch {
+		case arg == "--json":
+			if jsonOutput {
+				return false, mode, nil, errors.New("--json specified more than once")
+			}
+			jsonOutput = true
+		case arg == "-h" || arg == "--help":
+			return false, mode, nil, flag.ErrHelp
+		case strings.HasPrefix(arg, "--color="):
+			if colorSet {
+				return false, mode, nil, errors.New("--color specified more than once")
+			}
+			parsed, err := parseColorMode(strings.TrimPrefix(arg, "--color="))
+			if err != nil {
+				return false, mode, nil, err
+			}
+			mode = parsed
+			colorSet = true
+		case strings.HasPrefix(arg, "-"):
+			return false, mode, nil, fmt.Errorf("unknown flag %q", arg)
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	return jsonOutput, mode, rest, nil
+}
+
+// writeBlameText prints one aligned row per line. The label column is sized
+// from the widest label so a long human-override label cannot push the line
+// numbers out of alignment.
+func writeBlameText(out io.Writer, lines []provenance.BlameLine, color bool) {
+	labels := make([]string, len(lines))
+	width := 0
+	for index, line := range lines {
+		labels[index] = line.Attribution.Label()
+		if count := utf8.RuneCountInString(labels[index]); count > width {
+			width = count
+		}
+	}
+	numberWidth := len(strconv.Itoa(len(lines)))
+	if numberWidth < 3 {
+		numberWidth = 3
+	}
+	for index, line := range lines {
+		label := fmt.Sprintf("%-*s", width, labels[index])
+		number := fmt.Sprintf("%*d |", numberWidth, line.Number)
+		if color {
+			label = labelColor(line.Attribution.Author) + label + ansiReset
+			number = ansiDim + number + ansiReset
+		}
+		fmt.Fprintf(out, "%s %s %s\n", label, number, line.Content)
+	}
 }
 
 func runStatus(env *Env, command *command, args []string) (int, error) {

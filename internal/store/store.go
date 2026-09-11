@@ -386,7 +386,7 @@ func (store Store) ReadState() (model.State, error) {
 		return model.State{}, fmt.Errorf("unsupported state version %d", state.Version)
 	}
 	switch state.NotesVersion {
-	case model.NoteVersionV1:
+	case model.NoteVersionV1, model.NoteVersionV2:
 		state.NotesVersion = model.NoteVersion
 	case model.NoteVersion:
 	default:

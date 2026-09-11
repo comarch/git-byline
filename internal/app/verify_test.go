@@ -2,6 +2,9 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
+	"flag"
+	"io"
 	"strings"
 	"testing"
 
@@ -243,5 +246,121 @@ func writeVerifyNote(t *testing.T, repo *gitcmd.Repo, commit string, note model.
 	}
 	if err := repo.WriteNote(commit, data); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWriteVerifyText(t *testing.T) {
+	t.Parallel()
+	var clean verifyResult
+	clean.Commits.Total = 3
+	clean.Commits.Annotated = 2
+	var out strings.Builder
+	writeVerifyText(&Env{Stdout: &out, Stderr: io.Discard}, clean)
+	if got := out.String(); got != "verified 2 annotated commits (3 commits total)\n" {
+		t.Fatalf("clean verify text = %q", got)
+	}
+
+	failed := clean
+	failed.Issues = []verifyIssue{
+		{Commit: "abcd1234", Message: "note is invalid"},
+		{Commit: "abcd1234", Path: "src/example.go", Message: "range coverage is incomplete"},
+	}
+	out.Reset()
+	writeVerifyText(&Env{Stdout: &out, Stderr: io.Discard}, failed)
+	for _, want := range []string{
+		"FAIL abcd1234: note is invalid\n",
+		"FAIL abcd1234 src/example.go: range coverage is incomplete\n",
+		"verified 2 annotated commits (3 commits total), 2 issue(s)\n",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("verify text = %q, want %q", out.String(), want)
+		}
+	}
+}
+
+func TestVerifyHelperClassification(t *testing.T) {
+	t.Parallel()
+	if isTreeEntryIssue(nil) {
+		t.Error("isTreeEntryIssue(nil) = true")
+	}
+	for _, message := range []string{"git returned invalid tree entry", "git returned non-blob tree entry"} {
+		if !isTreeEntryIssue(errors.New(message)) {
+			t.Errorf("isTreeEntryIssue(%q) = false", message)
+		}
+	}
+	if isTreeEntryIssue(errors.New("some other failure")) {
+		t.Error("isTreeEntryIssue(other) = true")
+	}
+
+	classes := []struct {
+		message string
+		want    string
+	}{
+		{"unsupported note version 9", "unsupported version"},
+		{"note version changed during decode", "unsupported version"},
+		{"json: unknown field \"extra\"", "unknown field"},
+		{"note exceeds 16777216 bytes", "size limit"},
+		{"note has more than 500 files", "size limit"},
+		{"invalid character 'x'", "malformed JSON"},
+		{"unexpected end of JSON input", "malformed JSON"},
+		{"multiple JSON values in note", "malformed JSON"},
+		{"note file path is not normalized", "validation"},
+	}
+	for _, test := range classes {
+		test := test
+		t.Run(test.want+"/"+test.message, func(t *testing.T) {
+			t.Parallel()
+			if got := noteDecodeErrorClass(errors.New(test.message)); got != test.want {
+				t.Fatalf("noteDecodeErrorClass(%q) = %q, want %q", test.message, got, test.want)
+			}
+		})
+	}
+	if got := noteDecodeErrorClass(nil); got != "unknown" {
+		t.Fatalf("noteDecodeErrorClass(nil) = %q", got)
+	}
+}
+
+func TestVerifyRangeCoverage(t *testing.T) {
+	t.Parallel()
+	if count, err := verifyRangeCoverage(nil); count != 0 || err != nil {
+		t.Fatalf("verifyRangeCoverage(nil) = %d, %v", count, err)
+	}
+	complete := []model.Range{
+		{Start: 1, End: 2, Attribution: model.Attribution{Author: model.AuthorHuman}},
+		{Start: 3, End: 4, Attribution: model.Attribution{Author: model.AuthorUntracked}},
+	}
+	if count, err := verifyRangeCoverage(complete); count != 4 || err != nil {
+		t.Fatalf("verifyRangeCoverage(complete) = %d, %v", count, err)
+	}
+	gapped := []model.Range{
+		{Start: 1, End: 1, Attribution: model.Attribution{Author: model.AuthorHuman}},
+		{Start: 3, End: 3, Attribution: model.Attribution{Author: model.AuthorHuman}},
+	}
+	if count, err := verifyRangeCoverage(gapped); count != 3 || err == nil {
+		t.Fatalf("verifyRangeCoverage(gapped) = %d, %v", count, err)
+	}
+	negative := []model.Range{{Start: 1, End: -1, Attribution: model.Attribution{Author: model.AuthorHuman}}}
+	if _, err := verifyRangeCoverage(negative); err == nil {
+		t.Fatal("verifyRangeCoverage(negative) returned no error")
+	}
+}
+
+func TestParseVerifyArgs(t *testing.T) {
+	t.Parallel()
+	deep, jsonOutput, rest, err := parseVerifyArgs([]string{"--deep", "--json", "HEAD~2..HEAD"})
+	if !deep || !jsonOutput || err != nil || len(rest) != 1 || rest[0] != "HEAD~2..HEAD" {
+		t.Fatalf("parseVerifyArgs() = %t, %t, %v, %v", deep, jsonOutput, rest, err)
+	}
+	for _, args := range [][]string{
+		{"--deep", "--deep"},
+		{"--json", "--json"},
+		{"--unknown"},
+	} {
+		if _, _, _, err := parseVerifyArgs(args); err == nil {
+			t.Errorf("parseVerifyArgs(%v) returned no error", args)
+		}
+	}
+	if _, _, _, err := parseVerifyArgs([]string{"-h"}); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("parseVerifyArgs(-h) error = %v", err)
 	}
 }

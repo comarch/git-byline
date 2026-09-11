@@ -92,6 +92,12 @@ func writeStatsText(out io.Writer, result report.Aggregate) {
 		}
 	}
 
+	fmt.Fprintln(out, "Authors:")
+	for _, author := range result.Authors {
+		fmt.Fprintf(out, "  %s: %d lines (human %d, human override %d)\n",
+			displayIdentity(author.Identity), author.Lines, author.Human, author.HumanOverride)
+	}
+
 	fmt.Fprintln(out, "Sessions:")
 	for _, session := range result.Sessions {
 		fmt.Fprintf(out, "  %s (agent %s, model %s): %d lines (human %d, AI %d, untracked %d, human override %d)\n",
@@ -108,9 +114,27 @@ func writeStatsText(out io.Writer, result report.Aggregate) {
 	fmt.Fprintln(out, "Commits:")
 	for _, commit := range result.Commit {
 		fmt.Fprintf(out, "  %s (%s): %d lines (human %d, AI %d, untracked %d, human override %d)\n",
-			commit.Commit, commit.Timestamp, commit.Lines,
+			shortCommit(commit.Commit), commit.Timestamp, commit.Lines,
 			commit.Human, commit.AI, commit.Untracked, commit.HumanOverride)
 	}
+}
+
+// shortCommit abbreviates an object ID for the text report. JSON output
+// keeps the full identifier, so tooling never depends on the short form.
+func shortCommit(value string) string {
+	const shortLength = 12
+	if len(value) <= shortLength {
+		return value
+	}
+	return value[:shortLength]
+}
+
+// displayIdentity labels human lines recorded before identities were stored.
+func displayIdentity(identity string) string {
+	if identity == "" {
+		return "(unidentified)"
+	}
+	return identity
 }
 
 func displayRevisionRange(from, to string) string {

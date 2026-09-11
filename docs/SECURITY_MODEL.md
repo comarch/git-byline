@@ -105,16 +105,19 @@ warning and writes no notes.
 
 Checkpoint JSON includes repository-relative paths, timestamps, agent names,
 model names, session identifiers, and Git object IDs. Notes contain the same
-metadata plus line ranges. Stash ownership notes contain only a SHA-256 digest
-of the exact stash attribution note. Snapshot blobs contain full selected file
-content.
+metadata plus line ranges and a human identity token on human and
+human-override ranges. That token is derived from the commit author Git
+already publishes in every commit object, reduced to the email local part, so
+notes disclose less than the commit history beside them. Stash ownership notes
+contain only a SHA-256 digest of the exact stash attribution note. Snapshot
+blobs contain full selected file content.
 
 Raw hook payloads, prompts, transcripts, tool responses, environment variables,
 authorization data, and logs are not persisted.
 
 Generated dashboards contain committed source lines, repository-relative
-paths, commit and blob IDs, attribution states, agent and model names, and
-local status. Default reports use a private temporary file. Explicit output
+paths, commit and blob IDs, attribution states, agent and model names, human
+identity tokens, and local status. Default reports use a private temporary file. Explicit output
 paths are created with mode `0600` where supported and never replace an
 existing file. Reports are self-contained and make no network requests.
 

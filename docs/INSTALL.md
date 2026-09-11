@@ -3,32 +3,125 @@
 git-byline supports Linux, macOS, and Windows on amd64 and arm64. Every
 prebuilt archive is covered by `checksums.txt`.
 
-## Factory marketplace plugin
+## Pick your path
 
-The plugin removes the manual binary installation step. Its
-`/git-byline-setup` command selects the operating-system installer, verifies
-the release archive, installs the local runtime, and configures hooks.
+| You use | Path |
+| --- | --- |
+| Factory, Claude Code, or Gemini CLI | [agent package](#agent-packages), one command |
+| Copilot, VS Code Agent, Cursor, Codex, Windsurf, or Grok | [agent templates](#agents-without-a-package) |
+| No agent, or a CI runner | [release installer](#linux-and-macos) |
+| Air-gapped or contributing | [Go toolchain](#go-toolchain) |
+
+Every path installs the same local executable. Git `post-commit` hooks must
+work when no agent session is running, so an in-process runtime alone cannot
+provide complete attribution.
+
+## Agent packages
+
+Three agents install git-byline as a package. Each ships the same
+`/git-byline-setup` command, which selects the operating-system installer,
+verifies the release archive, installs the local runtime, installs the Git
+hooks, and installs the agent hook.
+
+### Factory
 
 ```text
 droid plugin marketplace add comarch/git-byline
 droid plugin install git-byline@git-byline --scope user
 ```
 
-Start Droid in a repository, run `/git-byline-setup`, then verify:
+Start Droid in a repository and run `/git-byline-setup`.
+
+### Claude Code
+
+```text
+/plugin marketplace add comarch/git-byline
+/plugin install git-byline@git-byline
+```
+
+Then run `/git-byline-setup`. Factory and Claude Code load the same plugin
+directory, `marketplace/git-byline`, which carries a manifest per agent under
+`.factory-plugin/` and `.claude-plugin/` and shares its `commands/` and
+`skills/`.
+
+### Gemini CLI
+
+```sh
+gemini extensions install https://github.com/comarch/git-byline
+```
+
+Restart the CLI, then run `/git-byline-setup`. Gemini installs an extension
+from a repository root, so the manifest is `gemini-extension.json` and the
+command is `commands/git-byline-setup.toml`, both at the root of this
+repository.
+
+After any of the three, verify:
 
 ```sh
 git-byline version
 git-byline status
 ```
 
-The plugin still installs a local executable. Git `post-commit` hooks must work
-when no AI agent session is running, so a plugin-only in-process runtime cannot
-provide complete attribution.
+## Agents without a package
 
-Git hook installation also adds a managed `pre-push` hook. It publishes
-`refs/notes/byline` to the same remote before each ordinary push. Attribution
-notes contain repository paths, line ranges, agent and model names, session
-identifiers, timestamps, and blob IDs. To disable automatic note sharing:
+Copilot, VS Code Agent, Cursor, Codex, Windsurf, and Grok have no package
+manager that installs from a repository. Two files give them the same result,
+and both are checked in under
+[`marketplace/harness`](../marketplace/harness/README.md):
+
+1. a setup command, so the agent gains `/git-byline-setup`;
+2. a hook file, so the agent reports its edits.
+
+| Agent | Setup command goes to | Hook file goes to |
+| --- | --- | --- |
+| GitHub Copilot | `.github/prompts/git-byline-setup.prompt.md` | `.github/hooks/promptscript.json` |
+| VS Code Agent | `.github/prompts/git-byline-setup.prompt.md` | `.github/hooks/promptscript-vscode.json` |
+| Cursor | `.cursor/commands/git-byline-setup.md` | `.cursor/hooks.json` |
+| Codex | `$HOME/.codex/prompts/git-byline-setup.md` | `.codex/hooks.json` |
+| Windsurf | `.windsurf/workflows/git-byline-setup.md` | `.windsurf/hooks.json` |
+| Grok | the prompt directory your build reads | `.grok/hooks/promptscript.json` |
+
+For example, Cursor:
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  -o .cursor/commands/git-byline-setup.md --create-dirs \
+  https://raw.githubusercontent.com/comarch/git-byline/main/marketplace/harness/cursor/git-byline-setup.md
+```
+
+Then run `/git-byline-setup` in Cursor, which installs the binary, the Git
+hooks, and `.cursor/hooks.json`.
+
+Each hook file is byte-identical to the one this repository generates for
+itself, and validation fails when they drift apart. The hook bodies carry no
+absolute path: they resolve the project root with
+`git rev-parse --show-toplevel` and find `git-byline` through `PATH`.
+
+`.gemini/settings.json` and `.claude/settings.json` can already hold
+unrelated settings, so merge their `hooks` block instead of replacing the
+file.
+
+Without the agent hook, git-byline still annotates commits, but agent edits
+arrive as plain `human` lines rather than `ai` lines, because nothing
+observed them.
+
+## Git hooks
+
+The Git side is identical for every agent:
+
+```sh
+git-byline install-hooks --agent none --git --project
+```
+
+`--agent droid` and `--agent claude` additionally install those two
+user-level or project-level agent hooks; the other agents use the template
+files above.
+
+Git hook installation adds a managed `pre-push` hook. It publishes
+`refs/notes/byline` to the same remote before each ordinary push.
+Attribution notes contain repository paths, line ranges, agent and model
+names, human identity tokens, session identifiers, timestamps, and blob IDs.
+To disable automatic note sharing:
 
 ```sh
 git-byline install-hooks --agent none --git --project --local-notes

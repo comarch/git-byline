@@ -96,6 +96,44 @@ func TestRenderRange(t *testing.T) {
 	if strings.Index(text, "2026-01-01T03:04:05Z") > strings.Index(text, "2026-01-02T03:04:05Z") {
 		t.Fatal("trend is not ordered by timestamp")
 	}
+	if !strings.Contains(text, "No human lines in this range.") {
+		t.Error("range HTML does not report an empty people table")
+	}
+}
+
+func TestRenderRangeListsPeople(t *testing.T) {
+	t.Parallel()
+	aggregate := report.Aggregate{
+		Version: model.NoteVersion,
+		Totals:  report.Totals{Human: 3, HumanOverride: 1, Lines: 4},
+		Authors: []report.AuthorTotals{
+			{Identity: "john.doe", Totals: report.Totals{Human: 2, HumanOverride: 1, Lines: 3}},
+			{Identity: "", Totals: report.Totals{Human: 1, Lines: 1}},
+		},
+	}
+	data, err := RenderRange(aggregate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{"People", "john.doe", "(unidentified)"} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("range HTML missing %q", expected)
+		}
+	}
+	view, err := buildRangeView(aggregate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.PeopleCount != 2 || view.People[0].Name != "(unidentified)" ||
+		view.People[1].Name != "john.doe" || view.People[1].Lines != 3 {
+		t.Fatalf("people = %+v", view.People)
+	}
+	aggregate.Authors = []report.AuthorTotals{{Identity: "John Doe", Totals: report.Totals{Human: 4, Lines: 4}}}
+	if _, err := buildRangeView(aggregate); err == nil ||
+		!strings.Contains(err.Error(), "author") {
+		t.Fatalf("buildRangeView(invalid identity) error = %v", err)
+	}
 }
 
 func TestBuildRangeViewAggregatesModelsAndAuthors(t *testing.T) {
@@ -120,9 +158,12 @@ func TestBuildRangeViewAggregatesModelsAndAuthors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Authors) != 4 || view.Authors[0].Name != "human" ||
-		view.Authors[1].Name != "human-override" || view.Authors[2].Name != "ai" {
-		t.Fatalf("authors = %+v", view.Authors)
+	if len(view.Classes) != 4 || view.Classes[0].Name != "human" ||
+		view.Classes[1].Name != "human-override" || view.Classes[2].Name != "ai" {
+		t.Fatalf("classes = %+v", view.Classes)
+	}
+	if len(view.People) != 0 || view.PeopleCount != 0 {
+		t.Fatalf("people = %+v", view.People)
 	}
 	if len(view.Agents) != 2 || view.Agents[0].Name != "a-agent" ||
 		view.Agents[1].Name != "z-agent" {
@@ -173,5 +214,66 @@ func TestBuildRangeViewValidation(t *testing.T) {
 				t.Fatal("RenderRange accepted invalid aggregate")
 			}
 		})
+	}
+}
+
+func TestRangeTotalsArithmeticAndDisplay(t *testing.T) {
+	t.Parallel()
+	maxInt := int(^uint(0) >> 1)
+	if _, err := checkedRangeAdd(-1, 1); err == nil {
+		t.Error("checkedRangeAdd accepted a negative value")
+	}
+	if _, err := checkedRangeAdd(maxInt, 1); err == nil {
+		t.Error("checkedRangeAdd accepted an overflow")
+	}
+	if got, err := checkedRangeAdd(2, 3); got != 5 || err != nil {
+		t.Fatalf("checkedRangeAdd(2, 3) = %d, %v", got, err)
+	}
+
+	var totals report.Totals
+	if err := addRangeTotals(&totals, report.Totals{Human: 1, AI: 2, Lines: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if err := addRangeTotals(&totals, report.Totals{Untracked: 1, Lines: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if totals.Lines != 4 || totals.Human != 1 || totals.AI != 2 || totals.Untracked != 1 {
+		t.Fatalf("totals = %+v", totals)
+	}
+	if err := addRangeTotals(&totals, report.Totals{Human: 1, Lines: 2}); err == nil {
+		t.Error("addRangeTotals accepted inconsistent totals")
+	}
+	if err := validateRangeTotals("negative", report.Totals{Human: -1, Lines: -1}); err == nil {
+		t.Error("validateRangeTotals accepted negative lines")
+	}
+
+	for _, test := range []struct {
+		from string
+		to   string
+		want string
+	}{
+		{"a", "b", "a..b"},
+		{"a", "", "a..HEAD"},
+		{"", "b", "b"},
+		{"", "", "HEAD"},
+	} {
+		if got := displayRange(test.from, test.to); got != test.want {
+			t.Fatalf("displayRange(%q, %q) = %q, want %q", test.from, test.to, got, test.want)
+		}
+	}
+	if got := rangeIdentityName(""); got != "(unidentified)" {
+		t.Fatalf("rangeIdentityName(empty) = %q", got)
+	}
+	if got := rangeIdentityName("john.doe"); got != "john.doe" {
+		t.Fatalf("rangeIdentityName() = %q", got)
+	}
+	if err := validateRangeText("warning", "", true); err != nil {
+		t.Fatalf("validateRangeText(empty allowed) = %v", err)
+	}
+	if err := validateRangeText("path", "", false); err == nil {
+		t.Error("validateRangeText accepted an empty required value")
+	}
+	if err := validateRangeText("path", "one\x00two", false); err == nil {
+		t.Error("validateRangeText accepted a control character")
 	}
 }

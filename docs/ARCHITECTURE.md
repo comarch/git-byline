@@ -99,7 +99,7 @@ Properties:
 Path: worktree-specific Git directory plus `byline/state.json`.
 
 ```json
-{"version":1,"last_annotated_commit":"def456","last_checkpoint_seq":42,"notes_version":2,"pending":{"base_commit":"def456","files":{}}}
+{"version":1,"last_annotated_commit":"def456","last_checkpoint_seq":42,"notes_version":3,"pending":{"base_commit":"def456","files":{}}}
 ```
 
 State uses a temporary file, file sync, and atomic rename. It advances only
@@ -114,12 +114,12 @@ Ref: `refs/notes/byline`.
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "files": {
     "src/example.go": {
       "blob": "abc123",
       "ranges": [
-        {"start": 1, "end": 3, "author": "human"},
+        {"start": 1, "end": 3, "author": "human", "identity": "john.doe"},
         {
           "start": 4,
           "end": 7,
@@ -133,6 +133,7 @@ Ref: `refs/notes/byline`.
           "start": 8,
           "end": 9,
           "author": "human-override",
+          "identity": "john.doe",
           "agent": "droid",
           "model": "model-name",
           "session": "session-1",
@@ -159,17 +160,19 @@ Ref: `refs/notes/byline`.
 
 Ranges are inclusive and one-based. Every line has exactly one range. Map keys
 and fields serialize deterministically with a trailing newline. Encoders and
-decoders reject notes above 500 files or 16 MiB. Readers accept note versions 1
-and 2. Writers emit version 2. Version 2 adds the per-session metrics map;
-version 1 notes have no session map.
+decoders reject notes above 500 files or 16 MiB. Readers accept note versions
+1, 2, and 3. Writers emit version 3. Version 2 added the per-session metrics
+map; version 1 notes have no session map. Version 3 adds the optional
+`identity` field on `human` and `human-override` ranges, and a note below
+version 3 that carries an identity is rejected.
 Session keys use the deterministic `<agent>::<session>` shape, so identical
 session identifiers under different agents remain separate. Sessions whose
 output does not survive the commit remain listed with zero counters unless
 their lines were overridden by later attribution.
 
-State readers upgrade the legacy `notes_version: 1` marker in state files to
-the current note version before validation. The next successful annotation
-writes a version 2 note and state.
+State readers upgrade the legacy `notes_version: 1` and `notes_version: 2`
+markers in state files to the current note version before validation. The next
+successful annotation writes a version 3 note and state.
 
 Readers accept only supported note versions. Unknown versions, missing notes,
 and blob mismatches produce warnings and `untracked` output instead of guessed
@@ -192,6 +195,25 @@ is followed by a human snapshot, an unmatched human line in a gap containing
 lines from the most recent AI transition becomes `human-override` and carries
 that AI transition's agent, model, session, and timestamp. Content entering the
 committed blob after the final checkpoint defaults to `human`.
+
+## Human identity
+
+Every `human` and `human-override` range a commit introduces carries an
+`identity` token. Annotation resolves it once per commit from that commit's
+author, so `git log -1 --format='%an %ae'` reproduces the source. The token is
+the lowercased local part of the author email, or a reduced author name when
+there is no email, restricted to `[a-z0-9._+-]` with at most 64 bytes. Input
+that cannot be reduced to a valid token yields no identity, which reads as a
+plain `human` line rather than a guess.
+
+Ranges reprojected from an older note keep the identity that note stored, so
+a commit never claims lines it did not introduce. Ranges from notes written
+before version 3 have no identity and aggregate under `(unidentified)`.
+
+`ai` and `untracked` ranges must not carry an identity. A merge commit
+attributes unmatched content as `untracked`, including in the pending
+worktree projection, so merge results are never promoted to human lines by a
+later commit.
 The engine uses deterministic longest-common-subsequence alignment for normal
 files. A bounded greedy alignment prevents quadratic memory use on large line
 sets. Duplicate lines use stable positional tie-breaking.
