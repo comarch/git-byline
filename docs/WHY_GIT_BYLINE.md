@@ -54,7 +54,7 @@ so verify linked vendor documentation before a procurement decision.
 | Commit trailers such as `Co-authored-by` or `Assisted-by` | Was AI involved in this commit? | Whole commit | Declared metadata | Team convention |
 | [GitHub Copilot usage metrics](https://docs.github.com/en/copilot/concepts/copilot-usage-metrics/copilot-metrics) and similar dashboards | How is an assistant used across a team? | User, organization, or aggregate events | Platform usage events | Vendor account, dashboard, or API |
 | [Git AI](https://github.com/git-ai-project/git-ai) and prompt-linked provenance tools | Which agent, model, and prompt produced code? | Line-level and lifecycle context | Hooks, checkpoints, Git metadata, prompt links | Broader provenance and observability workflow |
-| **git-byline** | Which committed lines were observed as human/default, AI, or unknown? | **Line-level** | **Local hooks, Git blobs, and Git notes** | **One binary, Git note sharing, no account, daemon, telemetry, or prompts** |
+| **git-byline** | Which committed lines were observed as human, AI, or unknown? | **Line-level** | **Local hooks, Git blobs, and Git notes** | **One binary, Git note sharing, no account, daemon, telemetry, or prompts** |
 
 ### Closest category peer: Git AI
 
@@ -76,7 +76,7 @@ agent session, and becomes weaker after human edits or refactoring.
 
 git-byline records the transition when an edit happens:
 
-1. A pre-tool hook snapshots selected paths as human/default input.
+1. A pre-tool hook snapshots selected paths as human input.
 2. The agent changes the files.
 3. A post-tool hook snapshots resulting paths with agent and model metadata.
 4. The Git hook projects those transitions onto committed blobs.

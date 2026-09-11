@@ -48,8 +48,12 @@ Git AI specification's random trace ID so identical local state produces
 identical output. Trace IDs are emitted only when the AI range matches a real
 checkpoint sequence. An unmatched AI range is omitted from the Git AI
 attestation and therefore imports as `untracked`. Human records use a
-deterministic `git-byline` author identity because the byline note stores no
-committer identity per line.
+deterministic `git-byline` author identity. Attribution notes do store a
+human identity token per range, but it is deliberately not exported: the Git
+AI `author` field is a free-form author string, and mapping a reduced token
+into it would publish a person under a name the note never recorded. Import
+likewise leaves the identity empty rather than inventing one from a foreign
+author string.
 
 Git AI export quotes paths containing spaces, tabs, or newlines. It also quotes
 paths beginning with a double quote so export and import preserve the path.
