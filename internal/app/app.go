@@ -112,7 +112,7 @@ func commands() []*command {
 		{
 			name:  "rewrite",
 			short: "preserve attribution across Git rewrites",
-			usage: "Usage: git-byline rewrite --mode <post-rewrite|post-checkout|post-merge|ref-txn> --hook-input stdin [hook arguments]\n\n" +
+			usage: "Usage: git-byline rewrite --mode <post-rewrite|post-checkout|post-merge|ref-txn|stash-apply> --hook-input stdin [hook arguments]\n\n" +
 				"Reproject attribution for Git history and worktree transitions.",
 			run: runRewrite,
 		},

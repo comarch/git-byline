@@ -36,6 +36,19 @@ type Snapshot struct {
 	Attributions []model.Attribution
 }
 
+// MatcherBudget bounds aggregate dynamic-programming work for one operation.
+type MatcherBudget struct {
+	remaining int64
+}
+
+// NewMatcherBudget creates a bounded line-matcher budget.
+func NewMatcherBudget(cells int64) *MatcherBudget {
+	if cells < 0 {
+		cells = 0
+	}
+	return &MatcherBudget{remaining: cells}
+}
+
 // SplitLines splits UTF-8 text while retaining line terminators.
 func SplitLines(content []byte) ([]string, error) {
 	if bytes.IndexByte(content, 0) >= 0 {
@@ -171,6 +184,15 @@ func latestAIAttribution(values []model.Attribution) (model.Attribution, bool) {
 
 // Project maps a replayed snapshot onto target content.
 func Project(source Snapshot, target []byte, fallback model.Attribution) (Snapshot, error) {
+	return projectWithBudget(source, target, fallback, nil)
+}
+
+// ProjectWithBudget maps one source onto target with a shared matcher budget.
+func ProjectWithBudget(source Snapshot, target []byte, fallback model.Attribution, budget *MatcherBudget) (Snapshot, error) {
+	return projectWithBudget(source, target, fallback, budget)
+}
+
+func projectWithBudget(source Snapshot, target []byte, fallback model.Attribution, budget *MatcherBudget) (Snapshot, error) {
 	if len(source.Lines) != len(source.Attributions) {
 		return Snapshot{}, errors.New("source snapshot line and attribution counts differ")
 	}
@@ -181,12 +203,35 @@ func Project(source Snapshot, target []byte, fallback model.Attribution) (Snapsh
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return projectLines(source, lines, fallback), nil
+	pairs, err := equalPairsBudget(source.Lines, lines, budget)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return projectLinesWithOverrideAndPairs(source, lines, fallback, model.Attribution{}, pairs), nil
 }
 
 // ProjectLayered maps ordered source snapshots onto target content.
 // A later source replaces attribution for lines it matches.
 func ProjectLayered(sources []Snapshot, target []byte, fallback model.Attribution) (Snapshot, error) {
+	return projectLayeredWithBudget(sources, target, fallback, nil)
+}
+
+// ProjectLayeredWithBudget maps sources onto target with a shared matcher budget.
+func ProjectLayeredWithBudget(
+	sources []Snapshot,
+	target []byte,
+	fallback model.Attribution,
+	budget *MatcherBudget,
+) (Snapshot, error) {
+	return projectLayeredWithBudget(sources, target, fallback, budget)
+}
+
+func projectLayeredWithBudget(
+	sources []Snapshot,
+	target []byte,
+	fallback model.Attribution,
+	budget *MatcherBudget,
+) (Snapshot, error) {
 	if err := model.ValidateAttribution(fallback); err != nil {
 		return Snapshot{}, fmt.Errorf("fallback attribution: %w", err)
 	}
@@ -210,25 +255,15 @@ func ProjectLayered(sources []Snapshot, target []byte, fallback model.Attributio
 				return Snapshot{}, fmt.Errorf("source snapshot %d line %d: %w", index, line+1, err)
 			}
 		}
-		for _, pair := range equalPairs(source.Lines, lines) {
+		pairs, err := equalPairsBudget(source.Lines, lines, budget)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("source snapshot %d: %w", index, err)
+		}
+		for _, pair := range pairs {
 			attrs[pair.new] = source.Attributions[pair.old]
 		}
 	}
 	return Snapshot{Lines: lines, Attributions: attrs}, nil
-}
-
-func projectLines(source Snapshot, target []string, fallback model.Attribution) Snapshot {
-	return projectLinesWithOverride(source, target, fallback, model.Attribution{})
-}
-
-func projectLinesWithOverride(
-	source Snapshot,
-	target []string,
-	fallback model.Attribution,
-	override model.Attribution,
-) Snapshot {
-	pairs := equalPairs(source.Lines, target)
-	return projectLinesWithOverrideAndPairs(source, target, fallback, override, pairs)
 }
 
 func projectLinesWithOverrideAndPairs(
@@ -337,9 +372,20 @@ type linePair struct {
 }
 
 func equalPairs(oldLines, newLines []string) []linePair {
-	pairs := exactPairs(oldLines, newLines)
+	pairs, _ := equalPairsBudget(oldLines, newLines, nil)
+	return pairs
+}
+
+// ErrMatcherBudget reports exhausted aggregate matcher work.
+var ErrMatcherBudget = errors.New("line matcher budget exceeded")
+
+func equalPairsBudget(oldLines, newLines []string, budget *MatcherBudget) ([]linePair, error) {
+	pairs, err := exactPairsBudget(oldLines, newLines, budget)
+	if err != nil {
+		return nil, err
+	}
 	if len(pairs) < 2 {
-		return pairs
+		return pairs, nil
 	}
 	result := make([]linePair, 0, len(pairs))
 	previous := pairs[0]
@@ -347,14 +393,24 @@ func equalPairs(oldLines, newLines []string) []linePair {
 	for _, anchor := range pairs[1:] {
 		oldGap := oldLines[previous.old+1 : anchor.old]
 		newGap := newLines[previous.new+1 : anchor.new]
-		result = append(result, whitespacePairs(oldGap, newGap, previous.old+1, previous.new+1)...)
+		whitespace, err := whitespacePairsBudget(
+			oldGap,
+			newGap,
+			previous.old+1,
+			previous.new+1,
+			budget,
+		)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, whitespace...)
 		result = append(result, anchor)
 		previous = anchor
 	}
-	return result
+	return result, nil
 }
 
-func exactPairs(oldLines, newLines []string) []linePair {
+func exactPairsBudget(oldLines, newLines []string, budget *MatcherBudget) ([]linePair, error) {
 	prefix := 0
 	for prefix < len(oldLines) && prefix < len(newLines) && oldLines[prefix] == newLines[prefix] {
 		prefix++
@@ -374,6 +430,9 @@ func exactPairs(oldLines, newLines []string) []linePair {
 	var middle []linePair
 	if len(middleOld) > 0 && len(middleNew) > 0 {
 		if len(middleOld) <= maxLCSCells/len(middleNew) {
+			if budget != nil && !budget.reserve(len(middleOld), len(middleNew)) {
+				return nil, ErrMatcherBudget
+			}
 			middle = lcsPairs(middleOld, middleNew)
 		} else {
 			middle = greedyPairs(middleOld, middleNew)
@@ -386,12 +445,18 @@ func exactPairs(oldLines, newLines []string) []linePair {
 	for i := 0; i < suffix; i++ {
 		pairs = append(pairs, linePair{old: oldEnd + i, new: newEnd + i})
 	}
-	return pairs
+	return pairs, nil
 }
 
-func whitespacePairs(oldLines, newLines []string, oldOffset, newOffset int) []linePair {
+func whitespacePairsBudget(
+	oldLines,
+	newLines []string,
+	oldOffset,
+	newOffset int,
+	budget *MatcherBudget,
+) ([]linePair, error) {
 	if len(oldLines) == 0 || len(newLines) == 0 {
-		return nil
+		return nil, nil
 	}
 	oldKeys := make([]string, len(oldLines))
 	newKeys := make([]string, len(newLines))
@@ -403,6 +468,9 @@ func whitespacePairs(oldLines, newLines []string, oldOffset, newOffset int) []li
 	}
 	var pairs []linePair
 	if len(oldLines) <= maxLCSCells/len(newLines) {
+		if budget != nil && !budget.reserve(len(oldLines), len(newLines)) {
+			return nil, ErrMatcherBudget
+		}
 		pairs = lcsPairs(oldKeys, newKeys)
 	} else {
 		pairs = greedyPairs(oldKeys, newKeys)
@@ -411,7 +479,19 @@ func whitespacePairs(oldLines, newLines []string, oldOffset, newOffset int) []li
 		pairs[i].old += oldOffset
 		pairs[i].new += newOffset
 	}
-	return pairs
+	return pairs, nil
+}
+
+func (budget *MatcherBudget) reserve(oldCount, newCount int) bool {
+	if budget == nil {
+		return true
+	}
+	cells := int64(oldCount) * int64(newCount)
+	if cells < 0 || cells > budget.remaining {
+		return false
+	}
+	budget.remaining -= cells
+	return true
 }
 
 func lcsPairs(oldLines, newLines []string) []linePair {
