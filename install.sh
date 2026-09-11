@@ -6,12 +6,19 @@ repository="https://github.com/comarch/git-byline"
 version="${GIT_BYLINE_VERSION:-latest}"
 bin_dir="${GIT_BYLINE_BIN_DIR:-$HOME/.local/bin}"
 install_git_hook="${GIT_BYLINE_INSTALL_GIT_HOOK:-1}"
+install_agent_hooks="${GIT_BYLINE_INSTALL_AGENT_HOOKS:-1}"
 
 usage() {
 	cat <<'EOF'
 Usage: install.sh [--version VERSION] [--bin-dir DIR] [--no-git-hook]
+                  [--no-agent-hooks]
 
 Install a checksum-verified git-byline release for Linux or macOS.
+
+The installer detects the coding agents present on this machine. Agents that
+git-byline can configure on its own get a user-level hook, which covers every
+repository. For the remaining agents it prints the one command that adds their
+hook to a project. Pass --no-agent-hooks to skip detection entirely.
 EOF
 }
 
@@ -35,6 +42,10 @@ while [ "$#" -gt 0 ]; do
 		;;
 	--no-git-hook)
 		install_git_hook=0
+		shift
+		;;
+	--no-agent-hooks)
+		install_agent_hooks=0
 		shift
 		;;
 	-h | --help)
@@ -162,6 +173,66 @@ if [ "$install_git_hook" != "0" ] &&
 fi
 
 printf 'Installed git-byline %s to %s\n' "$version" "$target"
+
+# detected reports whether an agent is present, by its command or by its
+# configuration directory. Detection never writes anything.
+detected() {
+	command -v "$1" >/dev/null 2>&1 && return 0
+	[ -n "$2" ] && [ -d "$HOME/$2" ] && return 0
+	return 1
+}
+
+# manual_hook prints the single command that installs one agent hook into the
+# current project, for agents git-byline cannot configure itself.
+manual_hook() {
+	printf '  %-14s curl -fsSL --proto =https --tlsv1.2 -o %s --create-dirs \\\n' "$1" "$3"
+	printf '                   %s/raw/main/marketplace/harness/%s/%s\n' \
+		"$repository" "$2" "${3##*/}"
+}
+
+if [ "$install_agent_hooks" != "0" ]; then
+	printf '\n'
+	# Factory and Claude Code hooks are installed at user level, so they
+	# cover every repository on this machine.
+	for agent in droid:droid:.factory claude:claude:.claude; do
+		name="${agent%%:*}"
+		rest="${agent#*:}"
+		binary_name="${rest%%:*}"
+		config_dir="${rest#*:}"
+		if detected "$binary_name" "$config_dir"; then
+			if "$target" install-hooks --agent "$name" --user >/dev/null; then
+				printf 'Installed the %s hook for every repository.\n' "$name"
+			else
+				printf 'Could not install the %s hook. Run: git-byline install-hooks --agent %s --user\n' \
+					"$name" "$name" >&2
+			fi
+		fi
+	done
+
+	# The remaining agents read a project hook file that git-byline does not
+	# own, so the installer reports the exact copy command instead of
+	# guessing a user-level path.
+	pending=""
+	detected gemini .gemini && pending="$pending gemini:gemini:.gemini/settings.json"
+	detected cursor .cursor && pending="$pending cursor:cursor:.cursor/hooks.json"
+	detected codex .codex && pending="$pending codex:codex:.codex/hooks.json"
+	detected windsurf .codeium && pending="$pending windsurf:windsurf:.windsurf/hooks.json"
+	detected code .vscode && pending="$pending copilot:copilot:.github/hooks/promptscript.json"
+	detected grok .grok && pending="$pending grok:grok:.grok/hooks/promptscript.json"
+	if [ -n "$pending" ]; then
+		printf 'Detected agents that need one hook file per project:\n'
+		for entry in $pending; do
+			name="${entry%%:*}"
+			rest="${entry#*:}"
+			source_dir="${rest%%:*}"
+			hook_path="${rest#*:}"
+			manual_hook "$name" "$source_dir" "$hook_path"
+		done
+		printf 'Merge the block for gemini instead of replacing the file.\n'
+		printf 'Details: %s/blob/main/marketplace/harness/README.md\n' "$repository"
+	fi
+fi
+
 case ":$PATH:" in
 *":$bin_dir:"*) ;;
 *) printf 'Add %s to PATH before starting an AI agent.\n' "$bin_dir" ;;

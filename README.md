@@ -16,6 +16,39 @@ person, an AI agent, or older history. git-byline adds that missing layer: one
 pure Go binary, local hooks that observe edits as they happen, and deterministic
 provenance stored in Git notes.
 
+## Quick start
+
+One command. macOS and Linux:
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  https://raw.githubusercontent.com/comarch/git-byline/main/install.sh | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/comarch/git-byline/main/install.ps1 | iex
+```
+
+The installer verifies the release archive checksum and the binary version,
+then detects the coding agents on your machine. Factory and Claude Code get a
+user-level hook that covers every repository. For the other supported agents
+it prints the one command that adds their hook to a project. Run it inside a
+repository and the Git hooks are installed there too, so the next commit is
+already attributed:
+
+```sh
+git commit -m "feat: add example"
+git byline blame src/example.go
+```
+
+Nothing leaves your machine. No account, no daemon, no telemetry, and the
+binary opens no network connection.
+
+Prefer your agent's own package manager, or no agent at all? See
+[step 1](#step-1-pick-an-install-path). Not convinced yet? Keep reading.
+
 ![A four-view tour: line attribution with human identity, agent model, and human-override ranges; a close-up of untracked merge content next to two named people; a range aggregate with per-person totals; and the policy gate failing with exit code 1, then passing, then exporting Git AI authorship](docs/assets/git-byline-tour.gif)
 
 Four views, two of them close-ups: line attribution, who wrote what, the
@@ -38,6 +71,10 @@ git byline dashboard --range HEAD~10..HEAD  # trend and breakdowns
 > confident guess.
 
 ## Contents
+
+**Start**
+
+- [Quick start](#quick-start)
 
 **Understand**
 

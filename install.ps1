@@ -2,7 +2,8 @@
 param(
     [string]$Version = $(if ($env:GIT_BYLINE_VERSION) { $env:GIT_BYLINE_VERSION } else { "latest" }),
     [string]$BinDir = $(if ($env:GIT_BYLINE_BIN_DIR) { $env:GIT_BYLINE_BIN_DIR } else { Join-Path $HOME "bin" }),
-    [switch]$NoGitHook
+    [switch]$NoGitHook,
+    [switch]$NoAgentHooks
 )
 
 $ErrorActionPreference = "Stop"
@@ -110,6 +111,61 @@ try {
     }
 
     Write-Output "Installed git-byline $Version to $target"
+
+    if (-not $NoAgentHooks) {
+        # Detection reads a command name and a configuration directory. It
+        # never writes anything.
+        function Test-Agent {
+            param([string]$Command, [string]$ConfigDirectory)
+            if (Get-Command $Command -ErrorAction SilentlyContinue) { return $true }
+            if ($ConfigDirectory -and
+                (Test-Path -LiteralPath (Join-Path $HOME $ConfigDirectory) -PathType Container)) {
+                return $true
+            }
+            return $false
+        }
+
+        Write-Output ""
+        # Factory and Claude Code hooks are installed at user level, so they
+        # cover every repository on this machine.
+        foreach ($agent in @(
+            @{ Name = "droid"; Command = "droid"; Directory = ".factory" },
+            @{ Name = "claude"; Command = "claude"; Directory = ".claude" }
+        )) {
+            if (Test-Agent -Command $agent.Command -ConfigDirectory $agent.Directory) {
+                & $target install-hooks --agent $agent.Name --user | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Output "Installed the $($agent.Name) hook for every repository."
+                }
+                else {
+                    Write-Warning "Could not install the $($agent.Name) hook. Run: git-byline install-hooks --agent $($agent.Name) --user"
+                }
+            }
+        }
+
+        # The remaining agents read a project hook file that git-byline does
+        # not own, so report the exact copy command instead of guessing a
+        # user-level path.
+        $pending = @(
+            @{ Name = "gemini"; Command = "gemini"; Directory = ".gemini"; Source = "gemini"; Hook = ".gemini/settings.json" },
+            @{ Name = "cursor"; Command = "cursor"; Directory = ".cursor"; Source = "cursor"; Hook = ".cursor/hooks.json" },
+            @{ Name = "codex"; Command = "codex"; Directory = ".codex"; Source = "codex"; Hook = ".codex/hooks.json" },
+            @{ Name = "windsurf"; Command = "windsurf"; Directory = ".codeium"; Source = "windsurf"; Hook = ".windsurf/hooks.json" },
+            @{ Name = "copilot"; Command = "code"; Directory = ".vscode"; Source = "copilot"; Hook = ".github/hooks/promptscript.json" },
+            @{ Name = "grok"; Command = "grok"; Directory = ".grok"; Source = "grok"; Hook = ".grok/hooks/promptscript.json" }
+        ) | Where-Object { Test-Agent -Command $_.Command -ConfigDirectory $_.Directory }
+        if ($pending) {
+            Write-Output "Detected agents that need one hook file per project:"
+            foreach ($agent in $pending) {
+                $file = Split-Path -Leaf $agent.Hook
+                Write-Output ("  {0,-14} irm {1}/raw/main/marketplace/harness/{2}/{3} -OutFile {4}" -f
+                    $agent.Name, $repository, $agent.Source, $file, $agent.Hook)
+            }
+            Write-Output "Merge the block for gemini instead of replacing the file."
+            Write-Output "Details: $repository/blob/main/marketplace/harness/README.md"
+        }
+    }
+
     if (($env:PATH -split [System.IO.Path]::PathSeparator) -notcontains $BinDir) {
         Write-Output "Add $BinDir to PATH before starting an AI agent."
     }
