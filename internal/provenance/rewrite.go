@@ -196,14 +196,23 @@ func applyRewriteMapping(repo *gitcmd.Repo, mapping rewrite.Mapping) (RewriteRes
 		}
 		sort.Strings(paths)
 		for _, path := range paths {
-			targetPath, found, err := rewrittenPath(repo, pair.New, path, changes)
+			file := note.Files[path]
+			sourceBlob, sourceExists, err := repo.BlobID(pair.Old, path)
+			if err != nil {
+				return RewriteResult{}, fmt.Errorf("verify source blob %s:%s: %w", pair.Old, path, err)
+			}
+			if !sourceExists || sourceBlob != file.Blob {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("skipped %s:%s: source note blob does not match source commit", pair.Old, path))
+				continue
+			}
+			targetPath, found, err := rewrittenPath(repo, pair.New, path, file.Blob, changes)
 			if err != nil {
 				return RewriteResult{}, fmt.Errorf("map rewritten path %s:%s: %w", pair.Old, path, err)
 			}
 			if !found {
 				continue
 			}
-			file := note.Files[path]
 			content, err := readBlob(file.Blob)
 			if err != nil {
 				if errors.Is(err, errRewriteBudget) {
@@ -535,15 +544,21 @@ func validCherryPickSource(repo *gitcmd.Repo, source, head string) (bool, string
 	return true, "", nil
 }
 
-func rewrittenPath(repo *gitcmd.Repo, commit, oldPath string, changes []gitcmd.Change) (string, bool, error) {
+func rewrittenPath(
+	repo *gitcmd.Repo,
+	commit, oldPath, sourceBlob string,
+	changes []gitcmd.Change,
+) (string, bool, error) {
 	for _, change := range changes {
 		if change.OldPath == oldPath && change.Status != 'D' {
 			return change.Path, true, nil
 		}
 	}
-	if _, exists, err := repo.BlobID(commit, oldPath); err != nil {
+	targetBlob, exists, err := repo.BlobID(commit, oldPath)
+	if err != nil {
 		return "", false, err
-	} else if exists {
+	}
+	if exists && targetBlob == sourceBlob {
 		return oldPath, true, nil
 	}
 	return "", false, nil

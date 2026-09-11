@@ -36,6 +36,47 @@ recoverable and an incomplete rewrite could otherwise leave attribution
 silently detached. `post-checkout` also fails open because checkout must not
 be blocked by pending attribution repair.
 
+Forge merge workflows are separate from the binary trust boundary. `git byline
+ci run` reads only commits and notes already fetched into the local repository,
+then writes attribution notes locally. It never calls a forge service and never
+pushes. The generated workflow performs the Git fetch and notes push.
+
+The GitHub workflow requests only `contents: write`. It needs read access to
+the repository and write access to `refs/notes/byline`; it does not need issue,
+pull request, package, deployment, or administrative permissions. The workflow
+uses immutable action commit pins and pushes only the notes ref with
+`--no-verify`.
+
+The GitLab workflow is a trusted post-merge push pipeline on the project
+default branch. Merge-request and external fork pipelines are explicitly
+blocked. It expects a project token in `GITLAB_TOKEN` with only the
+`write_repository` scope because the job uses Git-over-HTTP `ls-remote`,
+fetch, and push operations only. The token is copied into Git's in-memory
+HTTP header for each command, removed from the shell environment before the
+binary runs, and is not written to the repository. It is not used by the
+binary. The generated GitLab job is stored under
+`.gitlab/ci/git-byline.yml` and must be included from the project's
+`.gitlab-ci.yml`.
+
+Both workflows reconstruct from the actual post-merge target commit. The
+GitHub workflow derives `GIT_BYLINE_CI_BASE` from the merge commit's first
+parent and uses its second parent as the source tip when present, falling back
+to the merged pull request head for a single-parent squash result. The GitLab
+workflow derives its base from the pushed commit's first parent and its source
+from the second parent; a single-parent result has an empty source range and is
+skipped safely. The workflow runs repository code from that merge commit before
+pushing notes. Before every token-bearing Git operation, it re-pins the
+canonical remote URL, disables repository hooks with an empty
+`core.hooksPath`, and disables system and global Git configuration. No branch,
+tag, source file, or workflow ref is pushed by the generated job.
+
+Each provider serializes note publication with a concurrency or resource group,
+so concurrent jobs do not race on `refs/notes/byline`. Reconstruction allows at
+most 10,000 aggregate PatchID calls and has a two-minute pairing deadline.
+Commits beyond either budget stay `untracked`, with a warning, and never fail
+the workflow. A CI run with empty source and target ranges succeeds with a
+warning and writes no notes.
+
 ## Threats and controls
 
 | Threat | Prevention | Detection | Recovery |
@@ -56,7 +97,7 @@ be blocked by pending attribution repair.
 | Dashboard content injects HTML or script | Validate attribution, escape untrusted values with `html/template`, restrictive CSP | Renderer and CLI tests | Delete report and regenerate |
 | Dashboard exposes source or metadata | Private temporary file mode, no external resources, no automatic publication | User review and repository scans | Delete local report |
 | Hook config overwrite | Structural merge, backup, managed markers | Idempotency and preservation tests | Restore `.git-byline.bak` |
-| Fork reaches write token | Read-only workflow defaults, no secrets in CI | Fork pull request check | Disable workflow and rotate token |
+| Fork reaches write token | Post-merge default-branch rules, explicit fork rejection, token only in fetch and push steps | Pipeline rule checks | Disable workflow and rotate token |
 | Compromised action or tool | Immutable action pins and pinned tool versions | Renovate, dependency review, CodeQL | Pause automation, pin or remove tool |
 | Invalid release | Tag validation, tests, archive checks, checksums, SBOM | Release workflow and manual install | Withdraw release and publish patch |
 

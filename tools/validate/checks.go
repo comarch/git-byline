@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/comarch/git-byline/internal/ci"
 )
 
 // coverageFloor is the minimum total statement coverage the test suite
@@ -306,4 +309,59 @@ func checkForbiddenImports(root string) error {
 		return fmt.Errorf("forbidden imports:\n%s", strings.Join(problems, "\n"))
 	}
 	return nil
+}
+
+// checkCITemplates proves that installation writes the canonical workflow
+// bytes without adding a provider-specific generation path.
+func checkCITemplates(root string) error {
+	if root == "" {
+		return errors.New("CI template root is empty")
+	}
+	temp, err := os.MkdirTemp("", "byline-ci-templates-")
+	if err != nil {
+		return fmt.Errorf("create CI template fixture: %w", err)
+	}
+	defer os.RemoveAll(temp)
+	for _, provider := range []ci.Provider{ci.ProviderGitHub, ci.ProviderGitLab} {
+		expected, err := ci.Template(provider)
+		if err != nil {
+			return err
+		}
+		sourcePath, err := ciTemplateSourcePath(root, provider)
+		if err != nil {
+			return err
+		}
+		source, err := os.ReadFile(sourcePath)
+		if err != nil {
+			return fmt.Errorf("read %s CI source template: %w", provider, err)
+		}
+		if !bytes.Equal(source, expected) {
+			return fmt.Errorf("%s CI source template differs from embedded template", provider)
+		}
+		result, err := ci.Install(temp, provider)
+		if err != nil {
+			return fmt.Errorf("install %s CI template: %w", provider, err)
+		}
+		actual, err := os.ReadFile(filepath.Join(temp, filepath.FromSlash(result.Path)))
+		if err != nil {
+			return fmt.Errorf("read installed %s CI template: %w", provider, err)
+		}
+		if !bytes.Equal(actual, expected) {
+			return fmt.Errorf("installed %s CI template differs from canonical template", provider)
+		}
+	}
+	return nil
+}
+
+func ciTemplateSourcePath(root string, provider ci.Provider) (string, error) {
+	name := ""
+	switch provider {
+	case ci.ProviderGitHub:
+		name = "github.yml"
+	case ci.ProviderGitLab:
+		name = "gitlab.yml"
+	default:
+		return "", fmt.Errorf("unsupported CI provider %q", provider)
+	}
+	return filepath.Join(root, "internal", "ci", "templates", name), nil
 }

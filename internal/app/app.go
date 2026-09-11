@@ -119,6 +119,15 @@ func commands() []*command {
 			run: runRewrite,
 		},
 		{
+			name:  "ci",
+			short: "reconstruct attribution after forge merges",
+			usage: "Usage: git-byline ci install --provider github|gitlab\n" +
+				"       git-byline ci run --provider github|gitlab [--base REV --source REV --target REV --mode auto|squash|rebase]\n\n" +
+				"Install a forge workflow or reconstruct attribution locally after\n" +
+				"a squash or rebase merge. The binary never pushes notes.",
+			run: runCI,
+		},
+		{
 			name:  "export",
 			short: "export attribution to an interop format",
 			usage: "Usage: git-byline export --format gitai|agent-trace [--commit REV] [--output FILE]\n\n" +
