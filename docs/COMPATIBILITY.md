@@ -84,23 +84,30 @@ Track native support in
 | --- | --- | --- | --- |
 | Rebase | Supported | `post-rewrite` | Plain, reordered, squashed, split, dropped, conflicted and aborted rebases |
 | Amend | Supported | `post-rewrite` and `post-commit` | Unstaged and partially staged amend |
-| Cherry-pick | Supported | `post-commit` | Normal and `--no-commit` cherry-pick |
+| Cherry-pick | Supported | `post-commit` | Normal `-x` cherry-pick; `--no-commit` requires a commit message marker |
 | Merge | Supported | `post-merge` and `post-commit` | First parent authoritative; conflict resolution is untracked |
 | Pull with rebase | Supported | `post-rewrite` | Rewritten local commits |
 | Reset soft | Supported | `reference-transaction` | Pending ranges reproject onto worktree |
 | Reset mixed | Supported | `reference-transaction` | Pending ranges reproject onto worktree |
 | Reset hard | Supported | `reference-transaction` | Pending state is cleared; existing notes stay unchanged |
-| Reset with pathspec | Supported | `git byline rewrite` | Invoke after a path-limited index reset |
+| Reset with pathspec | Supported | `git byline rewrite` | Manual command after a path-limited index reset |
 | Branch switch | Supported | `post-checkout` | Pending ranges reproject onto checked-out worktree |
-| Stash push | Supported | `reference-transaction` | Pending ranges stored under `refs/notes/byline-stash` |
-| Stash apply | Supported | `git byline rewrite` | Restores pending ranges; stash note remains |
-| Stash pop | Supported | `reference-transaction` | Restores pending ranges and removes consumed stash note |
-| Stash pathspec | Supported | `git byline rewrite` | Selected paths follow the same stash note rules |
+| Stash push | Supported | `reference-transaction` | Hook stores only paths in the stash commit under `refs/notes/byline-stash` |
+| Stash apply | Supported | `git byline rewrite --mode stash-apply` | Manual stdin command: `<stash-commit> 1`; restores pending ranges and keeps note |
+| Stash pop | Supported | `reference-transaction` | Hook detects applied worktree content, restores pending ranges, and compare-deletes owned note |
+| Stash pathspec | Supported | `reference-transaction` | Hook stores and restores only selected stash paths |
 
 Run `git byline rewrite --mode <mode> --hook-input stdin` only when a Git hook
-does not run automatically, including path-limited reset and stash apply.
+does not run automatically, including path-limited reset and stash apply. For
+manual stash apply, stdin is `<full-stash-commit> 1`; use `0` when the note
+should be removed after a manual pop.
 Rewritten content with no exact or whitespace-only line match is `untracked`.
 Dropped commits do not contribute attribution to later content.
+
+Restored stash ranges merge with existing pending state. Existing entries win
+for a path already present; restored entries fill paths not already pending.
+The operation lock covers the complete read, projection, retention, and state
+write sequence.
 
 ## Attribution matching
 

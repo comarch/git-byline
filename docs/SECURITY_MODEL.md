@@ -28,7 +28,9 @@ The managed `reference-transaction` hook has the opposite failure contract.
 It exits immediately when `GIT_BYLINE_NESTED` is set, ignores refs outside
 `HEAD`, `refs/heads/*`, and `refs/stash`, and always exits zero. This hook runs
 on the critical path of commands such as `git status`, reset, stash, and
-branch switching. A provenance failure must not break repository operations.
+branch switching. The wrapper keeps the never-nonzero contract; the binary
+parses and filters transaction lines before repository discovery. A provenance
+failure must not break repository operations.
 The `post-rewrite` and `post-merge` hooks fail closed because their work is
 recoverable and an incomplete rewrite could otherwise leave attribution
 silently detached. `post-checkout` also fails open because checkout must not
@@ -62,7 +64,9 @@ be blocked by pending attribution repair.
 
 Checkpoint JSON includes repository-relative paths, timestamps, agent names,
 model names, session identifiers, and Git object IDs. Notes contain the same
-metadata plus line ranges. Snapshot blobs contain full selected file content.
+metadata plus line ranges. Stash ownership notes contain only a SHA-256 digest
+of the exact stash attribution note. Snapshot blobs contain full selected file
+content.
 
 Raw hook payloads, prompts, transcripts, tool responses, environment variables,
 authorization data, and logs are not persisted.

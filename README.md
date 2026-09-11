@@ -233,6 +233,18 @@ configuration are preserved. Non-shell hooks, symlinked paths, external
 
 `git byline check` exits with status 1 when a policy violation is found.
 
+Rewrite hook modes are `post-rewrite`, `post-checkout`, `post-merge`,
+`ref-txn`, and `stash-apply`. Git hooks call the first four modes. Run
+`stash-apply` manually when applying a stash without a Git hook:
+
+```sh
+printf '%s 1\n' "$(git rev-parse stash@{0})" |
+  git byline rewrite --mode stash-apply --hook-input stdin
+```
+
+The second field keeps the stash attribution note. Use `0` after a manual
+stash pop to remove it. Hook input accepts only full repository object IDs.
+
 PromptScript 1.18.1 compiles native project hooks for Factory, Claude Code,
 GitHub Copilot, VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, and Grok.
 The generic agent-v1 adapter accepts its standard JSON payload through stdin:
@@ -295,6 +307,7 @@ git-byline stores:
 - `refs/worktree/byline/checkpoints`
 - `refs/notes/byline`
 - `refs/notes/byline-stash`
+- `refs/notes/byline-stash-owner`
 
 Linked worktrees keep checkpoint state separate. Notes are shared within the
 common repository. After `install-hooks --git`, the managed `pre-push` hook
@@ -331,6 +344,8 @@ content was reviewed for sharing.
 - Rebase, amend, cherry-pick, reset, branch switch, and stash hooks reproject
   attribution when Git supplies the required transition data. Use
   `git byline rewrite` manually after a path-limited reset or stash apply.
+- Stash apply is manual when `git stash apply` is used. Pass the stash object
+  ID and `1` to keep its pending attribution note.
 - Merge commits use first-parent history. Unmatched merge result content is
   `untracked`.
 - Duplicate equal lines in partial commits are resolved deterministically, but
