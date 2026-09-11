@@ -276,7 +276,7 @@ func TestSessionWithoutSurvivingOutputUsesZeroCounters(t *testing.T) {
 	}
 }
 
-func TestLegacyStateLoadsAndNextAnnotationWritesV2Note(t *testing.T) {
+func TestLegacyStateLoadsAndNextAnnotationWritesCurrentNote(t *testing.T) {
 	t.Parallel()
 	root := testRepo(t)
 	write(t, root, "file.txt", "base\n")
@@ -296,10 +296,19 @@ func TestLegacyStateLoadsAndNextAnnotationWritesV2Note(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacyFiles := map[string]model.NoteFile{}
+	for path, file := range currentNote.Files {
+		ranges := make([]model.Range, len(file.Ranges))
+		for index, value := range file.Ranges {
+			value.Identity = ""
+			ranges[index] = value
+		}
+		legacyFiles[path] = model.NoteFile{Blob: file.Blob, Ranges: ranges}
+	}
 	legacyData, err := json.Marshal(struct {
 		Version int                       `json:"version"`
 		Files   map[string]model.NoteFile `json:"files"`
-	}{Version: model.NoteVersionV1, Files: currentNote.Files})
+	}{Version: model.NoteVersionV1, Files: legacyFiles})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,10 +322,11 @@ func TestLegacyStateLoadsAndNextAnnotationWritesV2Note(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(stateData), `"notes_version":2`) {
+	currentVersion := fmt.Sprintf(`"notes_version":%d`, model.NoteVersion)
+	if !strings.Contains(string(stateData), currentVersion) {
 		t.Fatalf("state does not contain current notes version: %s", stateData)
 	}
-	stateData = []byte(strings.Replace(string(stateData), `"notes_version":2`, `"notes_version":1`, 1))
+	stateData = []byte(strings.Replace(string(stateData), currentVersion, `"notes_version":1`, 1))
 	if err := os.WriteFile(stateStore.StatePath(), stateData, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +363,7 @@ func TestLegacyStateLoadsAndNextAnnotationWritesV2Note(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(finalState), `"notes_version":2`) {
+	if !strings.Contains(string(finalState), currentVersion) {
 		t.Fatalf("state was not upgraded: %s", finalState)
 	}
 }
@@ -1197,6 +1207,85 @@ func TestCheckpointAfterCommitCarriesToNextCommit(t *testing.T) {
 	}
 	if len(blame.Lines) != 3 || blame.Lines[2].Attribution.Author != model.AuthorAI {
 		t.Fatalf("Blame() = %+v", blame)
+	}
+}
+
+func TestAnnotateRecordsCommitIdentityForHumanLines(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	git(t, root, "config", "user.name", "John Doe")
+	git(t, root, "config", "user.email", "john.doe@example.invalid")
+	write(t, root, "file.txt", "one\ntwo\n")
+	commit(t, root, "human lines")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	blame, err := Blame(repo, "file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range blame.Lines {
+		if line.Attribution.Author != model.AuthorHuman ||
+			line.Attribution.Identity != "john.doe" {
+			t.Fatalf("line %d attribution = %+v", line.Number, line.Attribution)
+		}
+	}
+}
+
+func TestAnnotateKeepsMergedContentUntrackedAcrossCommits(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "base.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "checkout", "-b", "side")
+	write(t, root, "vendor.txt", "vendor one\nvendor two\n")
+	commit(t, root, "vendor import")
+	git(t, root, "checkout", "main")
+	git(t, root, "merge", "--no-ff", "-m", "merge side", "side")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := Blame(repo, "vendor.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range merged.Lines {
+		if line.Attribution.Author != model.AuthorUntracked {
+			t.Fatalf("merged line %d attribution = %+v", line.Number, line.Attribution)
+		}
+	}
+	// A later commit that touches the merged file must not promote the
+	// merge result to human attribution.
+	write(t, root, "vendor.txt", "vendor one\nvendor two\nlocal three\n")
+	commit(t, root, "extend vendor file")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Blame(repo, "vendor.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Lines) != 3 {
+		t.Fatalf("Blame() lines = %d", len(after.Lines))
+	}
+	for _, line := range after.Lines[:2] {
+		if line.Attribution.Author != model.AuthorUntracked {
+			t.Fatalf("line %d attribution = %+v", line.Number, line.Attribution)
+		}
+	}
+	if after.Lines[2].Attribution.Author != model.AuthorHuman {
+		t.Fatalf("new line attribution = %+v", after.Lines[2].Attribution)
 	}
 }
 

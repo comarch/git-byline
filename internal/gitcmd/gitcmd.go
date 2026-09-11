@@ -484,6 +484,22 @@ func (repo *Repo) CommitTime(commit string) (string, error) {
 	return value, nil
 }
 
+// CommitAuthor returns the author name and email address of one commit.
+func (repo *Repo) CommitAuthor(commit string) (string, string, error) {
+	if err := validateRevision(commit, "commit revision"); err != nil {
+		return "", "", err
+	}
+	out, err := repo.run("read commit author", nil, "show", "-s", "--format=%an%x00%ae", commit)
+	if err != nil {
+		return "", "", err
+	}
+	fields := strings.SplitN(strings.TrimRight(string(out), "\n"), "\x00", 2)
+	if len(fields) != 2 {
+		return "", "", errors.New("git returned an invalid commit author")
+	}
+	return fields[0], fields[1], nil
+}
+
 // CommitMessage returns the full commit message for one commit.
 func (repo *Repo) CommitMessage(commit string) (string, error) {
 	if err := validateRevision(commit, "commit revision"); err != nil {

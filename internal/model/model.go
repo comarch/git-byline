@@ -18,8 +18,10 @@ const (
 	StateVersion = 1
 	// NoteVersionV1 is the legacy git note format used by persisted state.
 	NoteVersionV1 = 1
+	// NoteVersionV2 is the git note format without human identities.
+	NoteVersionV2 = 2
 	// NoteVersion is the supported git note format.
-	NoteVersion = 2
+	NoteVersion = 3
 	// NoteSessionSeparator separates an agent from a session map key.
 	NoteSessionSeparator = "::"
 	// MaxTextLines bounds attribution memory for one file.
@@ -45,11 +47,38 @@ const (
 
 // Attribution records line authorship and optional agent metadata.
 type Attribution struct {
-	Author  Author `json:"author"`
-	Agent   string `json:"agent,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Session string `json:"session,omitempty"`
-	TS      string `json:"ts,omitempty"`
+	Author   Author `json:"author"`
+	Identity string `json:"identity,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Session  string `json:"session,omitempty"`
+	TS       string `json:"ts,omitempty"`
+}
+
+// Label renders one attribution as a stable single-token source label.
+func (value Attribution) Label() string {
+	label := string(value.Author)
+	switch value.Author {
+	case AuthorHuman:
+		if value.Identity != "" {
+			label += ":" + value.Identity
+		}
+	case AuthorAI:
+		label += ":" + value.Agent
+		if value.Model != "" {
+			label += "/" + value.Model
+		}
+	case AuthorHumanOverride:
+		label += ":"
+		if value.Identity != "" {
+			label += value.Identity + "/"
+		}
+		label += value.Agent
+		if value.Model != "" {
+			label += "/" + value.Model
+		}
+	}
+	return label
 }
 
 // Range is an inclusive, one-based line interval.
@@ -136,6 +165,61 @@ var objectIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{4,128}$`)
 
 const maxAttributionValueBytes = 1024
 
+// MaxIdentityBytes bounds one stored human identity token.
+const MaxIdentityBytes = 64
+
+var identityPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9._+-]*[a-z0-9])?$`)
+
+// NormalizeIdentity derives a stable human identity token from a Git author
+// name and email address. It prefers the email local part, because that is
+// the part corporate Git identities keep unique, and falls back to the
+// author name. Input that cannot be reduced to a safe token yields an empty
+// identity, so the line stays honestly anonymous instead of guessed.
+func NormalizeIdentity(name, email string) string {
+	if local, _, found := strings.Cut(email, "@"); found {
+		if token := identityToken(local); token != "" {
+			return token
+		}
+	}
+	return identityToken(name)
+}
+
+func identityToken(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var builder strings.Builder
+	for _, char := range value {
+		switch {
+		case char >= 'a' && char <= 'z', char >= '0' && char <= '9',
+			char == '.', char == '_', char == '+', char == '-':
+			builder.WriteRune(char)
+		case char == ' ' || char == '\t':
+			builder.WriteByte('.')
+		}
+	}
+	token := strings.Trim(builder.String(), "._+-")
+	if len(token) > MaxIdentityBytes {
+		return ""
+	}
+	if !identityPattern.MatchString(token) {
+		return ""
+	}
+	return token
+}
+
+// ValidateIdentity validates one stored human identity token.
+func ValidateIdentity(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > MaxIdentityBytes {
+		return fmt.Errorf("identity exceeds %d bytes", MaxIdentityBytes)
+	}
+	if !identityPattern.MatchString(value) {
+		return fmt.Errorf("identity %q is not a normalized token", value)
+	}
+	return nil
+}
+
 // ValidObjectID reports whether value can be a Git object ID.
 func ValidObjectID(value string) bool {
 	return objectIDPattern.MatchString(value)
@@ -148,9 +232,21 @@ func ValidateAttribution(value Attribution) error {
 		if value.Agent != "" || value.Model != "" || value.Session != "" || value.TS != "" {
 			return fmt.Errorf("%s attribution contains agent metadata", value.Author)
 		}
+		if value.Author == AuthorUntracked && value.Identity != "" {
+			return errors.New("untracked attribution contains an identity")
+		}
+		if err := ValidateIdentity(value.Identity); err != nil {
+			return fmt.Errorf("%s attribution: %w", value.Author, err)
+		}
 	case AuthorAI, AuthorHumanOverride:
 		if value.Agent == "" {
 			return fmt.Errorf("%s attribution requires agent", value.Author)
+		}
+		if value.Author == AuthorAI && value.Identity != "" {
+			return errors.New("ai attribution contains a human identity")
+		}
+		if err := ValidateIdentity(value.Identity); err != nil {
+			return fmt.Errorf("%s attribution: %w", value.Author, err)
 		}
 		return validateAgentMetadata(value)
 	default:

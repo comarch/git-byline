@@ -415,9 +415,16 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	}
 	sessions := sessionMetrics{}
 	nextPending := map[string]model.PendingFile{}
-	mergeFallback := model.Attribution{Author: model.AuthorHuman}
+	identity, err := commitIdentity(repo, head)
+	if err != nil {
+		return AnnotateResult{}, err
+	}
+	// contentFallback covers content no checkpoint explains. On a merge it
+	// stays untracked, including for the pending worktree projection: the
+	// merge result must not become human attribution on the next commit.
+	contentFallback := model.Attribution{Author: model.AuthorHuman, Identity: identity}
 	if len(parents) > 1 {
-		mergeFallback = model.Attribution{Author: model.AuthorUntracked}
+		contentFallback = model.Attribution{Author: model.AuthorUntracked}
 		warnings = append(warnings, "merge commit uses first-parent attribution; unmatched content is untracked")
 	}
 
@@ -440,7 +447,7 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 			warnings = append(warnings, fmt.Sprintf("base content for %s is unsupported: %v", path, err))
 			initial = engine.Snapshot{}
 		}
-		transitions, err := transitionsFor(repo, active, sourcePath, path)
+		transitions, err := transitionsFor(repo, active, sourcePath, path, identity)
 		if err != nil {
 			return AnnotateResult{}, fmt.Errorf("replay %s: %w", path, err)
 		}
@@ -470,7 +477,7 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 					}
 					return AnnotateResult{}, err
 				}
-				committed, err = engine.Project(replayed, content, mergeFallback)
+				committed, err = engine.Project(replayed, content, contentFallback)
 				if err != nil {
 					warnings = append(warnings, fmt.Sprintf("skipped unsupported path %s: %v", path, err))
 				} else {
@@ -484,7 +491,7 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 			}
 		}
 
-		carryTransitions, err := transitionsFor(repo, carry, path, path)
+		carryTransitions, err := transitionsFor(repo, carry, path, path, identity)
 		if err != nil {
 			return AnnotateResult{}, fmt.Errorf("carry pending %s: %w", path, err)
 		}
@@ -500,7 +507,7 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 		if !exists {
 			continue
 		}
-		worktree, err := engine.Project(pendingSource, worktreeContent, model.Attribution{Author: model.AuthorHuman})
+		worktree, err := engine.Project(pendingSource, worktreeContent, contentFallback)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("cannot attribute pending path %s: %v", path, err))
 			continue
@@ -650,7 +657,24 @@ func initialSnapshot(repo *gitcmd.Repo, state model.State, parent, path string) 
 	return snapshot, warnings, err
 }
 
-func transitionsFor(repo *gitcmd.Repo, records []model.Checkpoint, sourcePath, targetPath string) ([]engine.Transition, error) {
+// commitIdentity resolves the human identity recorded for lines this commit
+// introduces. It comes from the commit author, so anyone can reproduce it
+// with git log. An identity that cannot be normalized stays empty.
+func commitIdentity(repo *gitcmd.Repo, commit string) (string, error) {
+	name, email, err := repo.CommitAuthor(commit)
+	if err != nil {
+		return "", fmt.Errorf("resolve commit author for %s: %w", commit, err)
+	}
+	return model.NormalizeIdentity(name, email), nil
+}
+
+func transitionsFor(
+	repo *gitcmd.Repo,
+	records []model.Checkpoint,
+	sourcePath,
+	targetPath,
+	identity string,
+) ([]engine.Transition, error) {
 	var transitions []engine.Transition
 	for _, record := range records {
 		if record.Type != model.AuthorHuman && record.Type != model.AuthorAI {
@@ -685,6 +709,8 @@ func transitionsFor(repo *gitcmd.Repo, records []model.Checkpoint, sourcePath, t
 			attr.Model = record.Model
 			attr.Session = record.Session
 			attr.TS = record.TS
+		} else {
+			attr.Identity = identity
 		}
 		transitions = append(transitions, engine.Transition{Content: content, Attribution: attr})
 	}

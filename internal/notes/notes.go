@@ -67,7 +67,9 @@ func Decode(data []byte) (model.Note, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return model.Note{}, fmt.Errorf("decode note header: %w", err)
 	}
-	if header.Version != model.NoteVersionV1 && header.Version != model.NoteVersion {
+	switch header.Version {
+	case model.NoteVersionV1, model.NoteVersionV2, model.NoteVersion:
+	default:
 		return model.Note{}, fmt.Errorf("unsupported note version %d", header.Version)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -106,7 +108,7 @@ func Decode(data []byte) (model.Note, error) {
 		}
 	}
 	note := model.Note{Version: wire.Version, Files: wire.Files}
-	if wire.Version == model.NoteVersion {
+	if wire.Version >= model.NoteVersionV2 {
 		note.Sessions = make(map[string]model.NoteSession, len(wire.Sessions))
 		for name, session := range wire.Sessions {
 			if err := validateSession(name, *session); err != nil {
@@ -186,8 +188,8 @@ func CheckFileCount(data []byte, limit int) error {
 }
 
 func validateNote(note model.Note) error {
-	if note.Version != model.NoteVersion && len(note.Sessions) > 0 {
-		return fmt.Errorf("note sessions require version %d", model.NoteVersion)
+	if note.Version < model.NoteVersionV2 && len(note.Sessions) > 0 {
+		return fmt.Errorf("note sessions require version %d or newer", model.NoteVersionV2)
 	}
 	for name, session := range note.Sessions {
 		if err := validateSession(name, session); err != nil {
@@ -217,6 +219,18 @@ func validateNote(note model.Note) error {
 		}
 		if err := model.ValidateRanges(file.Ranges, lineCount); err != nil {
 			return fmt.Errorf("note file %q: %w", path, err)
+		}
+		if note.Version < model.NoteVersion {
+			for index, value := range file.Ranges {
+				if value.Identity != "" {
+					return fmt.Errorf(
+						"note file %q range %d carries a human identity, which requires version %d",
+						path,
+						index,
+						model.NoteVersion,
+					)
+				}
+			}
 		}
 	}
 	return nil
