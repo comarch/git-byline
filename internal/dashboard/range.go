@@ -49,6 +49,7 @@ type rangeTrendView struct {
 	Commit        string
 	CommitShort   string
 	Timestamp     string
+	timestamp     time.Time
 	Lines         int
 	Human         int
 	AI            int
@@ -183,7 +184,8 @@ func buildRangeView(aggregate report.Aggregate) (rangePageView, error) {
 		if commit.Timestamp == "" {
 			return rangePageView{}, fmt.Errorf("dashboard range commit %s has no timestamp", commit.Commit)
 		}
-		if _, err := time.Parse(time.RFC3339Nano, commit.Timestamp); err != nil {
+		timestamp, err := time.Parse(time.RFC3339Nano, commit.Timestamp)
+		if err != nil {
 			return rangePageView{}, fmt.Errorf(
 				"dashboard range commit %s has invalid timestamp: %w",
 				commit.Commit,
@@ -198,6 +200,7 @@ func buildRangeView(aggregate report.Aggregate) (rangePageView, error) {
 			Commit:        commit.Commit,
 			CommitShort:   shortID(commit.Commit),
 			Timestamp:     commit.Timestamp,
+			timestamp:     timestamp,
 			Lines:         commit.Lines,
 			Human:         commit.Human,
 			AI:            commit.AI,
@@ -206,8 +209,8 @@ func buildRangeView(aggregate report.Aggregate) (rangePageView, error) {
 		})
 	}
 	sort.Slice(trend, func(i, j int) bool {
-		if trend[i].Timestamp != trend[j].Timestamp {
-			return trend[i].Timestamp < trend[j].Timestamp
+		if !trend[i].timestamp.Equal(trend[j].timestamp) {
+			return trend[i].timestamp.Before(trend[j].timestamp)
 		}
 		return trend[i].Commit < trend[j].Commit
 	})

@@ -168,6 +168,7 @@ func TestDashboardRangeModeRendersAggregateWithoutSourceLines(t *testing.T) {
 	t.Parallel()
 	root := appRepo(t)
 	appWrite(t, root, "file.txt", "one\n")
+	appWrite(t, root, "older-only.txt", "older-only-source-string\n")
 	appCommit(t, root, "one")
 	first := appHead(t, root)
 	appWrite(t, root, "file.txt", "one\ntwo\n")
@@ -178,6 +179,21 @@ func TestDashboardRangeModeRendersAggregateWithoutSourceLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	olderBlob, exists, err := repo.BlobID(first, "older-only.txt")
+	if err != nil || !exists {
+		t.Fatalf("BlobID = %q, %t, %v", olderBlob, exists, err)
+	}
+	writeDashboardTestNote(t, repo, first, model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"older-only.txt": {
+				Blob: olderBlob,
+				Ranges: []model.Range{{Start: 1, End: 1, Attribution: model.Attribution{
+					Author: model.AuthorHuman,
+				}}},
+			},
+		},
+	})
 	blob, exists, err := repo.BlobID(second, "file.txt")
 	if err != nil || !exists {
 		t.Fatalf("BlobID = %q, %t, %v", blob, exists, err)
@@ -241,10 +257,22 @@ func TestDashboardRangeModeRendersAggregateWithoutSourceLines(t *testing.T) {
 		t.Fatal("range dashboard rendered source lines")
 	}
 
+	repoPath := filepath.Join(t.TempDir(), "repo.html")
 	code, stdout, stderr, err = appRun(root, zeroTime(), nil,
-		"dashboard", "--repo", "--output", filepath.Join(t.TempDir(), "repo.html"))
+		"dashboard", "--repo", "--output", repoPath)
 	if code != ExitSuccess || err != nil || stdout == "" || stderr != "" {
 		t.Fatalf("dashboard repo = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	repoData, err := os.ReadFile(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoText := string(repoData)
+	if !strings.Contains(repoText, "older-only.txt") {
+		t.Fatal("repository dashboard missing older commit content")
+	}
+	if strings.Contains(repoText, "older-only-source-string") {
+		t.Fatal("repository dashboard rendered source lines")
 	}
 
 	code, stdout, stderr, err = appRun(root, zeroTime(), nil,
