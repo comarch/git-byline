@@ -36,6 +36,30 @@ recoverable and an incomplete rewrite could otherwise leave attribution
 silently detached. `post-checkout` also fails open because checkout must not
 be blocked by pending attribution repair.
 
+Forge merge workflows are separate from the binary trust boundary. `git byline
+ci run` reads only commits and notes already fetched into the local repository,
+then writes attribution notes locally. It never calls a forge API and never
+pushes. The generated workflow performs the Git fetch and notes push.
+
+The GitHub workflow requests only `contents: write`. It needs read access to
+the repository and write access to `refs/notes/byline`; it does not need issue,
+pull request, package, deployment, or administrative permissions. The workflow
+uses immutable action commit pins and pushes only the notes ref with
+`--no-verify`.
+
+The GitLab workflow expects a project token in `GITLAB_TOKEN` with only the
+`api` and `write_repository` scopes. `api` is needed for authenticated
+repository ref operations and `write_repository` is needed to push
+`refs/notes/byline`. The token is copied into Git's in-memory HTTP header for
+each command, removed from the shell environment before Git runs, and is not
+written to the repository. It is not used by the binary. The generated GitLab
+job is stored under `.gitlab/ci/git-byline.yml` and must be included from the
+project's `.gitlab-ci.yml`.
+
+Both workflows fetch the pull request commits and existing notes before
+reconstruction, then push only `refs/notes/byline`. No branch, tag, source
+file, or workflow ref is pushed by the generated job.
+
 ## Threats and controls
 
 | Threat | Prevention | Detection | Recovery |

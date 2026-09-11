@@ -1,0 +1,37 @@
+# Include this file from the repository .gitlab-ci.yml:
+# include:
+#   - local: .gitlab/ci/git-byline.yml
+
+git-byline-reconstruct:
+  stage: .post
+  image: golang:1.24
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merged_result"'
+    - when: never
+  variables:
+    GIT_DEPTH: "0"
+    GIT_BYLINE_CI_SOURCE: "$CI_MERGE_REQUEST_SOURCE_BRANCH_SHA"
+    GIT_BYLINE_CI_TARGET: "$CI_COMMIT_SHA"
+  script:
+    - |
+      set -eu
+      test -n "${GITLAB_TOKEN:-}"
+      value="$GITLAB_TOKEN"
+      unset GITLAB_TOKEN
+      gitlab_git() {
+        GIT_CONFIG_COUNT=1 \
+        GIT_CONFIG_KEY_0=http.extraHeader \
+        GIT_CONFIG_VALUE_0="PRIVATE-TOKEN: $value" \
+        git "$@"
+      }
+      gitlab_git fetch --no-tags origin \
+        "refs/merge-requests/${CI_MERGE_REQUEST_IID}/head:refs/remotes/origin/git-byline-pr-head" \
+        "$GIT_BYLINE_CI_BASE" "$GIT_BYLINE_CI_SOURCE" "$GIT_BYLINE_CI_TARGET"
+      notes="$(gitlab_git ls-remote origin refs/notes/byline)"
+      if [ -n "$notes" ]; then
+        gitlab_git fetch --no-tags origin refs/notes/byline:refs/notes/byline
+      fi
+      CGO_ENABLED=0 GOPROXY=off go run ./cmd/git-byline ci run --provider gitlab
+      if git show-ref --verify --quiet refs/notes/byline; then
+        gitlab_git push --no-verify origin refs/notes/byline:refs/notes/byline
+      fi

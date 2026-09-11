@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -238,6 +239,17 @@ func isBinary(data []byte) bool {
 
 // checkScans runs all repository scanners and fails on the first hit.
 func checkScans(root string) error {
+	ciTemplates := filepath.Join(root, "internal", "ci", "templates")
+	if info, err := os.Stat(ciTemplates); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("CI template path is not a directory")
+		}
+		if err := checkCITemplates(root); err != nil {
+			return fmt.Errorf("CI template contract: %w", err)
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect CI template directory: %w", err)
+	}
 	findings, err := scanRepo(root)
 	if err != nil {
 		return fmt.Errorf("scan: %w", err)

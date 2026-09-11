@@ -1,0 +1,63 @@
+name: git-byline forge attribution
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  reconstruct:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GIT_BYLINE_CI_SOURCE: ${{ github.event.pull_request.head.sha }}
+      GIT_BYLINE_CI_TARGET: ${{ github.event.pull_request.merge_commit_sha }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.24.x"
+          cache: false
+
+      - name: Fetch pull request commits and notes
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: http.extraheader
+          GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ github.token }}"
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/git-byline-pr-head"
+          notes="$(git ls-remote --refs origin refs/notes/byline)"
+          if [ -n "$notes" ]; then
+            git fetch --no-tags origin refs/notes/byline:refs/notes/byline
+          fi
+
+      - name: Reconstruct attribution
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
+        run: go run ./cmd/git-byline ci run --provider github
+
+      - name: Push attribution notes
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: http.extraheader
+          GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ github.token }}"
+        run: |
+          set -euo pipefail
+          if git show-ref --verify --quiet refs/notes/byline; then
+            git push --no-verify origin refs/notes/byline:refs/notes/byline
+          fi

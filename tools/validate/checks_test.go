@@ -227,6 +227,48 @@ func TestCheckForbiddenImports(t *testing.T) {
 	}
 }
 
+func TestCheckCITemplates(t *testing.T) {
+	t.Parallel()
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCITemplates(root); err != nil {
+		t.Fatalf("checkCITemplates() = %v, want nil", err)
+	}
+}
+
+func TestCheckCITemplatesDetectsSourceDrift(t *testing.T) {
+	t.Parallel()
+	repositoryRoot, err := repoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	templateDir := filepath.Join(root, "internal", "ci", "templates")
+	if err := os.MkdirAll(templateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"github", "gitlab"} {
+		data, err := os.ReadFile(filepath.Join(repositoryRoot, "internal", "ci", "templates", provider+".yml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(templateDir, provider+".yml"), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := checkCITemplates(root); err != nil {
+		t.Fatalf("checkCITemplates(clean) = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(templateDir, "github.yml"), []byte("drift\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCITemplates(root); err == nil {
+		t.Fatal("checkCITemplates(drifted) = nil")
+	}
+}
+
 func TestParseCoverageTotal(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
