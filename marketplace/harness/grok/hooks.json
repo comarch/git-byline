@@ -1,0 +1,48 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Create|Edit|ApplyPatch|create_file|edit_file|write_file|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${GROK_WORKSPACE_ROOT:-}\" ]; then printf '%s\\n' 'PromptScript grok hook requires non-empty GROK_WORKSPACE_ROOT.' >&2; exit 1; fi; cd \"$GROK_WORKSPACE_ROOT\" && git-byline checkpoint portable-grok --type human --hook-input stdin # promptscript-generated:grok-pre-edit",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${GROK_WORKSPACE_ROOT:-}\" ]; then printf '%s\\n' 'PromptScript grok hook requires non-empty GROK_WORKSPACE_ROOT.' >&2; exit 1; fi; cd \"$GROK_WORKSPACE_ROOT\" && git-byline checkpoint portable-grok --type human --hook-input stdin # promptscript-generated:grok-shell-pre",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Create|Edit|ApplyPatch|create_file|edit_file|write_file|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${GROK_WORKSPACE_ROOT:-}\" ]; then printf '%s\\n' 'PromptScript grok hook requires non-empty GROK_WORKSPACE_ROOT.' >&2; exit 1; fi; cd \"$GROK_WORKSPACE_ROOT\" && git-byline checkpoint portable-grok --type ai --hook-input stdin # promptscript-generated:grok-post-edit",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"${GROK_WORKSPACE_ROOT:-}\" ]; then printf '%s\\n' 'PromptScript grok hook requires non-empty GROK_WORKSPACE_ROOT.' >&2; exit 1; fi; cd \"$GROK_WORKSPACE_ROOT\" && git-byline checkpoint portable-grok --type ai --hook-input stdin # promptscript-generated:grok-shell-post",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -4,6 +4,7 @@ description: Install, configure, inspect, or troubleshoot local human and AI lin
 license: MIT
 compatibility:
   - factory-ai
+  - claude-code
 allowed-tools:
   - Read
   - Execute

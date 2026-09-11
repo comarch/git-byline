@@ -1,0 +1,56 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "apply_patch|create_file|delete_file|edit_file|write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PROMPTSCRIPT_PROJECT_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null)\" || { printf '%s\\n' 'PromptScript codex hook requires a Git worktree project root.' >&2; exit 1; }; case \"$PROMPTSCRIPT_PROJECT_ROOT\" in *[![:space:]]*) ;; *) printf '%s\\n' 'PromptScript codex hook requires a Git worktree project root.' >&2; exit 1 ;; esac; cd \"$PROMPTSCRIPT_PROJECT_ROOT\" && git-byline checkpoint portable-codex --type human --hook-input stdin # promptscript-generated:codex-pre-edit",
+            "commandWindows": "$promptscriptProjectRoot = git rev-parse --show-toplevel 2>$null; if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($promptscriptProjectRoot)) { [Console]::Error.WriteLine('PromptScript codex hook requires a Git worktree project root.'); exit 1 }; Set-Location -LiteralPath $promptscriptProjectRoot -ErrorAction Stop; & 'git-byline' 'checkpoint' 'portable-codex' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:codex-pre-edit",
+            "timeout": 30,
+            "statusMessage": "git-byline: capturing pre-edit state"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PROMPTSCRIPT_PROJECT_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null)\" || { printf '%s\\n' 'PromptScript codex hook requires a Git worktree project root.' >&2; exit 1; }; case \"$PROMPTSCRIPT_PROJECT_ROOT\" in *[![:space:]]*) ;; *) printf '%s\\n' 'PromptScript codex hook requires a Git worktree project root.' >&2; exit 1 ;; esac; cd \"$PROMPTSCRIPT_PROJECT_ROOT\" && git-byline checkpoint portable-codex --type human --hook-input stdin # promptscript-generated:codex-shell-pre",
+            "commandWindows": "$promptscriptProjectRoot = git rev-parse --show-toplevel 2>$null; if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($promptscriptProjectRoot)) { [Console]::Error.WriteLine('PromptScript codex hook requires a Git worktree project root.'); exit 1 }; Set-Location -LiteralPath $promptscriptProjectRoot -ErrorAction Stop; & 'git-byline' 'checkpoint' 'portable-codex' '--type' 'human' '--hook-input' 'stdin' # promptscript-generated:codex-shell-pre",
+            "timeout": 30,
+            "statusMessage": "git-byline: capturing pre-shell state"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch|create_file|delete_file|edit_file|write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PROMPTSCRIPT_PROJECT_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null)\" || { printf '%s\\n' 'PromptScript codex hook requires a Git worktree project root.' >&2; exit 1; }; case \"$PROMPTSCRIPT_PROJECT_ROOT\" in *[![:space:]]*) ;; *) printf '%s\\n' 'PromptScript codex hook requires a Git worktree project root.' >&2; exit 1 ;; esac; cd \"$PROMPTSCRIPT_PROJECT_ROOT\" && git-byline checkpoint portable-codex --type ai --hook-input stdin # promptscript-generated:codex-post-edit",
+            "commandWindows": "$promptscriptProjectRoot = git rev-parse --show-toplevel 2>$null; if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($promptscriptProjectRoot)) { [Console]::Error.WriteLine('PromptScript codex hook requires a Git worktree project root.'); exit 1 }; Set-Location -LiteralPath $promptscriptProjectRoot -ErrorAction Stop; & 'git-byline' 'checkpoint' 'portable-codex' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:codex-post-edit",
+            "timeout": 30,
+            "statusMessage": "git-byline: capturing AI edit"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Shell|RunCommand|run_command|Execute|execute|execute_command|terminal|shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PROMPTSCRIPT_PROJECT_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null)\" || { printf '%s\\n' 'PromptScript codex hook requires a Git worktree project root.' >&2; exit 1; }; case \"$PROMPTSCRIPT_PROJECT_ROOT\" in *[![:space:]]*) ;; *) printf '%s\\n' 'PromptScript codex hook requires a Git worktree project root.' >&2; exit 1 ;; esac; cd \"$PROMPTSCRIPT_PROJECT_ROOT\" && git-byline checkpoint portable-codex --type ai --hook-input stdin # promptscript-generated:codex-shell-post",
+            "commandWindows": "$promptscriptProjectRoot = git rev-parse --show-toplevel 2>$null; if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($promptscriptProjectRoot)) { [Console]::Error.WriteLine('PromptScript codex hook requires a Git worktree project root.'); exit 1 }; Set-Location -LiteralPath $promptscriptProjectRoot -ErrorAction Stop; & 'git-byline' 'checkpoint' 'portable-codex' '--type' 'ai' '--hook-input' 'stdin' # promptscript-generated:codex-shell-post",
+            "timeout": 30,
+            "statusMessage": "git-byline: capturing AI shell changes"
+          }
+        ]
+      }
+    ]
+  }
+}
