@@ -112,6 +112,14 @@ func commands() []*command {
 			run: runCheck,
 		},
 		{
+			name:  "disclosure",
+			short: "write machine-readable AI disclosure input",
+			usage: "Usage: git-byline disclosure [--range <rev-range>] [--format json|spdx|cyclonedx] [--output FILE]\n\n" +
+				"Write private, deterministic disclosure input from attribution notes.\n" +
+				"The output is not a compliance certificate and existing files are not replaced.",
+			run: runDisclosure,
+		},
+		{
 			name:  "rewrite",
 			short: "preserve attribution across Git rewrites",
 			usage: "Usage: git-byline rewrite --mode <post-rewrite|post-checkout|post-merge|ref-txn|stash-apply> --hook-input stdin [hook arguments]\n\n" +

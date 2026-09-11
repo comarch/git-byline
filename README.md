@@ -233,6 +233,7 @@ configuration are preserved. Non-shell hooks, symlinked paths, external
 | `stats [<rev-range>] [--json]` | Aggregate attribution statistics without reading blobs |
 | `verify [<rev-range>] [--deep] [--json]` | Verify attribution notes and blob-pinned ranges |
 | `check [<rev-range>] [--max-ai-percent N] [--max-untracked-percent N] [--require-note] [--json]` | Check attribution policy limits |
+| `disclosure [--range <rev-range>] [--format json\|spdx\|cyclonedx] [--output FILE]` | Write machine-readable AI content disclosure input |
 | `rewrite --mode MODE --hook-input stdin` | Preserve attribution across rewrites, resets, switches, and stash transitions |
 | `install-hooks` | Merge agent hooks plus Git annotation and note-sharing hooks |
 | `uninstall` | Remove only git-byline-managed hooks |
@@ -240,6 +241,18 @@ configuration are preserved. Non-shell hooks, symlinked paths, external
 | `help [command]` | Show command help |
 
 `git byline check` exits with status 1 when a policy violation is found.
+
+`git byline disclosure` writes a private, deterministic report from
+attribution notes. It includes range and file AI share, agents, models,
+sessions, commits, generation time, and tool version. Formats are the native
+versioned JSON document, CycloneDX 1.6 JSON, and SPDX 3.0.1 JSON-LD using the
+AI profile. Existing output files are never replaced and paths containing
+control characters are rejected.
+
+AI share is defined consistently as AI lines plus `human-override` lines,
+divided by total lines. `human-override` preserves metadata for AI output a
+person replaced. Disclosure output is machine-readable input for an AI content
+disclosure process. It is not a compliance certificate.
 
 Rewrite hook modes are `post-rewrite`, `post-checkout`, `post-merge`,
 `ref-txn`, and `stash-apply`. Git hooks call the first four modes. Run

@@ -1,0 +1,342 @@
+{
+  "@context": "https://spdx.org/rdf/3.0.1/spdx-context.jsonld",
+  "@graph": [
+    {
+      "spdxId": "https://git-byline.local/spdx/document",
+      "type": "SpdxDocument",
+      "name": "git-byline disclosure",
+      "description": "Machine-readable input for an AI content disclosure process.",
+      "creationInfo": {
+        "@id": "https://git-byline.local/spdx/creation/document",
+        "type": "CreationInfo",
+        "created": "2026-01-02T03:04:05Z",
+        "createdBy": [
+          "SpdxOrganization"
+        ],
+        "createdUsing": [
+          "https://git-byline.local/spdx/tool"
+        ],
+        "specVersion": "3.0.1"
+      },
+      "profileConformance": [
+        "ai",
+        "core",
+        "software"
+      ],
+      "element": [
+        "https://git-byline.local/spdx/package",
+        "https://git-byline.local/spdx/tool",
+        "https://git-byline.local/spdx/file/33f8fbc61d6878200e61e69725cd724475a0c9dbb73bc63fcfc913a5651764fe",
+        "https://git-byline.local/spdx/hasDeclaredLicense",
+        "https://git-byline.local/spdx/hasConcludedLicense"
+      ],
+      "rootElement": [
+        "https://git-byline.local/spdx/package"
+      ]
+    },
+    {
+      "spdxId": "https://git-byline.local/spdx/tool",
+      "type": "Tool",
+      "name": "git-byline",
+      "comment": "git-byline version v0.1.0-test",
+      "creationInfo": {
+        "@id": "https://git-byline.local/spdx/creation/tool",
+        "type": "CreationInfo",
+        "created": "2026-01-02T03:04:05Z",
+        "createdBy": [
+          "SpdxOrganization"
+        ],
+        "createdUsing": [
+          "https://git-byline.local/spdx/tool"
+        ],
+        "specVersion": "3.0.1"
+      }
+    },
+    {
+      "spdxId": "https://git-byline.local/spdx/package",
+      "type": "ai_AIPackage",
+      "name": "git-byline AI disclosure",
+      "description": "Machine-readable AI content disclosure input generated from observed line provenance.",
+      "creationInfo": {
+        "@id": "https://git-byline.local/spdx/creation/package",
+        "type": "CreationInfo",
+        "created": "2026-01-02T03:04:05Z",
+        "createdBy": [
+          "SpdxOrganization"
+        ],
+        "createdUsing": [
+          "https://git-byline.local/spdx/tool"
+        ],
+        "specVersion": "3.0.1"
+      },
+      "releaseTime": "2026-01-02T03:04:05Z",
+      "suppliedBy": "SpdxOrganization",
+      "software_downloadLocation": "NOASSERTION",
+      "software_packageVersion": "2",
+      "software_primaryPurpose": "source",
+      "ai_informationAboutApplication": "Observed line provenance for base..head. AI share is AI plus human-override lines divided by total lines; zero when total lines are zero.",
+      "ai_metric": [
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:range",
+          "value": "base..head"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:from",
+          "value": "base"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:to",
+          "value": "head"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:report-version",
+          "value": "2"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:tool-version",
+          "value": "v0.1.0-test"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:commit-total",
+          "value": "2"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:commit-annotated",
+          "value": "2"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:ai-share-definition",
+          "value": "AI share is AI plus human-override lines divided by total lines; zero when total lines are zero."
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:ai-share-percent",
+          "value": "62.50"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:lines",
+          "value": "8"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:human",
+          "value": "2"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:ai",
+          "value": "3"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:human-override",
+          "value": "2"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:untracked",
+          "value": "1"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:agents[0].agent",
+          "value": "droid"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:agents[0].lines",
+          "value": "5"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:agents[0].ai",
+          "value": "3"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:agents[0].human-override",
+          "value": "2"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:agents[0].models[0].model",
+          "value": "model-a"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:agents[0].models[0].lines",
+          "value": "5"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:agents[0].models[0].ai",
+          "value": "3"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:agents[0].models[0].human-override",
+          "value": "2"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:sessions[0].session",
+          "value": "session-a"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:sessions[0].agent",
+          "value": "droid"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:sessions[0].model",
+          "value": "model-a"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:sessions[0].lines",
+          "value": "5"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:commits[0].commit",
+          "value": "bbbb"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:commits[0].timestamp",
+          "value": "2026-01-02T03:04:05Z"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:commits[0].lines",
+          "value": "2"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:commits[1].commit",
+          "value": "aaaa"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:commits[1].timestamp",
+          "value": "2026-01-01T03:04:05Z"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:commits[1].lines",
+          "value": "6"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:warnings[0]",
+          "value": "warning \"quoted\""
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:files[0].path",
+          "value": "file.go"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:files[0].ai-share-percent",
+          "value": "62.50"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:files[0].lines",
+          "value": "8"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:files[0].ai",
+          "value": "3"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:files[0].human-override",
+          "value": "2"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:files[0].human",
+          "value": "2"
+        },
+        {
+          "type": "DictionaryEntry",
+          "key": "git-byline:files[0].untracked",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "spdxId": "https://git-byline.local/spdx/file/33f8fbc61d6878200e61e69725cd724475a0c9dbb73bc63fcfc913a5651764fe",
+      "type": "software_File",
+      "name": "file.go",
+      "creationInfo": {
+        "@id": "https://git-byline.local/spdx/creation/file/0",
+        "type": "CreationInfo",
+        "created": "2026-01-02T03:04:05Z",
+        "createdBy": [
+          "SpdxOrganization"
+        ],
+        "createdUsing": [
+          "https://git-byline.local/spdx/tool"
+        ],
+        "specVersion": "3.0.1"
+      },
+      "software_primaryPurpose": "source"
+    },
+    {
+      "spdxId": "https://git-byline.local/spdx/hasDeclaredLicense",
+      "type": "Relationship",
+      "creationInfo": {
+        "@id": "https://git-byline.local/spdx/creation/hasDeclaredLicense",
+        "type": "CreationInfo",
+        "created": "2026-01-02T03:04:05Z",
+        "createdBy": [
+          "SpdxOrganization"
+        ],
+        "createdUsing": [
+          "https://git-byline.local/spdx/tool"
+        ],
+        "specVersion": "3.0.1"
+      },
+      "from": "https://git-byline.local/spdx/package",
+      "relationshipType": "hasDeclaredLicense",
+      "to": [
+        "expandedlicensing_NoAssertionLicense"
+      ]
+    },
+    {
+      "spdxId": "https://git-byline.local/spdx/hasConcludedLicense",
+      "type": "Relationship",
+      "creationInfo": {
+        "@id": "https://git-byline.local/spdx/creation/hasConcludedLicense",
+        "type": "CreationInfo",
+        "created": "2026-01-02T03:04:05Z",
+        "createdBy": [
+          "SpdxOrganization"
+        ],
+        "createdUsing": [
+          "https://git-byline.local/spdx/tool"
+        ],
+        "specVersion": "3.0.1"
+      },
+      "from": "https://git-byline.local/spdx/package",
+      "relationshipType": "hasConcludedLicense",
+      "to": [
+        "expandedlicensing_NoAssertionLicense"
+      ]
+    }
+  ]
+}

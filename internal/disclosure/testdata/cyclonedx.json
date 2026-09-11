@@ -1,0 +1,209 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-01-02T03:04:05Z",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "git-byline",
+          "version": "v0.1.0-test",
+          "bom-ref": "git-byline"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "git-byline:range",
+        "value": "base..head"
+      },
+      {
+        "name": "git-byline:from",
+        "value": "base"
+      },
+      {
+        "name": "git-byline:to",
+        "value": "head"
+      },
+      {
+        "name": "git-byline:report-version",
+        "value": "2"
+      },
+      {
+        "name": "git-byline:commit-total",
+        "value": "2"
+      },
+      {
+        "name": "git-byline:commit-annotated",
+        "value": "2"
+      },
+      {
+        "name": "git-byline:tool-version",
+        "value": "v0.1.0-test"
+      },
+      {
+        "name": "git-byline:cyclonedx-version",
+        "value": "1.6"
+      },
+      {
+        "name": "git-byline:spdx-version",
+        "value": "3.0.1"
+      },
+      {
+        "name": "git-byline:ai-share-definition",
+        "value": "AI share is AI plus human-override lines divided by total lines; zero when total lines are zero."
+      },
+      {
+        "name": "git-byline:ai-share-definition",
+        "value": "AI share is AI plus human-override lines divided by total lines; zero when total lines are zero."
+      },
+      {
+        "name": "git-byline:ai-share-percent",
+        "value": "62.50"
+      },
+      {
+        "name": "git-byline:lines",
+        "value": "8"
+      },
+      {
+        "name": "git-byline:human",
+        "value": "2"
+      },
+      {
+        "name": "git-byline:ai",
+        "value": "3"
+      },
+      {
+        "name": "git-byline:human-override",
+        "value": "2"
+      },
+      {
+        "name": "git-byline:untracked",
+        "value": "1"
+      },
+      {
+        "name": "git-byline:agents[0].agent",
+        "value": "droid"
+      },
+      {
+        "name": "git-byline:agents[0].lines",
+        "value": "5"
+      },
+      {
+        "name": "git-byline:agents[0].human",
+        "value": "0"
+      },
+      {
+        "name": "git-byline:agents[0].ai",
+        "value": "3"
+      },
+      {
+        "name": "git-byline:agents[0].human-override",
+        "value": "2"
+      },
+      {
+        "name": "git-byline:agents[0].untracked",
+        "value": "0"
+      },
+      {
+        "name": "git-byline:agents[0].models[0].model",
+        "value": "model-a"
+      },
+      {
+        "name": "git-byline:agents[0].models[0].lines",
+        "value": "5"
+      },
+      {
+        "name": "git-byline:agents[0].models[0].ai",
+        "value": "3"
+      },
+      {
+        "name": "git-byline:agents[0].models[0].human-override",
+        "value": "2"
+      },
+      {
+        "name": "git-byline:sessions[0].session",
+        "value": "session-a"
+      },
+      {
+        "name": "git-byline:sessions[0].agent",
+        "value": "droid"
+      },
+      {
+        "name": "git-byline:sessions[0].model",
+        "value": "model-a"
+      },
+      {
+        "name": "git-byline:sessions[0].lines",
+        "value": "5"
+      },
+      {
+        "name": "git-byline:commits[0].commit",
+        "value": "bbbb"
+      },
+      {
+        "name": "git-byline:commits[0].timestamp",
+        "value": "2026-01-02T03:04:05Z"
+      },
+      {
+        "name": "git-byline:commits[0].lines",
+        "value": "2"
+      },
+      {
+        "name": "git-byline:commits[1].commit",
+        "value": "aaaa"
+      },
+      {
+        "name": "git-byline:commits[1].timestamp",
+        "value": "2026-01-01T03:04:05Z"
+      },
+      {
+        "name": "git-byline:commits[1].lines",
+        "value": "6"
+      },
+      {
+        "name": "git-byline:warnings[0]",
+        "value": "warning \"quoted\""
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "file",
+      "name": "file.go",
+      "bom-ref": "git-byline:file:file.go",
+      "properties": [
+        {
+          "name": "git-byline:ai-share-definition",
+          "value": "AI share is AI plus human-override lines divided by total lines; zero when total lines are zero."
+        },
+        {
+          "name": "git-byline:ai-share-percent",
+          "value": "62.50"
+        },
+        {
+          "name": "git-byline:lines",
+          "value": "8"
+        },
+        {
+          "name": "git-byline:human",
+          "value": "2"
+        },
+        {
+          "name": "git-byline:ai",
+          "value": "3"
+        },
+        {
+          "name": "git-byline:human-override",
+          "value": "2"
+        },
+        {
+          "name": "git-byline:untracked",
+          "value": "1"
+        }
+      ]
+    }
+  ]
+}

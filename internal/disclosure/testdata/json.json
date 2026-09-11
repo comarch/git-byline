@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "format": "git-byline-disclosure",
+  "report_version": 2,
+  "generated_at": "2026-01-02T03:04:05Z",
+  "tool_version": "v0.1.0-test",
+  "ai_share_definition": "AI share is AI plus human-override lines divided by total lines; zero when total lines are zero.",
+  "specifications": {
+    "cyclonedx_json": "1.6",
+    "spdx_json_ld": "3.0.1"
+  },
+  "range": {
+    "from": "base",
+    "to": "head",
+    "label": "base..head"
+  },
+  "commit_counts": {
+    "total": 2,
+    "annotated": 2
+  },
+  "totals": {
+    "human": 2,
+    "ai": 3,
+    "untracked": 1,
+    "human_override": 2,
+    "lines": 8,
+    "ai_share_percent": 62.5
+  },
+  "agents": [
+    {
+      "agent": "droid",
+      "totals": {
+        "human": 0,
+        "ai": 3,
+        "untracked": 0,
+        "human_override": 2,
+        "lines": 5,
+        "ai_share_percent": 100
+      },
+      "models": [
+        {
+          "model": "model-a",
+          "totals": {
+            "human": 0,
+            "ai": 3,
+            "untracked": 0,
+            "human_override": 2,
+            "lines": 5,
+            "ai_share_percent": 100
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "file.go",
+      "totals": {
+        "human": 2,
+        "ai": 3,
+        "untracked": 1,
+        "human_override": 2,
+        "lines": 8,
+        "ai_share_percent": 62.5
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "session": "session-a",
+      "agent": "droid",
+      "model": "model-a",
+      "totals": {
+        "human": 0,
+        "ai": 3,
+        "untracked": 0,
+        "human_override": 2,
+        "lines": 5,
+        "ai_share_percent": 100
+      }
+    }
+  ],
+  "commits": [
+    {
+      "commit": "bbbb",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "totals": {
+        "human": 0,
+        "ai": 2,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 2,
+        "ai_share_percent": 100
+      }
+    },
+    {
+      "commit": "aaaa",
+      "timestamp": "2026-01-01T03:04:05Z",
+      "totals": {
+        "human": 2,
+        "ai": 1,
+        "untracked": 1,
+        "human_override": 2,
+        "lines": 6,
+        "ai_share_percent": 50
+      }
+    }
+  ],
+  "warnings": [
+    "warning \"quoted\""
+  ]
+}

@@ -16,6 +16,7 @@ flowchart LR
     N --> B[git byline blame]
     N --> J[Versioned JSON output]
     N --> D[Self-contained HTML dashboard]
+    N --> Q[Disclosure input]
     N -->|managed pre-push| X[Selected Git remote]
 ```
 
@@ -38,6 +39,7 @@ explicit refspec publishes them.
 | `internal/notes` | Canonical note encoding and history lookup |
 | `internal/provenance` | Checkpoint, annotate, blame, and status workflows |
 | `internal/dashboard` | Deterministic self-contained HTML reports |
+| `internal/disclosure` | Deterministic native, CycloneDX, and SPDX disclosure input |
 | `internal/hooks` | Idempotent agent and Git hook mutation |
 
 Production code runs Git only through `internal/gitcmd`. The attribution engine
@@ -236,3 +238,23 @@ git push
 
 Checkpoint logs, state files, retention refs, and generated HTML dashboards
 remain local. They are not included when attribution notes are pushed.
+
+## Disclosure input
+
+`git byline disclosure` consumes the bounded, blob-free aggregate from
+`internal/report`. It writes a versioned native JSON document, CycloneDX 1.6
+JSON, or SPDX 3.0.1 JSON-LD using the SPDX AI profile. Every format includes
+the selected range, totals, file shares, agent and model inventory, sessions,
+commits, generation timestamp, tool version, and report warnings.
+
+AI share means `(ai lines + human-override lines) / total lines`. The
+`human-override` class is included because it preserves the AI transition
+metadata for output a person replaced. Zero-line reports have zero AI share.
+All three serializers use deterministic field order and sorted input already
+provided by `internal/report`. Note-derived strings are serialized through
+`encoding/json`; raw payloads, prompts, transcripts, and file contents are not
+included.
+
+Output is machine-readable input for an AI content disclosure process. It is
+not a compliance certificate. Named output files use private permissions and
+exclusive creation, and the command rejects control characters in paths.
