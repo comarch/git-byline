@@ -116,6 +116,84 @@ func TestPostRewriteDoesNotOverwriteDifferentNote(t *testing.T) {
 	}
 }
 
+func TestPostRewriteRejectsSourceNoteWithWrongBlob(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "source\n")
+	old := commit(t, root, "old")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeBlob, err := repo.HashBytes([]byte("unrelated\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranges, err := engine.UniformRanges(
+		[]byte("unrelated\n"),
+		model.Attribution{Author: model.AuthorAI, Agent: "attacker", Model: "model"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := notes.Encode(model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file.txt": {Blob: fakeBlob, Ranges: ranges},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(old, data); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "rewritten\n")
+	newCommit := commit(t, root, "new")
+	result, err := HandlePostRewrite(repo, strings.NewReader(old+" "+newCommit+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Written != 0 || len(result.Warnings) == 0 ||
+		!strings.Contains(result.Warnings[0], "source note blob") {
+		t.Fatalf("wrong source blob result = %+v", result)
+	}
+	if _, found, err := repo.ReadNote(newCommit); err != nil || found {
+		t.Fatalf("wrong source blob created target note: %t, %v", found, err)
+	}
+}
+
+func TestPostRewriteDoesNotProjectChangedUnchangedPath(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "source\n")
+	old := commit(t, root, "old")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "different\n")
+	targetBase := commit(t, root, "target base")
+	git(t, root, "commit", "--allow-empty", "-m", "new")
+	newCommit := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	if targetBase == newCommit {
+		t.Fatal("empty target commit did not advance")
+	}
+	result, err := HandlePostRewrite(repo, strings.NewReader(old+" "+newCommit+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Written != 0 {
+		t.Fatalf("changed unchanged-path result = %+v, want no note", result)
+	}
+	if _, found, err := repo.ReadNote(newCommit); err != nil || found {
+		t.Fatalf("changed unchanged-path created target note: %t, %v", found, err)
+	}
+}
+
 func TestReferenceTransactionRejectsInvalidTargetNote(t *testing.T) {
 	t.Parallel()
 	root := testRepo(t)
@@ -887,7 +965,11 @@ func TestRewritePrefersRenameOverRecreatedOldPath(t *testing.T) {
 		{Status: 'R', OldPath: "old.txt", Path: "new.txt"},
 		{Status: 'A', Path: "old.txt"},
 	}
-	got, found, err := rewrittenPath(repo, target, "old.txt", changes)
+	sourceBlob, exists, err := repo.BlobID(base, "old.txt")
+	if err != nil || !exists {
+		t.Fatalf("source blob = %q, %t, %v", sourceBlob, exists, err)
+	}
+	got, found, err := rewrittenPath(repo, target, "old.txt", sourceBlob, changes)
 	if err != nil || !found || got != "new.txt" {
 		t.Fatalf("rewrittenPath(%s) = %q, %t, %v; changes=%+v", base, got, found, err, changes)
 	}

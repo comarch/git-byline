@@ -118,6 +118,8 @@ func TestScanSkipDir(t *testing.T) {
 		{".gemini", false},
 		{".github", false},
 		{".github/workflows", false},
+		{".gitlab", false},
+		{".gitlab/ci", false},
 		{".grok/hooks", false},
 		{".promptscript", false},
 		{".promptscript/sub", false},

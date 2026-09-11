@@ -82,6 +82,8 @@ func TestRunCIUsageErrors(t *testing.T) {
 		{"ci", "install", "--provider", "unknown"},
 		{"ci", "bogus", "--provider", "github"},
 		{"ci", "install", "--provider", "github", "--mode", "squash"},
+		{"ci", "run", "--provider", "github", "--mode", "merge"},
+		{"ci", "run", "--provider", "github", "--source", "HEAD"},
 	}
 	for _, args := range tests {
 		args := args
@@ -99,6 +101,44 @@ func TestRunCIUsageErrors(t *testing.T) {
 				t.Fatalf("Run(%q) = %d, %v, want usage error", args, code, err)
 			}
 		})
+	}
+}
+
+func TestRunCIRunUsesLocalGitIdentity(t *testing.T) {
+	root := t.TempDir()
+	runTestGit(t, root, "init", "--initial-branch=main")
+	runTestGit(t, root, "config", "user.name", "Local CI User")
+	runTestGit(t, root, "config", "user.email", "local-ci@example.com")
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runTestGit(t, root, "add", ".")
+	runTestGit(t, root, "commit", "-m", "base")
+	base := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runTestGit(t, root, "add", ".")
+	runTestGit(t, root, "commit", "-m", "source")
+	source := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+	t.Setenv("GIT_AUTHOR_NAME", "")
+	t.Setenv("GIT_AUTHOR_EMAIL", "")
+	t.Setenv("GIT_COMMITTER_NAME", "")
+	t.Setenv("GIT_COMMITTER_EMAIL", "")
+
+	var stdout, stderr bytes.Buffer
+	env := &Env{
+		Stdin:  strings.NewReader(""),
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Dir:    root,
+	}
+	code, err := Run([]string{
+		"ci", "run", "--provider", "github",
+		"--base", base, "--source", source, "--target", source, "--mode", "squash",
+	}, env)
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("ci run without identity environment = %d, %v\n%s", code, err, stderr.String())
 	}
 }
 

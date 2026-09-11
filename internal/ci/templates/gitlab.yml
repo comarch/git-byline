@@ -4,34 +4,74 @@
 
 git-byline-reconstruct:
   stage: .post
-  image: golang:1.24
+  image: golang:1.24.0@sha256:98839b84b95b4aa50e7bb488fdae07e456feef65073937c8684ead428782875c # Go 1.24.0
+  resource_group: git-byline-notes-$CI_PROJECT_ID-$CI_DEFAULT_BRANCH
+  timeout: 15m
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merged_result"'
+    - if: '$CI_PIPELINE_SOURCE == "external_pull_request_event"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+    - if: '$CI_MERGE_REQUEST_SOURCE_PROJECT_ID && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_PROJECT_ID'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - when: never
   variables:
     GIT_DEPTH: "0"
-    GIT_BYLINE_CI_SOURCE: "$CI_MERGE_REQUEST_SOURCE_BRANCH_SHA"
-    GIT_BYLINE_CI_TARGET: "$CI_COMMIT_SHA"
+    GIT_CONFIG_NOSYSTEM: "1"
+    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_BYLINE_REMOTE_URL: "$CI_PROJECT_URL"
   script:
     - |
       set -eu
       test -n "${GITLAB_TOKEN:-}"
-      value="$GITLAB_TOKEN"
-      unset GITLAB_TOKEN
+      auth_value="$GITLAB_TOKEN"
+      empty_hooks="${CI_BUILDS_DIR:-/tmp}/git-byline-empty-hooks-${CI_JOB_ID}"
+      clean_home="${CI_BUILDS_DIR:-/tmp}/git-byline-home-${CI_JOB_ID}"
+      mkdir -p "$empty_hooks" "$clean_home"
+      export HOME="$clean_home"
+      export XDG_CONFIG_HOME="$clean_home/config"
+      mkdir -p "$XDG_CONFIG_HOME"
       gitlab_git() {
-        GIT_CONFIG_COUNT=1 \
+        GIT_CONFIG_NOSYSTEM=1 \
+        GIT_CONFIG_GLOBAL=/dev/null \
+        GIT_CONFIG_SYSTEM=/dev/null \
+        GIT_CONFIG_COUNT=2 \
         GIT_CONFIG_KEY_0=http.extraHeader \
-        GIT_CONFIG_VALUE_0="PRIVATE-TOKEN: $value" \
-        git "$@"
+        GIT_CONFIG_VALUE_0="PRIVATE-TOKEN: $auth_value" \
+        GIT_CONFIG_KEY_1=credential.helper \
+        GIT_CONFIG_VALUE_1="" \
+        git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" "$@"
       }
-      gitlab_git fetch --no-tags origin \
-        "refs/merge-requests/${CI_MERGE_REQUEST_IID}/head:refs/remotes/origin/git-byline-pr-head" \
-        "$GIT_BYLINE_CI_BASE" "$GIT_BYLINE_CI_SOURCE" "$GIT_BYLINE_CI_TARGET"
-      notes="$(gitlab_git ls-remote origin refs/notes/byline)"
+      gitlab_git remote set-url origin "$GIT_BYLINE_REMOTE_URL"
+      gitlab_git config --local core.hooksPath "$empty_hooks"
+      gitlab_git fetch --no-tags origin "$CI_COMMIT_SHA"
+      parents="$(gitlab_git rev-list --parents -n 1 "$CI_COMMIT_SHA")"
+      set -- $parents
+      target="$1"
+      base="$2"
+      source="${3:-$base}"
+      test -n "$base"
+      gitlab_git fetch --no-tags origin "$base" "$source" "$target"
+      notes="$(gitlab_git ls-remote --refs origin refs/notes/byline)"
       if [ -n "$notes" ]; then
         gitlab_git fetch --no-tags origin refs/notes/byline:refs/notes/byline
       fi
-      CGO_ENABLED=0 GOPROXY=off go run ./cmd/git-byline ci run --provider gitlab
-      if git show-ref --verify --quiet refs/notes/byline; then
+      gitlab_git config --local user.name git-byline-ci
+      gitlab_git config --local user.email git-byline-ci@users.noreply.gitlab.com
+      unset GITLAB_TOKEN
+      GIT_BYLINE_CI_BASE="$base" \
+      GIT_BYLINE_CI_SOURCE="$source" \
+      GIT_BYLINE_CI_TARGET="$target" \
+      CGO_ENABLED=0 GOPROXY=off \
+        go run ./cmd/git-byline ci run --provider gitlab
+      push_hooks="$(mktemp -d "${CI_BUILDS_DIR:-/tmp}/git-byline-push-hooks.XXXXXX")"
+      mkdir -p "$push_hooks"
+      gitlab_git remote set-url origin "$GIT_BYLINE_REMOTE_URL"
+      gitlab_git config --local core.hooksPath "$push_hooks"
+      gitlab_git config --local user.name git-byline-ci
+      gitlab_git config --local user.email git-byline-ci@users.noreply.gitlab.com
+      if gitlab_git show-ref --verify --quiet refs/notes/byline; then
         gitlab_git push --no-verify origin refs/notes/byline:refs/notes/byline
       fi

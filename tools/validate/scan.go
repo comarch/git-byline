@@ -164,6 +164,7 @@ var agentConfigDirs = []string{
 	".factory-plugin",
 	".gemini",
 	".github",
+	".gitlab",
 	".grok",
 	".promptscript",
 	".windsurf",

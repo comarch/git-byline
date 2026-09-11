@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/comarch/git-byline/internal/engine"
 	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/notes"
@@ -59,6 +61,78 @@ func TestParseProviderAndPaths(t *testing.T) {
 	}
 }
 
+func TestTemplatesSecurityContract(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		provider  Provider
+		required  []string
+		forbidden []string
+	}{
+		{
+			provider: ProviderGitHub,
+			required: []string{
+				"concurrency:",
+				"cancel-in-progress: false",
+				`GIT_BYLINE_REMOTE_URL: ${{ github.server_url }}/${{ github.repository }}.git`,
+				`GIT_CONFIG_GLOBAL: /dev/null`,
+				`GIT_CONFIG_SYSTEM: /dev/null`,
+				`git config --local core.hooksPath "$EMPTY_HOOKS"`,
+				"git remote set-url origin",
+				"GIT_BYLINE_PUSH_HOOKS",
+				"git config --local user.name git-byline-ci",
+				`go-version: "1.24.0"`,
+				`GIT_BYLINE_CI_BASE=%s`,
+			},
+		},
+		{
+			provider: ProviderGitLab,
+			required: []string{
+				"image: golang:1.24.0@sha256:",
+				"resource_group:",
+				"timeout: 15m",
+				`if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'`,
+				`if: '$CI_PIPELINE_SOURCE == "merge_request_event"'`,
+				"CI_COMMIT_SHA",
+				`GIT_BYLINE_REMOTE_URL: "$CI_PROJECT_URL"`,
+				"GIT_CONFIG_GLOBAL: /dev/null",
+				"GIT_CONFIG_SYSTEM: /dev/null",
+				"gitlab_git ls-remote",
+				"gitlab_git fetch",
+				"git config --local user.email git-byline-ci@users.noreply.gitlab.com",
+				"git-byline-push-hooks",
+				`source="${3:-$base}"`,
+				"unset GITLAB_TOKEN",
+			},
+			forbidden: []string{
+				"merged_result",
+				"CI_MERGE_REQUEST_EVENT_TYPE",
+				"api",
+			},
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(string(tt.provider), func(t *testing.T) {
+			t.Parallel()
+			data, err := Template(tt.provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			template := string(data)
+			for _, value := range tt.required {
+				if !strings.Contains(template, value) {
+					t.Errorf("template lacks %q", value)
+				}
+			}
+			for _, value := range tt.forbidden {
+				if strings.Contains(template, value) {
+					t.Errorf("template contains forbidden %q", value)
+				}
+			}
+		})
+	}
+}
+
 func TestInstallWorkflowIsIdempotentAndNonDestructive(t *testing.T) {
 	t.Parallel()
 	for _, provider := range []Provider{ProviderGitHub, ProviderGitLab} {
@@ -88,6 +162,15 @@ func TestInstallWorkflowIsIdempotentAndNonDestructive(t *testing.T) {
 			if expected, _ := Template(provider); !bytes.Equal(data, expected) {
 				t.Fatal("installed workflow differs from canonical template")
 			}
+			entries, err := os.ReadDir(filepath.Dir(path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range entries {
+				if strings.Contains(entry.Name(), ".tmp") {
+					t.Fatalf("atomic install left temporary file %q", entry.Name())
+				}
+			}
 			if err := os.WriteFile(path, []byte("user workflow\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -114,6 +197,25 @@ func TestInstallRejectsSymlink(t *testing.T) {
 	}
 	if _, err := Install(root, ProviderGitHub); err == nil {
 		t.Fatal("Install() followed a workflow symlink")
+	}
+}
+
+func TestInstallRejectsSymlinkedParent(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, ".github")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := Install(root, ProviderGitHub); err == nil {
+		t.Fatal("Install() followed a symlinked workflow parent")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("symlink target changed: %v", entries)
 	}
 }
 
@@ -165,6 +267,7 @@ func TestRunSquashProjectsSourceCommitsInOrder(t *testing.T) {
 		t.Fatalf("Run() = %+v, want two mappings and one note", result)
 	}
 	note := readNote(t, repo, target)
+	assertReconstructedNoteVerified(t, repo, target)
 	file := note.Files["file.txt"]
 	if len(file.Ranges) != 2 || file.Ranges[1].Agent != "two" {
 		t.Fatalf("squash ranges = %+v, want later source attribution", file.Ranges)
@@ -216,16 +319,18 @@ func TestRunRebasePairsByPatchID(t *testing.T) {
 	})
 
 	result, err := Run(repo, ProviderGitLab, RunOptions{
-		Base: base, Source: sourceTwo, Target: targetTwo, Mode: "rebase",
+		Base: base, Source: sourceTwo, Target: targetTwo, Mode: "auto",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Mapped != 2 || result.Written != 2 {
+	if result.Mode != "rebase" || result.Mapped != 2 || result.Written != 2 {
 		t.Fatalf("Run() = %+v, want two mapped notes", result)
 	}
 	first := readNote(t, repo, targetOne).Files["file.txt"]
 	second := readNote(t, repo, targetTwo).Files["file.txt"]
+	assertReconstructedNoteVerified(t, repo, targetOne)
+	assertReconstructedNoteVerified(t, repo, targetTwo)
 	if len(first.Ranges) != 2 || first.Ranges[1].Agent != "source-one" {
 		t.Fatalf("first rebase ranges = %+v", first.Ranges)
 	}
@@ -271,8 +376,6 @@ func TestRunValidatesInputsAndMergeShape(t *testing.T) {
 		{"missing source", RunOptions{Base: base, Target: source}, "GIT_BYLINE_CI_SOURCE"},
 		{"invalid base", RunOptions{Base: "bad", Source: source, Target: source}, "object ID"},
 		{"invalid mode", RunOptions{Base: base, Source: source, Target: source, Mode: "merge"}, "merge mode"},
-		{"empty source range", RunOptions{Base: source, Source: source, Target: source}, "no commits"},
-		{"empty target range", RunOptions{Base: base, Source: source, Target: base}, "no commits"},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -280,6 +383,42 @@ func TestRunValidatesInputsAndMergeShape(t *testing.T) {
 			_, err := Run(repo, ProviderGitHub, tt.options)
 			if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.want)) {
 				t.Fatalf("Run() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunEmptyRangesWarnAndSkip(t *testing.T) {
+	t.Parallel()
+	root := initRepository(t)
+	writeFile(t, root, "file.txt", "one\n")
+	base := commit(t, root, "base")
+	writeFile(t, root, "file.txt", "one\ntwo\n")
+	source := commit(t, root, "source")
+	repo := discover(t, root)
+
+	tests := []struct {
+		name    string
+		options RunOptions
+	}{
+		{
+			name:    "both empty",
+			options: RunOptions{Base: base, Source: base, Target: base, Mode: "squash"},
+		},
+		{
+			name:    "target empty",
+			options: RunOptions{Base: base, Source: source, Target: base, Mode: "rebase"},
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Run(repo, ProviderGitHub, tt.options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Written != 0 || len(result.Warnings) == 0 {
+				t.Fatalf("Run() = %+v, want warning and no writes", result)
 			}
 		})
 	}
@@ -306,6 +445,43 @@ func TestRunRebaseWarnsForUnmatchedPatch(t *testing.T) {
 		!strings.Contains(result.Warnings[0], "no matching source patch") {
 		t.Fatalf("Run() = %+v, want unmatched patch warning", result)
 	}
+}
+
+func TestRunSquashUsesAdvancedTargetBase(t *testing.T) {
+	root := initRepository(t)
+	writeFile(t, root, "file.txt", "one\n")
+	common := commit(t, root, "common")
+	writeFile(t, root, "file.txt", "one\ntwo\n")
+	sourceOne := commit(t, root, "source one")
+	writeFile(t, root, "file.txt", "one\ntwo\nthree\n")
+	sourceTwo := commit(t, root, "source two")
+
+	runGit(t, root, "reset", "--hard", common)
+	writeFile(t, root, "target.txt", "target advance\n")
+	targetBase := commit(t, root, "target advance")
+	writeFile(t, root, "file.txt", "one\ntwo\nthree\n")
+	target := commit(t, root, "squash")
+
+	repo := discover(t, root)
+	writeNoteForFile(t, repo, sourceOne, "file.txt", []model.Attribution{
+		{Author: model.AuthorUntracked},
+		{Author: model.AuthorAI, Agent: "one", Model: "m", Session: "s1"},
+	})
+	writeNoteForFile(t, repo, sourceTwo, "file.txt", []model.Attribution{
+		{Author: model.AuthorUntracked},
+		{Author: model.AuthorAI, Agent: "one", Model: "m", Session: "s1"},
+		{Author: model.AuthorAI, Agent: "two", Model: "m", Session: "s2"},
+	})
+	result, err := Run(repo, ProviderGitHub, RunOptions{
+		Base: targetBase, Source: sourceTwo, Target: target, Mode: "auto",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != "squash" || result.Written != 1 {
+		t.Fatalf("Run() = %+v, want advanced-base squash reconstruction", result)
+	}
+	assertReconstructedNoteVerified(t, repo, target)
 }
 
 func TestRunUsesEnvironmentOptions(t *testing.T) {
@@ -335,6 +511,35 @@ func TestRunUsesEnvironmentOptions(t *testing.T) {
 	}
 	if result.Target != target {
 		t.Fatalf("Run() default target = %q, want %q", result.Target, target)
+	}
+}
+
+func assertReconstructedNoteVerified(t *testing.T, repo *gitcmd.Repo, commitID string) {
+	t.Helper()
+	data, found, err := repo.ReadNote(commitID)
+	if err != nil || !found {
+		t.Fatalf("verification note = %t, %v", found, err)
+	}
+	note, err := notes.Decode(data)
+	if err != nil {
+		t.Fatalf("verification decode = %v", err)
+	}
+	for path, file := range note.Files {
+		blob, exists, err := repo.BlobID(commitID, path)
+		if err != nil || !exists || blob != file.Blob {
+			t.Fatalf("verification blob %s = %q, %t, %v; note=%q", path, blob, exists, err, file.Blob)
+		}
+		content, err := repo.ReadBlob(blob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines, err := engine.SplitLines(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := model.ValidateRanges(file.Ranges, len(lines)); err != nil {
+			t.Fatalf("verification ranges %s: %v", path, err)
+		}
 	}
 }
 
@@ -434,5 +639,38 @@ func TestRunResultJSONContract(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(`"provider":"github"`)) {
 		t.Fatalf("JSON = %s", data)
+	}
+}
+
+func TestPatchIDBudget(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		budget   patchIDBudget
+		wantCall bool
+		wantWarn string
+	}{
+		{
+			name:     "call limit",
+			budget:   patchIDBudget{calls: maxPatchIDCalls, deadline: time.Now().Add(time.Minute)},
+			wantWarn: "budget",
+		},
+		{
+			name:     "deadline",
+			budget:   patchIDBudget{deadline: time.Now().Add(-time.Minute)},
+			wantWarn: "deadline",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.budget.allow(); got != tt.wantCall {
+				t.Fatalf("allow() = %t, want %t", got, tt.wantCall)
+			}
+			if warning := tt.budget.warning(); !strings.Contains(warning, tt.wantWarn) {
+				t.Fatalf("warning = %q, want %q", warning, tt.wantWarn)
+			}
+		})
 	}
 }

@@ -7,6 +7,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: git-byline-notes-${{ github.repository }}-${{ github.event.pull_request.base.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -18,6 +22,13 @@ jobs:
     env:
       GIT_BYLINE_CI_SOURCE: ${{ github.event.pull_request.head.sha }}
       GIT_BYLINE_CI_TARGET: ${{ github.event.pull_request.merge_commit_sha }}
+      GIT_BYLINE_REMOTE_URL: ${{ github.server_url }}/${{ github.repository }}.git
+      GIT_CONFIG_NOSYSTEM: "1"
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_SYSTEM: /dev/null
+      EMPTY_HOOKS: ${{ runner.temp }}/git-byline-empty-hooks
+      HOME: ${{ runner.temp }}/git-byline-home
+      XDG_CONFIG_HOME: ${{ runner.temp }}/git-byline-home/config
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,22 +39,44 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.24.x"
+          go-version: "1.24.0"
           cache: false
 
       - name: Fetch pull request commits and notes
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_COUNT: "2"
           GIT_CONFIG_KEY_0: http.extraheader
           GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ github.token }}"
+          GIT_CONFIG_KEY_1: credential.helper
+          GIT_CONFIG_VALUE_1: ""
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/git-byline-pr-head"
-          notes="$(git ls-remote --refs origin refs/notes/byline)"
-          if [ -n "$notes" ]; then
-            git fetch --no-tags origin refs/notes/byline:refs/notes/byline
+          mkdir -p "$EMPTY_HOOKS"
+          git remote set-url origin "$GIT_BYLINE_REMOTE_URL"
+          git config --local core.hooksPath "$EMPTY_HOOKS"
+          git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" fetch --no-tags origin "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/git-byline-pr-head"
+          base="$(git rev-parse "${GIT_BYLINE_CI_TARGET}^1")"
+          if source="$(git rev-parse "${GIT_BYLINE_CI_TARGET}^2" 2>/dev/null)"; then
+            :
+          else
+            source="$GIT_BYLINE_CI_SOURCE"
           fi
+          printf 'GIT_BYLINE_CI_BASE=%s\n' "$base" >> "$GITHUB_ENV"
+          printf 'GIT_BYLINE_CI_SOURCE=%s\n' "$source" >> "$GITHUB_ENV"
+          notes="$(git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" ls-remote --refs origin refs/notes/byline)"
+          if [ -n "$notes" ]; then
+            git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" fetch --no-tags origin refs/notes/byline:refs/notes/byline
+          fi
+
+      - name: Configure local Git identity
+        run: |
+          set -euo pipefail
+          mkdir -p "$EMPTY_HOOKS"
+          git remote set-url origin "$GIT_BYLINE_REMOTE_URL"
+          git config --local core.hooksPath "$EMPTY_HOOKS"
+          git config --local user.name git-byline-ci
+          git config --local user.email git-byline-ci@users.noreply.github.com
 
       - name: Reconstruct attribution
         env:
@@ -51,13 +84,29 @@ jobs:
           GOPROXY: "off"
         run: go run ./cmd/git-byline ci run --provider github
 
-      - name: Push attribution notes
-        env:
-          GIT_CONFIG_COUNT: "1"
-          GIT_CONFIG_KEY_0: http.extraheader
-          GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ github.token }}"
+      - name: Harden Git before push
         run: |
           set -euo pipefail
+          push_hooks="$(mktemp -d "${RUNNER_TEMP}/git-byline-push-hooks.XXXXXX")"
+          printf 'GIT_BYLINE_PUSH_HOOKS=%s\n' "$push_hooks" >> "$GITHUB_ENV"
+          mkdir -p "$push_hooks"
+          git remote set-url origin "$GIT_BYLINE_REMOTE_URL"
+          git config --local core.hooksPath "$push_hooks"
+          git config --local user.name git-byline-ci
+          git config --local user.email git-byline-ci@users.noreply.github.com
+
+      - name: Push attribution notes
+        env:
+          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_KEY_0: http.extraheader
+          GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ github.token }}"
+          GIT_CONFIG_KEY_1: credential.helper
+          GIT_CONFIG_VALUE_1: ""
+        run: |
+          set -euo pipefail
+          mkdir -p "$GIT_BYLINE_PUSH_HOOKS"
+          git remote set-url origin "$GIT_BYLINE_REMOTE_URL"
+          git config --local core.hooksPath "$GIT_BYLINE_PUSH_HOOKS"
           if git show-ref --verify --quiet refs/notes/byline; then
-            git push --no-verify origin refs/notes/byline:refs/notes/byline
+            git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" push --no-verify origin refs/notes/byline:refs/notes/byline
           fi

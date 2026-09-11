@@ -28,6 +28,23 @@ func runCI(env *Env, command *command, args []string) (int, error) {
 	if flags.NArg() != 0 {
 		return commandUsageError(env, command, errors.New("ci takes no positional arguments after the action"))
 	}
+	if action == "run" {
+		if *mode != "" && *mode != "auto" && *mode != "squash" && *mode != "rebase" {
+			return commandUsageError(env, command, fmt.Errorf("unsupported CI merge mode %q", *mode))
+		}
+		for _, revision := range []struct {
+			name  string
+			value string
+		}{
+			{"base", *base},
+			{"source", *source},
+			{"target", *target},
+		} {
+			if err := validateCIRevision(revision.name, revision.value); err != nil {
+				return commandUsageError(env, command, err)
+			}
+		}
+	}
 	provider, err := ci.ParseProvider(*providerName)
 	if err != nil {
 		return commandUsageError(env, command, err)
@@ -69,4 +86,24 @@ func runCI(env *Env, command *command, args []string) (int, error) {
 	default:
 		return commandUsageError(env, command, fmt.Errorf("unsupported ci action %q", action))
 	}
+}
+
+func validateCIRevision(name, value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) != 40 && len(value) != 64 {
+		return fmt.Errorf("--%s must be a full commit object ID", name)
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') &&
+			(char < 'a' || char > 'f') &&
+			(char < 'A' || char > 'F') {
+			return fmt.Errorf("--%s must be a full commit object ID", name)
+		}
+	}
+	if strings.Trim(value, "0") == "" {
+		return fmt.Errorf("--%s must not be an all-zero object ID", name)
+	}
+	return nil
 }
