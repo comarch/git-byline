@@ -59,6 +59,96 @@ func TestParsePostRewriteRejectsMalformedInput(t *testing.T) {
 	}
 }
 
+func TestHookParsersRequireFullNonZeroObjectIDs(t *testing.T) {
+	t.Parallel()
+	zero := strings.Repeat("0", 40)
+	if _, err := ParsePostRewrite(strings.NewReader(zero + " " + newCommit + "\n")); err == nil {
+		t.Fatal("ParsePostRewrite accepted an all-zero old ID")
+	}
+	if mapping, err := ParsePostRewrite(strings.NewReader(oldCommit + " " + zero + "\n")); err != nil {
+		t.Fatal(err)
+	} else if len(mapping.Pairs) != 1 || mapping.Pairs[0].New != zero {
+		t.Fatalf("drop mapping = %+v", mapping)
+	}
+	short := oldCommit[:39] + " " + newCommit + "\n"
+	if _, err := ParsePostRewrite(strings.NewReader(short)); err == nil {
+		t.Fatal("ParsePostRewrite accepted a short ID")
+	}
+	sha256Old := strings.Repeat("a", 64)
+	sha256New := strings.Repeat("b", 64)
+	if mapping, err := ParsePostRewriteForLength(
+		strings.NewReader(sha256Old+" "+sha256New+"\n"),
+		64,
+	); err != nil || len(mapping.Pairs) != 1 {
+		t.Fatalf("SHA-256 mapping = %+v, %v", mapping, err)
+	}
+}
+
+func TestNewMappingForLengthValidatesSHA256IDs(t *testing.T) {
+	t.Parallel()
+	oldID := strings.Repeat("a", 64)
+	newID := strings.Repeat("b", 64)
+	mapping, err := NewMappingForLength([]Pair{{Old: oldID, New: newID}}, 64)
+	if err != nil || len(mapping.Pairs) != 1 {
+		t.Fatalf("NewMappingForLength() = %+v, %v", mapping, err)
+	}
+	if _, err := NewMappingForLength([]Pair{{Old: oldID, New: newID}}, 40); err == nil {
+		t.Fatal("NewMappingForLength accepted SHA-256 IDs for SHA-1")
+	}
+}
+
+func TestMappingDeduplicatesPairsAndDoesNotStoreDropState(t *testing.T) {
+	t.Parallel()
+	mapping, err := NewMapping([]Pair{
+		{Old: oldCommit, New: newCommit},
+		{Old: oldCommit, New: newCommit},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mapping.Pairs) != 1 {
+		t.Fatalf("deduplicated pairs = %+v", mapping.Pairs)
+	}
+	state := model.NewState()
+	state.LastAnnotatedCommit = oldCommit
+	state.Pending.BaseCommit = oldCommit
+	drop, err := NewMapping([]Pair{{Old: oldCommit, New: strings.Repeat("0", 40)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = drop.RemapState(state)
+	if state.LastAnnotatedCommit == strings.Repeat("0", 40) ||
+		state.Pending.BaseCommit == strings.Repeat("0", 40) {
+		t.Fatalf("drop stored in state: %+v", state)
+	}
+}
+
+func TestReferenceFilterAndStashInput(t *testing.T) {
+	t.Parallel()
+	relevant, err := HasRelevantReference(strings.NewReader(
+		oldCommit + " " + newCommit + " refs/tags/v1\n",
+	))
+	if err != nil || relevant {
+		t.Fatalf("tag filter = %t, %v", relevant, err)
+	}
+	relevant, err = HasRelevantReference(strings.NewReader(
+		oldCommit + " " + newCommit + " refs/heads/main\n",
+	))
+	if err != nil || !relevant {
+		t.Fatalf("branch filter = %t, %v", relevant, err)
+	}
+	stash, err := ParseStashApply(
+		strings.NewReader(newCommit+" 1\n"),
+		40,
+	)
+	if err != nil || stash.Commit != newCommit || !stash.Keep {
+		t.Fatalf("stash input = %+v, %v", stash, err)
+	}
+	if _, err := ParseStashApply(strings.NewReader(newCommit+" 2\n"), 40); err == nil {
+		t.Fatal("ParseStashApply accepted an invalid keep flag")
+	}
+}
+
 func TestParseReferenceTransaction(t *testing.T) {
 	t.Parallel()
 	input := strings.NewReader(

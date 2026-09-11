@@ -107,6 +107,43 @@ func TestPostRewriteDoesNotOverwriteDifferentNote(t *testing.T) {
 	if string(data) != "different\n" {
 		t.Fatalf("different note changed to %q", data)
 	}
+	state, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastAnnotatedCommit != old || state.Pending.BaseCommit != old {
+		t.Fatalf("blocked rewrite advanced state: %+v", state)
+	}
+}
+
+func TestReferenceTransactionRejectsInvalidTargetNote(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "one\n")
+	first := commit(t, root, "one")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "two\n")
+	second := commit(t, root, "two")
+	if err := repo.WriteNote(second, []byte(`{"version":2,"files":{"file.txt":{"blob":"bad","ranges":[]}},"sessions":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	input := first + " " + second + " HEAD\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastAnnotatedCommit != "" || state.Pending.BaseCommit != "" {
+		t.Fatalf("invalid target note marked annotated: %+v", state)
+	}
 }
 
 func TestPostRewriteSupportsSplitAndDropMappings(t *testing.T) {
@@ -152,6 +189,41 @@ func TestPostRewriteSupportsSplitAndDropMappings(t *testing.T) {
 	}
 }
 
+func TestPostRewriteDropRemapsBoundaryToRetainedParent(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	parent := commit(t, root, "parent")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "base\ndropped\n")
+	dropped := commit(t, root, "dropped")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	result, err := HandlePostRewrite(repo, strings.NewReader(
+		dropped+" "+strings.Repeat("0", 40)+"\n",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Written != 0 {
+		t.Fatalf("drop wrote a note: %+v", result)
+	}
+	state, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastAnnotatedCommit != parent || state.Pending.BaseCommit != parent {
+		t.Fatalf("drop boundary = %+v, want %s", state, parent)
+	}
+}
+
 func TestReferenceTransactionSafetyAndResetModes(t *testing.T) {
 	t.Parallel()
 	root := testRepo(t)
@@ -187,6 +259,18 @@ func TestReferenceTransactionSafetyAndResetModes(t *testing.T) {
 	ignored := second + " " + first + " refs/tags/noop\n"
 	if _, err := HandleReferenceTransaction(repo, strings.NewReader(ignored), "committed"); err != nil {
 		t.Fatal(err)
+	}
+	git(t, root, "update-ref", "refs/heads/main", second, first)
+	branchInput := first + " " + second + " refs/heads/main\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(branchInput), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	state, err = store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastAnnotatedCommit != second {
+		t.Fatalf("current branch update ignored: %+v", state)
 	}
 }
 
@@ -257,6 +341,206 @@ func TestStashProvenancePushApplyAndPop(t *testing.T) {
 	}
 }
 
+func TestStashDropDoesNotRestorePending(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "base\npending\n")
+	stateStore := store.New(repo.GitDir)
+	state, err := stateStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := repo.HashBytes([]byte("base\npending\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranges, err := engine.UniformRanges(
+		[]byte("base\npending\n"),
+		model.Attribution{Author: model.AuthorAI, Agent: "droid", Model: "model", Session: "drop"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Pending.BaseCommit = state.LastAnnotatedCommit
+	state.Pending.Files["file.txt"] = model.PendingFile{Blob: blob, Ranges: ranges}
+	if err := stateStore.WriteState(state); err != nil {
+		t.Fatal(err)
+	}
+	stash := strings.TrimSpace(git(t, root, "stash", "push", "-qm", "drop"))
+	stash = strings.TrimSpace(git(t, root, "rev-parse", "refs/stash"))
+	input := strings.Repeat("0", 40) + " " + stash + " refs/stash\n"
+	if result, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil || result.Written != 1 {
+		t.Fatalf("stash push = %+v, %v", result, err)
+	}
+	git(t, root, "stash", "drop", "-q")
+	input = stash + " " + strings.Repeat("0", 40) + " refs/stash\n"
+	if result, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatalf("stash drop = %+v, %v", result, err)
+	}
+	if _, found, err := repo.ReadNoteRef(StashNoteRef(), stash); err != nil || found {
+		t.Fatalf("dropped stash note found = %t, err=%v", found, err)
+	}
+	state, err = stateStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Pending.Files) != 0 {
+		t.Fatalf("dropped stash restored pending: %+v", state.Pending.Files)
+	}
+}
+
+func TestStashPathspecKeepsUnstashedPendingFiles(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "one.txt", "one\n")
+	write(t, root, "two.txt", "two\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "one.txt", "one\npending one\n")
+	write(t, root, "two.txt", "two\npending two\n")
+	stateStore := store.New(repo.GitDir)
+	state, err := stateStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"one.txt", "two.txt"} {
+		content := []byte("two\npending two\n")
+		if path == "one.txt" {
+			content = []byte("one\npending one\n")
+		}
+		blob, hashErr := repo.HashBytes(content)
+		if hashErr != nil {
+			t.Fatal(hashErr)
+		}
+		ranges, rangeErr := engine.UniformRanges(
+			content,
+			model.Attribution{Author: model.AuthorAI, Agent: "droid", Model: "model", Session: path},
+		)
+		if rangeErr != nil {
+			t.Fatal(rangeErr)
+		}
+		state.Pending.Files[path] = model.PendingFile{Blob: blob, Ranges: ranges}
+	}
+	state.Pending.BaseCommit = state.LastAnnotatedCommit
+	if err := stateStore.WriteState(state); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "stash", "push", "-qm", "one-only", "--", "one.txt")
+	stash := strings.TrimSpace(git(t, root, "rev-parse", "refs/stash"))
+	input := strings.Repeat("0", 40) + " " + stash + " refs/stash\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	state, err = stateStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.Pending.Files["one.txt"]; ok {
+		t.Fatalf("stashed path remained pending: %+v", state.Pending.Files)
+	}
+	if _, ok := state.Pending.Files["two.txt"]; !ok {
+		t.Fatalf("unstashed path was cleared: %+v", state.Pending.Files)
+	}
+	if _, err := HandleStashApply(repo, stash, true); err != nil {
+		t.Fatal(err)
+	}
+	state, err = stateStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Pending.Files) != 2 {
+		t.Fatalf("stash restore replaced pending state: %+v", state.Pending.Files)
+	}
+}
+
+func TestStashDropWithRemainingStackRemovesDroppedNote(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "base\nfirst\n")
+	stateStore := store.New(repo.GitDir)
+	state, err := stateStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := repo.HashBytes([]byte("base\nfirst\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranges, err := engine.UniformRanges(
+		[]byte("base\nfirst\n"),
+		model.Attribution{Author: model.AuthorAI, Agent: "droid", Model: "model"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Pending.Files["file.txt"] = model.PendingFile{Blob: blob, Ranges: ranges}
+	if err := stateStore.WriteState(state); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "stash", "push", "-qm", "first")
+	firstStash := strings.TrimSpace(git(t, root, "rev-parse", "refs/stash"))
+	input := strings.Repeat("0", 40) + " " + firstStash + " refs/stash\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+
+	write(t, root, "file.txt", "base\nsecond\n")
+	state, err = stateStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Pending.Files["file.txt"] = model.PendingFile{Blob: blob, Ranges: ranges}
+	if err := stateStore.WriteState(state); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "stash", "push", "-qm", "second")
+	secondStash := strings.TrimSpace(git(t, root, "rev-parse", "refs/stash"))
+	input = strings.Repeat("0", 40) + " " + secondStash + " refs/stash\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := repo.ReadNoteRef(StashNoteRef(), firstStash); err != nil || !found {
+		t.Fatalf("first stash note = %t, %v", found, err)
+	}
+	if _, found, err := repo.ReadNoteRef(StashNoteRef(), secondStash); err != nil || !found {
+		t.Fatalf("second stash note = %t, %v", found, err)
+	}
+	input = secondStash + " " + firstStash + " refs/stash\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := repo.ReadNoteRef(StashNoteRef(), secondStash); err != nil || found {
+		t.Fatalf("dropped top stash note = %t, %v", found, err)
+	}
+	if _, found, err := repo.ReadNoteRef(StashNoteRef(), firstStash); err != nil || !found {
+		t.Fatalf("remaining stash note = %t, %v", found, err)
+	}
+}
+
 func TestPostMergeReconstructsCherryPickNoCommit(t *testing.T) {
 	t.Parallel()
 	root := testRepo(t)
@@ -281,8 +565,11 @@ func TestPostMergeReconstructsCherryPickNoCommit(t *testing.T) {
 	if _, err := HandlePostCheckout(repo, source, base); err != nil {
 		t.Fatal(err)
 	}
-	git(t, root, "cherry-pick", "-n", source)
-	target := commit(t, root, "cherry-picked")
+	git(t, root, "cherry-pick", "-x", source)
+	target, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
 	result, err := HandlePostMerge(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -300,6 +587,41 @@ func TestPostMergeReconstructsCherryPickNoCommit(t *testing.T) {
 	}
 	if note.Files["file.txt"].Ranges[1].Author != model.AuthorAI {
 		t.Fatalf("cherry-picked ranges = %+v", note.Files["file.txt"].Ranges)
+	}
+}
+
+func TestPostMergeDoesNotGuessEqualPatchID(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	base := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "base\nsource\n")
+	source := commit(t, root, "source")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "checkout", "-q", base)
+	if _, err := HandlePostCheckout(repo, source, base); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "base\nsource\n")
+	target := commit(t, root, "same patch without marker")
+	result, err := HandlePostMerge(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Written != 0 {
+		t.Fatalf("equal patch was guessed: %+v", result)
+	}
+	if _, found, err := repo.ReadNote(target); err != nil || found {
+		t.Fatalf("guessed attribution note: found=%t err=%v", found, err)
 	}
 }
 
@@ -409,6 +731,165 @@ func TestRewriteMetadataValidation(t *testing.T) {
 	}
 	if err := model.ValidateEventID("bad\nid"); err == nil {
 		t.Fatal("ValidateEventID accepted a control character")
+	}
+}
+
+func TestRewriteSessionAggregation(t *testing.T) {
+	t.Parallel()
+	sessions := map[string]model.NoteSession{}
+	first := model.NoteSession{
+		Agent: "droid", Model: "model",
+		FirstTS: "2026-01-02T03:04:05Z", LastTS: "2026-01-02T03:04:06Z",
+		Added: 2, Deleted: 1, Accepted: 3, Overridden: 4,
+	}
+	second := model.NoteSession{
+		Agent: "droid", Model: "model",
+		FirstTS: "2026-01-01T03:04:05Z", LastTS: "2026-01-03T03:04:06Z",
+		Added: 5, Deleted: 6, Accepted: 7, Overridden: 8,
+	}
+	if err := addRewriteSession(sessions, "droid::session", first); err != nil {
+		t.Fatal(err)
+	}
+	if err := addRewriteSession(sessions, "droid::session", second); err != nil {
+		t.Fatal(err)
+	}
+	got := sessions["droid::session"]
+	if got.FirstTS != second.FirstTS || got.LastTS != second.LastTS ||
+		got.Added != 7 || got.Deleted != 7 || got.Accepted != 10 || got.Overridden != 12 {
+		t.Fatalf("aggregated session = %+v", got)
+	}
+}
+
+func TestRewriteMappingValidationBranches(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	base := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "old\n")
+	old := commit(t, root, "old")
+	if err := repo.WriteNote(old, []byte("{\"version\":1,\"files\":{}}\n")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "amended\n")
+	git(t, root, "add", "-A")
+	git(t, root, "commit", "--amend", "-m", "amended")
+	head := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	mapping, found, err := amendMapping(repo, old, head)
+	if err != nil || !found || len(mapping.Pairs) != 1 {
+		t.Fatalf("amendMapping() = %+v, %t, %v", mapping, found, err)
+	}
+	write(t, root, "file.txt", "third\n")
+	third := commit(t, root, "third")
+	if _, found, err := amendMapping(repo, old, third); err != nil || found {
+		t.Fatalf("amendMapping(non-amend) = %t, %v", found, err)
+	}
+	if valid, warning, err := validCherryPickSource(repo, old, old); err != nil ||
+		valid || warning == "" {
+		t.Fatalf("validCherryPickSource(self) = %t, %q, %v", valid, warning, err)
+	}
+	if valid, warning, err := validCherryPickSource(repo, base, third); err != nil ||
+		valid || warning == "" {
+		t.Fatalf("validCherryPickSource(missing note) = %t, %q, %v", valid, warning, err)
+	}
+}
+
+func TestRebasePendingIgnoresInvalidTargetNote(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	commitID := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(commitID, []byte("invalid\n")); err != nil {
+		t.Fatal(err)
+	}
+	dataStore := store.New(repo.GitDir)
+	state := model.NewState()
+	state.LastAnnotatedCommit = commitID
+	state.Pending.BaseCommit = commitID
+	result, err := rebasePendingLocked(repo, commitID, dataStore, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("rebase warnings = %+v", result.Warnings)
+	}
+	updated, err := dataStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.LastAnnotatedCommit != "" || updated.Pending.BaseCommit != "" {
+		t.Fatalf("invalid target note changed state = %+v", updated)
+	}
+}
+
+func TestRebasePendingProjectsStoredSnapshot(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "base\n")
+	commitID := commit(t, root, "base")
+	write(t, root, "file.txt", "base\npending\n")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceContent := []byte("base\n")
+	blob, err := repo.HashBytes(sourceContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranges, err := engine.UniformRanges(
+		sourceContent,
+		model.Attribution{Author: model.AuthorAI, Agent: "droid", Model: "model"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := model.NewState()
+	state.LastAnnotatedCommit = commitID
+	state.Pending.BaseCommit = commitID
+	state.Pending.Files["file.txt"] = model.PendingFile{Blob: blob, Ranges: ranges}
+	result, err := rebasePendingLocked(repo, "", store.New(repo.GitDir), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mapped != 1 {
+		t.Fatalf("rebase result = %+v", result)
+	}
+	updated, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := updated.Pending.Files["file.txt"]; !ok {
+		t.Fatalf("rebased pending file missing: %+v", updated.Pending.Files)
+	}
+}
+
+func TestRewritePrefersRenameOverRecreatedOldPath(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "old.txt", "original\n")
+	base := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "mv", "old.txt", "new.txt")
+	write(t, root, "old.txt", "recreated\n")
+	target := commit(t, root, "rename and recreate")
+	changes := []gitcmd.Change{
+		{Status: 'R', OldPath: "old.txt", Path: "new.txt"},
+		{Status: 'A', Path: "old.txt"},
+	}
+	got, found, err := rewrittenPath(repo, target, "old.txt", changes)
+	if err != nil || !found || got != "new.txt" {
+		t.Fatalf("rewrittenPath(%s) = %q, %t, %v; changes=%+v", base, got, found, err, changes)
 	}
 }
 

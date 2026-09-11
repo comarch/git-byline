@@ -2,8 +2,10 @@ package engine
 
 import (
 	"bytes"
+	"errors"
 	"math/rand"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -85,6 +87,19 @@ func TestReplayAndProject(t *testing.T) {
 	}
 	if projected.Attributions[3] != human {
 		t.Fatalf("new final line = %+v, want human", projected.Attributions[3])
+	}
+	budgeted, err := ProjectWithBudget(
+		replayed,
+		[]byte("ai\nsame\nhuman\nfinal\n"),
+		human,
+		NewMatcherBudget(100),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(budgeted.Attributions, projected.Attributions) {
+		t.Fatalf("ProjectWithBudget() attributions = %+v, want %+v",
+			budgeted.Attributions, projected.Attributions)
 	}
 }
 
@@ -483,6 +498,45 @@ func TestRandomReplayInvariants(t *testing.T) {
 		if err := model.ValidateRanges(ranges, len(snapshot.Lines)); err != nil {
 			t.Fatalf("iteration %d: %v", iteration, err)
 		}
+	}
+}
+
+func TestProjectLayeredHonorsAggregateMatcherBudget(t *testing.T) {
+	t.Parallel()
+	if budget := NewMatcherBudget(-1); budget.remaining != 0 {
+		t.Fatalf("negative matcher budget = %d, want zero", budget.remaining)
+	}
+	const lineCount = 1_500
+	var old strings.Builder
+	var target strings.Builder
+	for i := 0; i < lineCount; i++ {
+		old.WriteString("source-")
+		old.WriteString(strconv.Itoa(i))
+		old.WriteByte('\n')
+		target.WriteString("target-")
+		target.WriteString(strconv.Itoa(i))
+		target.WriteByte('\n')
+	}
+	content := []byte(old.String())
+	lines, err := SplitLines(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := Snapshot{
+		Lines:        lines,
+		Attributions: make([]model.Attribution, len(lines)),
+	}
+	for i := range source.Attributions {
+		source.Attributions[i] = model.Attribution{Author: model.AuthorUntracked}
+	}
+	_, err = ProjectLayeredWithBudget(
+		[]Snapshot{source, source},
+		[]byte(target.String()),
+		model.Attribution{Author: model.AuthorUntracked},
+		NewMatcherBudget(maxLCSCells),
+	)
+	if !errors.Is(err, ErrMatcherBudget) {
+		t.Fatalf("budget error = %v, want %v", err, ErrMatcherBudget)
 	}
 }
 

@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -490,7 +491,7 @@ func TestSingleExecutableCommandRecognition(t *testing.T) {
 	}
 }
 
-func TestManagedAgentCommandRequiresMarkerOrBinary(t *testing.T) {
+func TestManagedAgentCommandRequiresGitBylineIdentity(t *testing.T) {
 	t.Parallel()
 	spec := agentSpecs("droid", "/old/git-byline")["PostToolUse"][0]
 	signature := spec.command[strings.Index(spec.command, " checkpoint "):]
@@ -498,8 +499,11 @@ func TestManagedAgentCommandRequiresMarkerOrBinary(t *testing.T) {
 	if managedAgentCommand(`'/path/audit-wrapper'`+legacy, spec) {
 		t.Fatal("managedAgentCommand accepted unmarked custom executable")
 	}
-	if !managedAgentCommand(`'/path/audit-wrapper'`+signature, spec) {
-		t.Fatal("managedAgentCommand rejected explicit ownership marker")
+	if managedAgentCommand(`'/path/audit-wrapper'`+signature, spec) {
+		t.Fatal("managedAgentCommand accepted marker-only custom executable")
+	}
+	if !managedAgentCommand(`'/path/git-byline'`+signature, spec) {
+		t.Fatal("managedAgentCommand rejected git-byline executable")
 	}
 }
 
@@ -1044,5 +1048,79 @@ func TestManagedRewriteBlocksAreRecognized(t *testing.T) {
 				t.Fatalf("managedGitHookBlock rejected %q", command)
 			}
 		})
+	}
+}
+
+func TestHookAndConfigSizeCaps(t *testing.T) {
+	t.Parallel()
+	root := hookRepo(t)
+	config := filepath.Join(root, ".factory", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, bytes.Repeat([]byte("x"), maxHookBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(root, Options{Agent: "droid"}); err == nil {
+		t.Fatal("Install accepted oversized configuration")
+	}
+	hook := filepath.Join(root, ".git", "hooks", "post-commit")
+	if err := os.WriteFile(hook, append([]byte("#!/bin/sh\n"), bytes.Repeat([]byte("x"), maxHookBytes+1)...), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(root, Options{Agent: "none", Git: true}); err == nil {
+		t.Fatal("Install accepted oversized hook")
+	}
+}
+
+func TestInstallRefreshesExistingBackup(t *testing.T) {
+	t.Parallel()
+	root := hookRepo(t)
+	config := filepath.Join(root, ".factory", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"custom":true}` + "\n")
+	if err := os.WriteFile(config, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config+".git-byline.bak", []byte("stale\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(root, Options{Agent: "droid"}); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := os.ReadFile(config + ".git-byline.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(backup) != string(original) {
+		t.Fatalf("backup = %q, want %q", backup, original)
+	}
+}
+
+func TestUninstallPreservesShapeOnlyGitHook(t *testing.T) {
+	t.Parallel()
+	root := hookRepo(t)
+	path := filepath.Join(root, ".git", "hooks", "post-merge")
+	custom := "#!/bin/sh\n" + blockStart + "\n'/path/audit-wrapper' rewrite --mode post-merge --hook-input stdin \"$@\" || exit 1\n" + blockEnd + "\n"
+	if err := os.WriteFile(path, []byte(custom), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Uninstall(root, Options{Agent: "none", Git: true})
+	if err != nil || len(result.Changed) != 0 {
+		t.Fatalf("Uninstall() = %+v, %v", result, err)
+	}
+	if got := string(mustRead(t, path)); got != custom {
+		t.Fatalf("shape-only hook changed to %q", got)
+	}
+}
+
+func TestQuoteExecutableUsesLiteralSingleQuotes(t *testing.T) {
+	t.Parallel()
+	got := quoteExecutable(`/tmp/$(touch pwned)/git-byline'`)
+	if !strings.Contains(got, "'\"'\"'") ||
+		strings.Contains(got, `$(touch pwned)`) == false {
+		t.Fatalf("quoteExecutable() = %q", got)
 	}
 }

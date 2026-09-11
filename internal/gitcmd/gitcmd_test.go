@@ -256,6 +256,21 @@ func TestRepositoryBoundaryOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Run("empty patch has no patch ID", func(t *testing.T) {
+		runGit(t, root, "commit", "--allow-empty", "-m", "empty")
+		empty, err := repo.Head()
+		if err != nil {
+			t.Fatal(err)
+		}
+		patch, err := repo.PatchID(empty)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if patch != "" {
+			t.Fatalf("PatchID(empty) = %q, want empty", patch)
+		}
+	})
+
 	t.Run("patch IDs distinguish commits", func(t *testing.T) {
 		same, err := repo.PatchID(first)
 		if err != nil {
@@ -328,6 +343,87 @@ func TestRepositoryBoundaryOperations(t *testing.T) {
 			t.Fatalf("SnapshotWorktreeWithLimit(zero) = %v", err)
 		}
 	})
+}
+
+func TestRewriteRepositoryHelpers(t *testing.T) {
+	t.Parallel()
+	root := initRepository(t)
+	writeFile(t, root, "file.txt", "one\n")
+	first := commitAll(t, root, "first")
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if length, err := repo.ObjectIDLength(); err != nil || length != 40 {
+		t.Fatalf("ObjectIDLength() = %d, %v", length, err)
+	}
+	if ref, attached, err := repo.CurrentBranchRef(); err != nil ||
+		!attached || !strings.HasPrefix(ref, "refs/heads/") {
+		t.Fatalf("CurrentBranchRef() = %q, %t, %v", ref, attached, err)
+	}
+	runGit(t, root, "checkout", "--detach", "-q", first)
+	if ref, attached, err := repo.CurrentBranchRef(); err != nil || attached || ref != "" {
+		t.Fatalf("detached CurrentBranchRef() = %q, %t, %v", ref, attached, err)
+	}
+	if matches, err := repo.WorktreeMatchesRevision(first, "file.txt"); err != nil || !matches {
+		t.Fatalf("WorktreeMatchesRevision(clean) = %t, %v", matches, err)
+	}
+	writeFile(t, root, "file.txt", "changed\n")
+	if matches, err := repo.WorktreeMatchesRevision(first, "file.txt"); err != nil || matches {
+		t.Fatalf("WorktreeMatchesRevision(dirty) = %t, %v", matches, err)
+	}
+	if matches, err := repo.WorktreeMatchesRevision(first, "missing.txt"); err != nil || !matches {
+		t.Fatalf("WorktreeMatchesRevision(both missing) = %t, %v", matches, err)
+	}
+
+	runGit(t, root, "stash", "push", "-qm", "helper stash")
+	stash := strings.TrimSpace(runGit(t, root, "rev-parse", "refs/stash"))
+	paths, err := repo.StashPaths(stash)
+	if err != nil || !reflect.DeepEqual(paths, []string{"file.txt"}) {
+		t.Fatalf("StashPaths() = %v, %v", paths, err)
+	}
+	if applied, err := repo.StashApplied(stash, nil); err != nil || applied {
+		t.Fatalf("StashApplied(empty) = %t, %v", applied, err)
+	}
+	if applied, err := repo.StashApplied(stash, paths); err != nil || applied {
+		t.Fatalf("StashApplied(before apply) = %t, %v", applied, err)
+	}
+	runGit(t, root, "stash", "apply", "-q", stash)
+	if applied, err := repo.StashApplied(stash, paths); err != nil || !applied {
+		t.Fatalf("StashApplied(after apply) = %t, %v", applied, err)
+	}
+
+	note := []byte("note\n")
+	if err := repo.WriteNoteRef("refs/notes/helper", first, note); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := repo.DeleteNoteRefIfEqual("refs/notes/helper", first, []byte("other\n")); err != nil || deleted {
+		t.Fatalf("DeleteNoteRefIfEqual(mismatch) = %t, %v", deleted, err)
+	}
+	if deleted, err := repo.DeleteNoteRefIfEqual("refs/notes/helper", first, note); err != nil || !deleted {
+		t.Fatalf("DeleteNoteRefIfEqual(match) = %t, %v", deleted, err)
+	}
+}
+
+func TestReadNoteRefEnforcesNoteOutputLimit(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	gitBin := filepath.Join(root, "fake-git")
+	if err := os.WriteFile(
+		gitBin,
+		[]byte("#!/bin/sh\nhead -c 16777217 /dev/zero\n"),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	repo := &Repo{Root: root, gitBin: gitBin}
+	_, _, err := repo.ReadNoteRef(
+		"refs/notes/test",
+		strings.Repeat("a", 40),
+	)
+	if !errors.Is(err, ErrOutputLimit) {
+		t.Fatalf("ReadNoteRef(oversized) = %v, want %v", err, ErrOutputLimit)
+	}
 }
 
 func TestDirtyPathsIncludesAllStatuses(t *testing.T) {
