@@ -4,7 +4,7 @@
 service.**
 
 [![CI](https://github.com/comarch/git-byline/actions/workflows/ci.yml/badge.svg)](https://github.com/comarch/git-byline/actions/workflows/ci.yml)
-[![CodeQL](https://img.shields.io/github/actions/workflow/status/comarch/git-byline/security.yml?branch=main&label=CodeQL&logo=github)](https://github.com/comarch/git-byline/actions/workflows/security.yml)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/comarch/git-byline/security.yml?branch=main&label=CodeQL&logo=github)](https://github.com/comarch/git-byline/security.yml)
 [![Coverage](https://codecov.io/gh/comarch/git-byline/branch/main/graph/badge.svg)](https://codecov.io/gh/comarch/git-byline)
 [![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![Built with PromptScript](https://img.shields.io/badge/Built%20with-PromptScript-7C3AED)](promptscript.yaml)
@@ -20,12 +20,24 @@ Local hooks observe edits, Git notes keep deterministic provenance, and
 > they happen. It does not guess from code style, tokens, or statistical
 > classifiers.
 
-![git-byline shows the difference between commit authorship and line provenance](docs/assets/git-byline-demo.gif)
+![git byline blame showing human, AI, and human-override lines with agent and model labels side by side](docs/assets/git-byline-blame.png)
 
-Real output from a temporary Git repository. The same commit contains
-human/default lines plus edits attributed through Factory, Claude Code, Codex,
-and Gemini CLI adapters.
-[Open the full-resolution line view](docs/assets/git-byline-blame.png).
+Real output from a temporary Git repository. One file, four provenance states:
+human lines, two agent sessions with their models, and `human-override` lines
+where a person rewrote agent output - with the replaced session's metadata
+kept for audit.
+
+## Four states per line, not one label per commit
+
+Every text line carries exactly one state, stored as versioned JSON in Git
+notes:
+
+| State | Meaning | Carries |
+| --- | --- | --- |
+| `human` | No supported agent checkpoint claimed the final transition | line range |
+| `ai` | A supported hook observed an agent edit | agent, model, session, timestamps |
+| `human-override` | A person replaced AI output; the AI origin stays visible | agent, model, session, timestamps |
+| `untracked` | Evidence missing or ambiguous - never guessed | line range |
 
 ## Why teams use it
 
@@ -36,42 +48,118 @@ and Gemini CLI adapters.
 | Private repository support | No code, prompt, or transcript is sent to a separate service. Note metadata follows the selected Git remote unless automatic sharing is disabled with `--local-notes`. |
 | Honest unknowns | Legacy and ambiguous provenance becomes `untracked`, never a confident guess. |
 | Automation | Text for people and versioned JSON for local tools and policy checks. |
+| Audit-ready output | Machine-readable disclosure documents, verifiable notes, and a policy gate with a stable exit code. |
 
-## Local dashboard without a hosted service
+## Seventeen commands, one binary
 
-![Local git-byline attribution report showing human and AI line share, four model contributions, complete coverage, and healthy local state](docs/assets/git-byline-stats.png)
+| Capability | Commands |
+| --- | --- |
+| Track | `checkpoint`, `annotate`, `rewrite`, `install-hooks`, `uninstall` |
+| Inspect | `blame`, `status`, `stats`, `dashboard`, `verify` |
+| Enforce | `check`, `disclosure` |
+| Interoperate | `export`, `import`, `ci` |
+| Meta | `version`, `help` |
 
-This prepared report is calculated from real `git byline blame --json` and
-`git byline status --json` output. The demo uses 32 lines, four supported
-agent adapters, four representative model labels, and one mixed commit. No
-telemetry or hosted analytics service is involved.
+### Aggregate without reading blobs
 
-Generate the same kind of self-contained report from the attribution note on
-your current `HEAD`:
+![git byline stats printing totals, per-agent, per-model, per-session, per-file, and per-commit attribution over a range](docs/assets/git-byline-stats.png)
+
+`git byline stats` aggregates notes over any revision range: author classes,
+agents, models, sessions, files, and commits, in deterministic order. Versioned
+JSON output feeds local tooling.
+
+### Enforce policy in CI or hooks
+
+![git byline check failing a policy with a clear violation message and exit code 1](docs/assets/git-byline-check.png)
+
+`git byline check --max-ai-percent 30` exits 1 on violation, 0 on success.
+Flags only: no configuration file, no new format to maintain. JSON output
+lists every violation.
+
+### Local dashboard, no hosted service
+
+![Self-contained git-byline dashboard showing attribution classes, contribution sources, evidence health, and line provenance](docs/assets/git-byline-dashboard.png)
+
+`git byline dashboard` renders a self-contained HTML report: attribution
+classes, contribution sources, evidence health, and per-line provenance with
+source lines. No CDN, font, image, script, or API is loaded.
+
+Range mode aggregates a whole history slice with a commit trend and bounded
+breakdowns, without source lines:
+
+![git-byline range dashboard with a commit trend and file, agent, model, and author breakdowns](docs/assets/git-byline-dashboard-range.png)
 
 ```sh
-git byline dashboard
+git byline dashboard                              # current HEAD, source lines
+git byline dashboard --range HEAD~10..HEAD        # trend and breakdowns
+git byline dashboard --output report.html src/example.go
 ```
 
-The command prints the path to a private temporary HTML file. Open that file
-in a browser. Generate a report for one file or choose the output path:
+### Provenance that survives history rewrites
+
+Rebase, amend, cherry-pick, reset, branch switch, and stash transitions
+reproject attribution onto the new content through managed Git hooks. Managed
+hooks carry the same markers, backups, and uninstall symmetry everywhere:
+
+| Operation | Survives via |
+| --- | --- |
+| rebase, amend, cherry-pick | `post-rewrite` and `post-commit` hooks |
+| merge, pull | `post-merge` hook, first-parent authoritative |
+| reset soft/mixed/hard, branch switch | `reference-transaction` and `post-checkout` hooks |
+| stash push/pop/apply | stash notes under `refs/notes/byline-stash` |
+
+Unmatched rewritten content becomes `untracked`, never reassigned by guess.
+The full matrix with per-operation status lives in
+[compatibility](docs/COMPATIBILITY.md).
+
+### Files agents write through the shell
+
+Agents do not only use edit tools. `shell_pre` and `shell_post` checkpoints
+snapshot the dirty set and attribute only paths whose blobs actually changed,
+so concurrent unrelated human edits are not claimed. The remaining race is a
+documented limitation, not a silent guess.
+
+### Interoperate, do not lock in
 
 ```sh
-git byline dashboard --output file-report.html src/example.go
+git byline export --format gitai --output authorship.txt
+git byline import --format gitai --range HEAD~5..HEAD --dry-run
+git byline export --format agent-trace --output trace.json
 ```
 
-The HTML embeds its CSS, metrics, source lines, and attribution data. For a
-repository range, use `--repo` or `--range`; range reports show a commit trend
-and bounded file, agent, model, and author breakdowns without source lines:
+Read and write the [Git AI Standard v3](https://github.com/git-ai-project/git-ai)
+authorship format at `refs/notes/ai`, and write Agent Trace 0.1 records.
+Import never overwrites a different existing note: it skips with a warning.
+Mapping rules are documented in [interop](docs/INTEROP.md).
+
+### Reconstruct attribution after forge merges
+
+Squash and rebase merges on GitHub or GitLab create commits that never passed
+a local hook. `git byline ci install` writes a least-privilege workflow;
+`git byline ci run` reconstructs attribution from the pull request commits,
+pairing by patch ID for rebase merges and folding in commit order for
+squashes. The binary writes notes locally; the workflow pushes the notes ref
+through Git, exactly like the pre-push hook.
+
+### Machine-readable disclosure input
 
 ```sh
-git byline dashboard --range HEAD~10..HEAD --output range-report.html
+git byline disclosure --format cyclonedx --output sbom.json
 ```
 
-Reports load no CDN, font, image, script, or API. Existing output files are
-never replaced. Whole-commit and single-file reports include only files
-recorded in the attribution note attached directly to `HEAD`. A range report
-uses attribution notes from its selected first-parent commit range.
+One command, three formats: a versioned native JSON document, CycloneDX 1.6
+JSON, and SPDX 3.0.1 JSON-LD using the AI profile. AI share is defined
+consistently as AI lines plus `human-override` lines over total lines. This is
+machine-readable input for an AI content disclosure process. It is not a
+compliance certificate.
+
+### Verify what you ship
+
+`git byline verify` checks every noted commit: decodable notes, supported
+versions, normalized paths, blob-pinned ranges, ordered coverage without gaps.
+`--deep` reads blobs and proves exact line counts under the existing limits.
+Together, `disclosure` and `verify` are the pair an auditor asks for: the
+artifact, and the means to check it.
 
 ## What makes it different
 
@@ -85,11 +173,34 @@ uses attribution notes from its selected first-parent commit range.
   prompt storage, or transcript storage. The binary opens no network
   connection; the managed pre-push hook invokes Git to publish notes.
 - **Built for real Git behavior.** Partial commits, renames, linked worktrees,
-  restarts, and Git garbage collection are covered.
+  restarts, history rewrites, and Git garbage collection are covered.
 - **Portable.** One pure Go binary, no CGo or language runtime, six release
   targets.
 
-See [how git-byline compares with other approaches](docs/WHY_GIT_BYLINE.md).
+## How it compares
+
+| Approach | Granularity | What it misses in a mixed commit |
+| --- | --- | --- |
+| Standard `git blame` | Line to commit and commit author | Whether a person or agent produced each line |
+| Commit trailers (`Co-authored-by`, `Assisted-by`) | Commit-level declaration | Exact line ranges and edit-time evidence |
+| AI assistant usage dashboards | User and organization aggregates | Durable, tool-neutral provenance in local Git |
+| Prompt-linked provenance platforms | Line plus prompt context | Minimal data collection when prompts must stay excluded |
+| **git-byline** | **Line-level observed provenance** | Deliberately no hosted dashboard or prompt history |
+
+The closest category peer is
+[Git AI](https://github.com/git-ai-project/git-ai). Both use agent
+checkpoints, line-level provenance, and Git notes. Git AI adds prompt-linked
+provenance and lifecycle observability; git-byline intentionally excludes
+prompts, transcripts, cloud sync, hosted analytics, accounts, daemons, and
+binary network calls, and instead covers history rewrites, shell-written
+files, interop, forge merges, policy gates, and disclosure output. Choose the
+broader model when prompt context is required. Choose git-byline when local
+operation, prompt exclusion, and a small trust boundary matter more.
+
+git-byline is not a productivity score, AI detector, or compliance
+certificate. It is a small provenance primitive for teams that want stronger
+review evidence with a smaller data boundary. More detail:
+[why git-byline](docs/WHY_GIT_BYLINE.md).
 
 ## 9 native integrations
 
@@ -198,7 +309,8 @@ Example output:
 ```text
 human                        1 | package example
 ai:droid/model-name          2 | func AddedByAgent() {}
-untracked                    3 | // Predates attribution history.
+human-override:droid/model-name 3 | // Agent line a person rewrote.
+untracked                    4 | // Predates attribution history.
 ```
 
 Get machine-readable output:
@@ -235,6 +347,9 @@ configuration are preserved. Non-shell hooks, symlinked paths, external
 | `check [<rev-range>] [--max-ai-percent N] [--max-untracked-percent N] [--require-note] [--json]` | Check attribution policy limits |
 | `disclosure [--range <rev-range>] [--format json\|spdx\|cyclonedx] [--output FILE]` | Write machine-readable AI content disclosure input |
 | `rewrite --mode MODE --hook-input stdin` | Preserve attribution across rewrites, resets, switches, and stash transitions |
+| `export --format gitai\|agent-trace [--commit <rev>] [--output FILE]` | Export attribution to an interop format |
+| `import --format gitai [--range <rev-range>] [--dry-run]` | Import Git AI attribution notes |
+| `ci install\|run --provider github\|gitlab` | Install or run forge merge attribution workflows |
 | `install-hooks` | Merge agent hooks plus Git annotation and note-sharing hooks |
 | `uninstall` | Remove only git-byline-managed hooks |
 | `version` | Print the build version |
@@ -283,20 +398,6 @@ Shell events use `shell_pre` or `shell_post` and omit `edited_filepaths`.
 ```json
 {"type":"ai_agent","agent_name":"watcher","model":"model-name","conversation_id":"session-1","edited_filepaths":["src/example.go"]}
 ```
-
-## Where it fits
-
-| Approach | Granularity | What it misses in a mixed commit |
-| --- | --- | --- |
-| Standard `git blame` | Line to commit and commit author | Whether a person or agent produced each line |
-| Commit trailers | Commit-level declaration | Exact line ranges and edit-time evidence |
-| AI assistant dashboards | Usage and adoption aggregates | Durable, tool-neutral provenance in local Git |
-| Prompt-linked provenance platforms | Rich line and prompt context | Minimal data collection when prompts must stay excluded |
-| **git-byline** | **Line-level observed provenance** | Deliberately no hosted dashboard or prompt history |
-
-git-byline is not a productivity score, AI detector, or compliance
-certification. It is a small provenance primitive for teams that want stronger
-review evidence with a smaller data boundary.
 
 ## How attribution works
 
@@ -407,6 +508,7 @@ Start with the [documentation map](docs/README.md).
 | Installation paths | [Installation](docs/INSTALL.md) |
 | Supported systems and agents | [Compatibility](docs/COMPATIBILITY.md) |
 | Runtime and data formats | [Architecture](docs/ARCHITECTURE.md) |
+| Interop formats and mapping | [Interop](docs/INTEROP.md) |
 | Threats and privacy boundary | [Security model](docs/SECURITY_MODEL.md) |
 | Local quality gate | [Validation](docs/VALIDATION.md) |
 
@@ -420,8 +522,8 @@ go run ./tools/validate
 
 It checks formatting, vet, tests, at least 80 percent statement coverage,
 CGO-free builds for all six targets, dependency and import policy,
-installer and marketplace contracts, PromptScript drift, secrets,
-placeholders, private paths, and forbidden characters.
+installer and marketplace contracts, PromptScript drift, workflow template
+contracts, secrets, placeholders, private paths, and forbidden characters.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [validation](docs/VALIDATION.md), and
 [release procedure](docs/RELEASES.md).
