@@ -37,7 +37,7 @@ func TestInstallAndUninstallProjectHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Changed) != 3 {
+	if len(result.Changed) != 7 {
 		t.Fatalf("Install changed = %v", result.Changed)
 	}
 	config := readObject(t, configPath)
@@ -79,7 +79,7 @@ func TestInstallAndUninstallProjectHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Changed) != 3 {
+	if len(result.Changed) != 7 {
 		t.Fatalf("Uninstall changed = %v", result.Changed)
 	}
 	config = readObject(t, configPath)
@@ -113,7 +113,7 @@ func TestInstallAllAgentsAndCustomHooksPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Changed) != 4 {
+	if len(result.Changed) != 8 {
 		t.Fatalf("Install changed = %v", result.Changed)
 	}
 	for _, path := range []string{
@@ -524,7 +524,7 @@ func TestHookFailuresAndGitOnly(t *testing.T) {
 	t.Parallel()
 	root := hookRepo(t)
 	result, err := Install(root, Options{Agent: "none", Git: true})
-	if err != nil || len(result.Changed) != 2 {
+	if err != nil || len(result.Changed) != 6 {
 		t.Fatalf("Git-only Install = %+v, %v", result, err)
 	}
 	hook := filepath.Join(root, ".git", "hooks", "post-commit")
@@ -592,7 +592,7 @@ func TestLocalNotesOptOut(t *testing.T) {
 	t.Parallel()
 	root := hookRepo(t)
 	defaults := Options{Agent: "none", Git: true}
-	if result, err := Install(root, defaults); err != nil || len(result.Changed) != 2 {
+	if result, err := Install(root, defaults); err != nil || len(result.Changed) != 6 {
 		t.Fatalf("Install(defaults) = %+v, %v", result, err)
 	}
 	prePush := filepath.Join(root, ".git", "hooks", "pre-push")
@@ -626,7 +626,7 @@ func TestInstallUpdatesManagedGitHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Changed) != 2 {
+	if len(result.Changed) != 6 {
 		t.Fatalf("Install changed = %v", result.Changed)
 	}
 	data, err := os.ReadFile(path)
@@ -826,6 +826,7 @@ func TestPrePushStopsBranchWhenNotesFail(t *testing.T) {
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_BYLINE_NESTED=1",
 	)
 	if out, err := command.CombinedOutput(); err == nil {
 		t.Fatalf("push succeeded despite rejected notes: %s", out)
@@ -880,6 +881,7 @@ func TestPrePushRejectsDivergentNotes(t *testing.T) {
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_BYLINE_NESTED=1",
 	)
 	if out, err := command.CombinedOutput(); err == nil {
 		t.Fatalf("push accepted divergent notes: %s", out)
@@ -959,10 +961,88 @@ func hookGit(t *testing.T, root string, args ...string) string {
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_BYLINE_NESTED=1",
 	)
 	out, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return string(out)
+}
+
+func TestRewriteHookCommandsFailContracts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		command string
+		env     []string
+		input   string
+		args    []string
+		wantErr bool
+	}{
+		{
+			name:    "reference nested exits immediately",
+			command: referenceTransactionHookCommand("/bin/false"),
+			env:     []string{"GIT_BYLINE_NESTED=1"},
+			input:   "bad bad refs/heads/main\n",
+			args:    []string{"committed"},
+		},
+		{
+			name:    "reference irrelevant ref fails open",
+			command: referenceTransactionHookCommand("/bin/false"),
+			input:   "0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 refs/tags/v1\n",
+			args:    []string{"committed"},
+		},
+		{
+			name:    "reference relevant ref fails open",
+			command: referenceTransactionHookCommand("/bin/false"),
+			input:   "0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 HEAD\n",
+			args:    []string{"committed"},
+		},
+		{
+			name:    "checkout fails open",
+			command: rewriteHookCommand("/bin/false", "post-checkout", false),
+			args:    []string{"old", "new", "1"},
+		},
+		{
+			name:    "merge fails closed",
+			command: rewriteHookCommand("/bin/false", "post-merge", true),
+			args:    []string{"0"},
+			wantErr: true,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			args := append([]string{"-c", test.command + ` "$@"`, "git-byline"}, test.args...)
+			command := exec.Command("sh", args...)
+			command.Stdin = strings.NewReader(test.input)
+			command.Env = append(os.Environ(), test.env...)
+			err := command.Run()
+			if (err != nil) != test.wantErr {
+				t.Fatalf("command error = %v, want error %t", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestManagedRewriteBlocksAreRecognized(t *testing.T) {
+	t.Parallel()
+	commands := []string{
+		rewriteHookCommand("/old/git-byline", "post-rewrite", true),
+		rewriteHookCommand("/old/git-byline", "post-merge", true),
+		rewriteHookCommand("/old/git-byline", "post-checkout", false),
+		referenceTransactionHookCommand("/old/git-byline"),
+	}
+	for _, command := range commands {
+		command := command
+		t.Run(command, func(t *testing.T) {
+			t.Parallel()
+			block := blockStart + "\n" + command + "\n" + blockEnd
+			if !managedGitHookBlock(block) {
+				t.Fatalf("managedGitHookBlock rejected %q", command)
+			}
+		})
+	}
 }

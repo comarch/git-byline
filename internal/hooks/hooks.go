@@ -94,13 +94,33 @@ func change(dir string, options Options, install bool) (Result, error) {
 		}{
 			{
 				name:    "post-commit",
-				command: quoteExecutable(executable) + " annotate || exit 1",
+				command: postCommitCommand(executable),
 				install: install,
 			},
 			{
 				name:    "pre-push",
 				command: notesPushCommand(),
 				install: install && !options.LocalNotes,
+			},
+			{
+				name:    "post-rewrite",
+				command: rewriteHookCommand(executable, "post-rewrite", true),
+				install: install,
+			},
+			{
+				name:    "post-merge",
+				command: rewriteHookCommand(executable, "post-merge", true),
+				install: install,
+			},
+			{
+				name:    "post-checkout",
+				command: rewriteHookCommand(executable, "post-checkout", false),
+				install: install,
+			},
+			{
+				name:    "reference-transaction",
+				command: referenceTransactionHookCommand(executable),
+				install: install,
 			},
 		}
 		for _, spec := range specs {
@@ -125,6 +145,26 @@ func notesPushCommand() string {
 	return `if git show-ref --verify --quiet refs/notes/byline; then
   git push --no-verify -- "$1" refs/notes/byline:refs/notes/byline || exit 1
 fi`
+}
+
+func postCommitCommand(executable string) string {
+	return quoteExecutable(executable) + ` rewrite --mode post-merge --hook-input stdin || exit 1
+` + quoteExecutable(executable) + " annotate || exit 1"
+}
+
+func rewriteHookCommand(executable, mode string, failClosed bool) string {
+	command := quoteExecutable(executable) + " rewrite --mode " + mode + ` --hook-input stdin "$@"`
+	if failClosed {
+		return command + " || exit 1"
+	}
+	return command + " || true"
+}
+
+func referenceTransactionHookCommand(executable string) string {
+	return `if [ -n "${GIT_BYLINE_NESTED:-}" ]; then
+  exit 0
+fi
+` + quoteExecutable(executable) + ` rewrite --mode ref-txn --hook-input stdin "$@" || true`
 }
 
 func selectedAgents(value string) []string {
@@ -769,8 +809,33 @@ func managedGitHookBlock(block string) bool {
 	}
 	command := strings.TrimSuffix(strings.TrimPrefix(block, prefix), suffix)
 	return command == notesPushCommand() ||
+		isPostCommitCommand(command) ||
 		commandHasSingleExecutable(command, " annotate || exit 1") ||
-		commandHasSingleExecutable(command, " annotate")
+		commandHasSingleExecutable(command, " annotate") ||
+		commandHasSingleExecutable(command, ` rewrite --mode post-rewrite --hook-input stdin "$@" || exit 1`) ||
+		commandHasSingleExecutable(command, ` rewrite --mode post-merge --hook-input stdin "$@" || exit 1`) ||
+		commandHasSingleExecutable(command, ` rewrite --mode post-checkout --hook-input stdin "$@" || true`) ||
+		isReferenceTransactionCommand(command)
+}
+
+func isPostCommitCommand(command string) bool {
+	lines := strings.Split(command, "\n")
+	if len(lines) != 2 {
+		return false
+	}
+	return commandHasSingleExecutable(lines[0], ` rewrite --mode post-merge --hook-input stdin || exit 1`) &&
+		commandHasSingleExecutable(lines[1], " annotate || exit 1")
+}
+
+func isReferenceTransactionCommand(command string) bool {
+	prefix := "if [ -n \"${GIT_BYLINE_NESTED:-}\" ]; then\n  exit 0\nfi\n"
+	if !strings.HasPrefix(command, prefix) {
+		return false
+	}
+	return commandHasSingleExecutable(
+		strings.TrimPrefix(command, prefix),
+		` rewrite --mode ref-txn --hook-input stdin "$@" || true`,
+	)
 }
 
 func isShellHook(data []byte) bool {
