@@ -20,6 +20,7 @@ import (
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/preset"
 	"github.com/comarch/git-byline/internal/provenance"
+	"github.com/comarch/git-byline/internal/report"
 )
 
 var checkpointInputTimeoutNanos atomic.Int64
@@ -118,12 +119,67 @@ func runDashboard(env *Env, command *command, args []string) (int, error) {
 	flags := flag.NewFlagSet(command.name, flag.ContinueOnError)
 	var output strings.Builder
 	flags.SetOutput(&output)
+	rangeValue := ""
+	rangeSpecified := false
+	flags.Func("range", "revision range", func(value string) error {
+		if rangeSpecified {
+			return errors.New("--range specified more than once")
+		}
+		rangeValue = value
+		rangeSpecified = true
+		return nil
+	})
+	repoMode := flags.Bool("repo", false, "render repository range report")
 	outputPath := flags.String("output", "", "output file")
 	if err := flags.Parse(args); err != nil {
 		return flagError(env, command, output.String(), err)
 	}
+	rangeModeArg := false
+	for _, arg := range args {
+		if arg == "--repo" || arg == "--range" || strings.HasPrefix(arg, "--range=") {
+			rangeModeArg = true
+			break
+		}
+	}
 	if flags.NArg() > 1 {
+		if rangeModeArg {
+			return commandUsageError(env, command, errors.New("--range or --repo cannot be combined with a file argument"))
+		}
 		return commandUsageError(env, command, errors.New("dashboard accepts at most one file"))
+	}
+	if rangeSpecified || *repoMode {
+		if flags.NArg() != 0 {
+			return commandUsageError(env, command, errors.New("--range or --repo cannot be combined with a file argument"))
+		}
+		rangeArgs := []string(nil)
+		if rangeSpecified {
+			rangeArgs = []string{rangeValue}
+		}
+		from, to, err := parseRevisionRange(rangeArgs, command.name)
+		if err != nil {
+			return commandUsageError(env, command, err)
+		}
+		repo, err := discoverForEnv(env)
+		if err != nil {
+			return operationalError(env, command.name, err)
+		}
+		aggregate, err := report.Collect(repo, from, to, 0)
+		if err != nil {
+			return operationalError(env, command.name, err)
+		}
+		data, err := dashboard.RenderRange(aggregate)
+		if err != nil {
+			return operationalError(env, command.name, err)
+		}
+		file, path, err := createDashboardOutput(env, *outputPath)
+		if err != nil {
+			return operationalError(env, command.name, err)
+		}
+		if err := writeDashboard(file, path, data); err != nil {
+			return operationalError(env, command.name, err)
+		}
+		fmt.Fprintln(env.Stdout, path)
+		return ExitSuccess, nil
 	}
 	repo, err := discoverForEnv(env)
 	if err != nil {

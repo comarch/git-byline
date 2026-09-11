@@ -82,9 +82,11 @@ func commands() []*command {
 		{
 			name:  "dashboard",
 			short: "generate a local HTML attribution report",
-			usage: "Usage: git-byline dashboard [--output FILE] [file]\n\n" +
+			usage: "Usage: git-byline dashboard [--range <rev-range>] [--repo] [--output FILE] [file]\n\n" +
 				"Generate a self-contained HTML report for one file or every\n" +
-				"file attributed on HEAD. Existing output files are not replaced.",
+				"file attributed on HEAD. Use --range or --repo for a bounded\n" +
+				"repository report without source lines. Existing output files\n" +
+				"are not replaced.",
 			run: runDashboard,
 		},
 		{

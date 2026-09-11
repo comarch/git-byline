@@ -60,10 +60,18 @@ in a browser. Generate a report for one file or choose the output path:
 git byline dashboard --output file-report.html src/example.go
 ```
 
-The HTML embeds its CSS, JavaScript, metrics, source lines, and attribution
-data. It loads no CDN, font, image, script, or API. Existing output files are
+The HTML embeds its CSS, metrics, source lines, and attribution data. For a
+repository range, use `--repo` or `--range`; range reports show a commit trend
+and bounded file, agent, model, and author breakdowns without source lines:
+
+```sh
+git byline dashboard --range HEAD~10..HEAD --output range-report.html
+```
+
+Reports load no CDN, font, image, script, or API. Existing output files are
 never replaced. Whole-commit and single-file reports include only files
-recorded in the attribution note attached directly to `HEAD`.
+recorded in the attribution note attached directly to `HEAD`. A range report
+uses attribution notes from its selected first-parent commit range.
 
 ## What makes it different
 
@@ -221,7 +229,7 @@ configuration are preserved. Non-shell hooks, symlinked paths, external
 | `annotate` | Replay pending snapshots and annotate `HEAD` |
 | `blame [--json] <file>` | Show line attribution for a file at `HEAD` |
 | `status [--json]` | Show checkpoint, pending, and annotation state |
-| `dashboard [--output FILE] [file]` | Generate a self-contained local HTML report |
+| `dashboard [--range <rev-range>] [--repo] [--output FILE] [file]` | Generate a self-contained local HTML report |
 | `stats [<rev-range>] [--json]` | Aggregate attribution statistics without reading blobs |
 | `verify [<rev-range>] [--deep] [--json]` | Verify attribution notes and blob-pinned ranges |
 | `check [<rev-range>] [--max-ai-percent N] [--max-untracked-percent N] [--require-note] [--json]` | Check attribution policy limits |

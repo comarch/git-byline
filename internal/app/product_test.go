@@ -164,6 +164,108 @@ func TestDashboardRefusesExistingOutput(t *testing.T) {
 	}
 }
 
+func TestDashboardRangeModeRendersAggregateWithoutSourceLines(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "one\n")
+	appCommit(t, root, "one")
+	first := appHead(t, root)
+	appWrite(t, root, "file.txt", "one\ntwo\n")
+	appWrite(t, root, "second.txt", "three\n")
+	appCommit(t, root, "two")
+	second := appHead(t, root)
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, exists, err := repo.BlobID(second, "file.txt")
+	if err != nil || !exists {
+		t.Fatalf("BlobID = %q, %t, %v", blob, exists, err)
+	}
+	secondBlob, exists, err := repo.BlobID(second, "second.txt")
+	if err != nil || !exists {
+		t.Fatalf("second BlobID = %q, %t, %v", secondBlob, exists, err)
+	}
+	writeDashboardTestNote(t, repo, second, model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file.txt": {
+				Blob: blob,
+				Ranges: []model.Range{
+					{Start: 1, End: 1, Attribution: model.Attribution{Author: model.AuthorHuman}},
+					{Start: 2, End: 2, Attribution: model.Attribution{
+						Author: model.AuthorAI, Agent: "droid", Model: "model",
+					}},
+				},
+			},
+			"second.txt": {
+				Blob: secondBlob,
+				Ranges: []model.Range{{Start: 1, End: 1, Attribution: model.Attribution{
+					Author: model.AuthorHumanOverride, Agent: "droid", Model: "model",
+				}}},
+			},
+		},
+	})
+
+	path := filepath.Join(t.TempDir(), "range.html")
+	code, stdout, stderr, err := appRun(root, zeroTime(), nil,
+		"dashboard", "--range", first+".."+second, "--output", path)
+	if code != ExitSuccess || err != nil || stdout != path+"\n" || stderr != "" {
+		t.Fatalf("dashboard range = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("range dashboard mode = %o", info.Mode().Perm())
+	}
+	text := string(data)
+	for _, want := range []string{
+		"Commit trend",
+		"Author classes",
+		"file.txt",
+		"second.txt",
+		"droid",
+		"model",
+		"human-override",
+		"range " + first + ".." + second,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("range dashboard missing %q", want)
+		}
+	}
+	if strings.Contains(text, "one\ntwo") || strings.Contains(text, "three\n") {
+		t.Fatal("range dashboard rendered source lines")
+	}
+
+	code, stdout, stderr, err = appRun(root, zeroTime(), nil,
+		"dashboard", "--repo", "--output", filepath.Join(t.TempDir(), "repo.html"))
+	if code != ExitSuccess || err != nil || stdout == "" || stderr != "" {
+		t.Fatalf("dashboard repo = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+
+	code, stdout, stderr, err = appRun(root, zeroTime(), nil,
+		"dashboard", "--range", first+".."+second, "file.txt")
+	if code != ExitUsage || err == nil || stdout != "" ||
+		!strings.Contains(stderr, "cannot be combined") {
+		t.Fatalf("dashboard range file = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+}
+
+func writeDashboardTestNote(t *testing.T, repo *gitcmd.Repo, commit string, note model.Note) {
+	t.Helper()
+	data, err := notes.Encode(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.WriteNote(commit, data); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBlameTextRendersHumanOverrideMetadata(t *testing.T) {
 	t.Parallel()
 	root := appRepo(t)
