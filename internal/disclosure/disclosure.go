@@ -305,8 +305,9 @@ func cyclonedxAggregateProperties(aggregate report.Aggregate, toolVersion string
 		{Name: "git-byline:tool-version", Value: toolVersion},
 		{Name: "git-byline:cyclonedx-version", Value: CycloneDXVersion},
 		{Name: "git-byline:spdx-version", Value: SPDXVersion},
-		{Name: "git-byline:ai-share-definition", Value: AIShareDefinition},
 	}
+	// cyclonedxTotalsProperties already states the AI share definition, so
+	// the metadata block must not repeat it.
 	properties = append(properties, cyclonedxTotalsProperties(aggregate.Totals)...)
 	for index, agent := range aggregate.Agents {
 		prefix := "git-byline:agents[" + strconv.Itoa(index) + "]."

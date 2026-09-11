@@ -260,3 +260,33 @@ func disclosureFixture() report.Aggregate {
 		Warnings: []string{"warning \"quoted\""},
 	}
 }
+
+func TestCycloneDXMetadataPropertiesAreUnique(t *testing.T) {
+	t.Parallel()
+	data, err := Render("cyclonedx", disclosureFixture(), time.Time{}, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Metadata struct {
+			Properties []struct {
+				Name string `json:"name"`
+			} `json:"properties"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	for _, property := range document.Metadata.Properties {
+		seen[property.Name]++
+	}
+	for name, count := range seen {
+		if count > 1 {
+			t.Errorf("metadata property %q appears %d times", name, count)
+		}
+	}
+	if seen["git-byline:ai-share-definition"] != 1 {
+		t.Error("metadata does not state the AI share definition exactly once")
+	}
+}
