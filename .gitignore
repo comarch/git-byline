@@ -16,3 +16,6 @@ coverage*.out
 !.env.example
 *.local
 *.git-byline.bak
+
+# macOS Finder metadata
+.DS_Store
