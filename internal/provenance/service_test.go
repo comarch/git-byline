@@ -1335,3 +1335,70 @@ func git(t *testing.T, root string, args ...string) string {
 	}
 	return string(out)
 }
+
+func TestBlameResolvesCwdRelativePath(t *testing.T) {
+	root := testRepo(t)
+	write(t, root, "sub/f.txt", "nested\n")
+	write(t, root, "f.txt", "root\n")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"sub/f.txt"}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	commit(t, root, "both files")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name       string
+		chdir      string
+		path       string
+		wantHit    string
+		wantAuthor model.Author
+	}{
+		{name: "cwd-relative hits nested file", chdir: filepath.Join(root, "sub"), path: "f.txt", wantHit: "nested", wantAuthor: model.AuthorAI},
+		{name: "root-relative still works from subdirectory", chdir: filepath.Join(root, "sub"), path: "sub/f.txt", wantHit: "nested", wantAuthor: model.AuthorAI},
+		{name: "cwd-relative wins on ambiguity like git", chdir: filepath.Join(root, "sub"), path: "f.txt", wantHit: "nested", wantAuthor: model.AuthorAI},
+		{name: "root-relative hits root file without evidence", chdir: root, path: "f.txt", wantHit: "root", wantAuthor: model.AuthorHuman},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(tc.chdir)
+			result, err := Blame(repo, tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Lines) != 1 || result.Lines[0].Content != tc.wantHit {
+				t.Fatalf("blame content = %q, want %q", result.Lines[0].Content, tc.wantHit)
+			}
+			if result.Lines[0].Attribution.Author != tc.wantAuthor {
+				t.Fatalf("attribution = %+v, want %s", result.Lines[0].Attribution, tc.wantAuthor)
+			}
+		})
+	}
+
+	t.Run("missing path names both interpretations", func(t *testing.T) {
+		t.Chdir(filepath.Join(root, "sub"))
+		_, err := Blame(repo, "missing.txt")
+		if err == nil {
+			t.Fatal("expected an error for a missing path")
+		}
+		if !strings.Contains(err.Error(), "sub/missing.txt") || !strings.Contains(err.Error(), "missing.txt") {
+			t.Fatalf("error should name both candidates: %v", err)
+		}
+	})
+
+	t.Run("dashboard file argument resolves cwd-relative", func(t *testing.T) {
+		t.Chdir(filepath.Join(root, "sub"))
+		result, err := BlameHeadFile(repo, "f.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Lines) != 1 || result.Lines[0].Content != "nested" {
+			t.Fatalf("dashboard blame content = %q, want nested", result.Lines[0].Content)
+		}
+	})
+}

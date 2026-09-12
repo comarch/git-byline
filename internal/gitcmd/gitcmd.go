@@ -743,6 +743,42 @@ func (repo *Repo) NormalizeWorktreePath(path string) (string, error) {
 	return NormalizePath(path)
 }
 
+// CwdRelative rewrites a repository-relative path against the current
+// working directory, mirroring how Git resolves blame and log pathspec
+// arguments. It reports false when the path is absolute, the working
+// directory is the repository root, or the working directory lies outside
+// the worktree.
+func (repo *Repo) CwdRelative(path string) (string, bool, error) {
+	native := filepath.FromSlash(path)
+	if native == "" || filepath.IsAbs(native) {
+		return "", false, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", false, fmt.Errorf("read working directory: %w", err)
+	}
+	cwd, err = filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve working directory: %w", err)
+	}
+	if !inside(repo.Root, cwd) {
+		return "", false, nil
+	}
+	relative, err := filepath.Rel(repo.Root, cwd)
+	if err != nil {
+		return "", false, nil
+	}
+	if relative == "." {
+		return "", false, nil
+	}
+	joined := filepath.ToSlash(filepath.Join(relative, native))
+	joined, err = NormalizePath(joined)
+	if err != nil {
+		return "", false, nil
+	}
+	return joined, true, nil
+}
+
 // SnapshotWorktree hashes one allowed worktree path.
 func (repo *Repo) SnapshotWorktree(path string) (model.Snapshot, error) {
 	content, exists, normalized, err := repo.WorktreeFile(path)

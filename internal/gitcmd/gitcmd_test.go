@@ -836,3 +836,43 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	}
 	return string(out)
 }
+
+func TestCwdRelative(t *testing.T) {
+	root := initRepository(t)
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, "f.txt", "root\n")
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name  string
+		chdir string
+		path  string
+		want  string
+		ok    bool
+	}{
+		{name: "cwd at root yields no candidate", chdir: root, path: "f.txt", ok: false},
+		{name: "subdirectory rewrites path", chdir: filepath.Join(root, "sub"), path: "f.txt", want: "sub/f.txt", ok: true},
+		{name: "parent reference resolves inside the worktree", chdir: filepath.Join(root, "sub"), path: "../f.txt", want: "f.txt", ok: true},
+		{name: "absolute path yields no candidate", chdir: filepath.Join(root, "sub"), path: root, ok: false},
+		{name: "cwd outside the worktree yields no candidate", chdir: t.TempDir(), path: "f.txt", ok: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(tc.chdir)
+			got, ok, err := repo.CwdRelative(tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v", ok, tc.ok)
+			}
+			if got != tc.want {
+				t.Fatalf("path = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

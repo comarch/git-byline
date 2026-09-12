@@ -424,7 +424,7 @@ Seventeen commands, one binary:
 | --- | --- |
 | `checkpoint <preset>` | Record a human or AI edit snapshot from hook input |
 | `annotate` | Replay pending snapshots and annotate `HEAD` |
-| `blame [--json] [--color=auto\|always\|never] <file>` | Show line attribution for a file at `HEAD` |
+| `blame [--json] [--color=auto\|always\|never] <file>` | Show line attribution for a file at `HEAD` (file resolves from the working directory first, like `git blame`) |
 | `status [--json]` | Show checkpoint, pending, and annotation state |
 | `dashboard [--range <rev-range>] [--repo] [--output FILE] [file]` | Generate a self-contained local HTML report |
 | `stats [<rev-range>] [--json]` | Aggregate attribution statistics without reading blobs |
