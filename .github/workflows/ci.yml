@@ -81,6 +81,40 @@ jobs:
           GOPROXY: "off"
         run: go test ./...
 
+  smoke:
+    name: Smoke test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.24.x"
+          cache: false
+
+      - name: Build and smoke test the binary
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
+        run: |
+          set -euo pipefail
+          bin="git-byline"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            bin="git-byline.exe"
+          fi
+          go build -o "$bin" ./cmd/git-byline
+          BYLINE_BIN="$PWD/$bin" bash scripts/smoke.sh
+
   release-snapshot:
     name: Release snapshot
     runs-on: ubuntu-latest
@@ -172,15 +206,18 @@ jobs:
     needs:
       - test
       - release-snapshot
+      - smoke
     runs-on: ubuntu-latest
     steps:
-      - name: Require tests and release snapshot
+      - name: Require tests, release snapshot, and smoke
         env:
           TEST_RESULT: ${{ needs.test.result }}
           RELEASE_RESULT: ${{ needs.release-snapshot.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
         run: |
           test "$TEST_RESULT" = "success"
           test "$RELEASE_RESULT" = "success"
+          test "$SMOKE_RESULT" = "success"
 
   coverage:
     name: Coverage
