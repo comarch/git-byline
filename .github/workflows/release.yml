@@ -11,8 +11,7 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
@@ -61,6 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
+    permissions:
+      contents: write
     steps:
       - name: Resolve release tag
         id: tag

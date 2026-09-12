@@ -859,6 +859,7 @@ func TestCwdRelative(t *testing.T) {
 		{name: "parent reference resolves inside the worktree", chdir: filepath.Join(root, "sub"), path: "../f.txt", want: "f.txt", ok: true},
 		{name: "absolute path yields no candidate", chdir: filepath.Join(root, "sub"), path: root, ok: false},
 		{name: "cwd outside the worktree yields no candidate", chdir: t.TempDir(), path: "f.txt", ok: false},
+		{name: "escape above the worktree yields no candidate", chdir: filepath.Join(root, "sub"), path: "../../escape.txt", ok: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -874,5 +875,26 @@ func TestCwdRelative(t *testing.T) {
 				t.Fatalf("path = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestHeadReflogAction(t *testing.T) {
+	root := initRepository(t)
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.HeadReflogAction(); err == nil {
+		t.Fatal("expected an error on a repository without commits")
+	}
+	writeFile(t, root, "f.txt", "one\n")
+	runGit(t, root, "add", "f.txt")
+	runGit(t, root, "commit", "-m", "one")
+	action, err := repo.HeadReflogAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(action, "commit") {
+		t.Fatalf("action = %q, want a commit action", action)
 	}
 }
