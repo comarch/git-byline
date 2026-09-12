@@ -333,6 +333,7 @@ type AnnotateResult struct {
 	Commit   string
 	Files    int
 	Noop     bool
+	Skipped  bool
 	Warnings []string
 }
 
@@ -358,6 +359,22 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	}
 	if head == "" {
 		return AnnotateResult{}, errors.New("cannot annotate an unborn repository")
+	}
+	// A rebase replay creates commits without fresh checkpoint evidence.
+	// Annotating them would guess attribution and then block the post-rewrite
+	// remap of the real evidence, so replayed commits wait for post-rewrite.
+	action, err := repo.HeadReflogAction()
+	if err != nil {
+		return AnnotateResult{}, err
+	}
+	if strings.HasPrefix(action, "rebase") {
+		return AnnotateResult{
+			Commit:  head,
+			Skipped: true,
+			Warnings: []string{
+				"skipped annotate: rebase replay created this commit; post-rewrite will remap attribution",
+			},
+		}, nil
 	}
 	state, err := dataStore.ReadState()
 	if err != nil {

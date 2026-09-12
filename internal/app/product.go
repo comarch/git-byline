@@ -293,7 +293,9 @@ func runAnnotate(env *Env, command *command, args []string) (int, error) {
 		return operationalError(env, command.name, err)
 	}
 	writeWarnings(env, result.Warnings)
-	if result.Noop {
+	if result.Skipped {
+		fmt.Fprintf(env.Stdout, "skipped %s\n", result.Commit)
+	} else if result.Noop {
 		fmt.Fprintf(env.Stdout, "already annotated %s\n", result.Commit)
 	} else {
 		fmt.Fprintf(env.Stdout, "annotated %s (%d files)\n", result.Commit, result.Files)

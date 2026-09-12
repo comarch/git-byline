@@ -358,13 +358,13 @@ func applyRewriteMapping(repo *gitcmd.Repo, mapping rewrite.Mapping) (RewriteRes
 		return RewriteResult{}, err
 	}
 	if head != "" && state.LastAnnotatedCommit != head {
-		parent, parentErr := repo.Parent(head)
-		if parentErr != nil {
-			return RewriteResult{}, parentErr
-		}
-		if parent == state.LastAnnotatedCommit {
-			if completed[head] && !blocked[head] {
-				state.LastAnnotatedCommit = head
+		// A remapped head carries a freshly written note, so it is the
+		// annotated boundary even when several replayed commits separate
+		// it from the previous boundary. Pending files keep their own
+		// remapped base below.
+		if completed[head] && !blocked[head] {
+			state.LastAnnotatedCommit = head
+			if len(state.Pending.Files) == 0 {
 				state.Pending.BaseCommit = head
 			}
 		}
@@ -792,8 +792,36 @@ func HandleReferenceTransaction(repo *gitcmd.Repo, input io.Reader, phase string
 	return result, nil
 }
 
+// commitAdvance reports whether update moves a branch to a newly created
+// commit whose first parent is the previous tip and that carries no note
+// yet. That is an ordinary commit (or merge), not a reset: pending state and
+// the annotated boundary stay untouched for the post-commit annotation,
+// which validates them. A commit that already carries a note or an invalid
+// note falls through to reset handling.
+func commitAdvance(repo *gitcmd.Repo, update rewrite.RefUpdate) (bool, error) {
+	if update.Old == "" || update.New == "" || isZero(update.Old) || isZero(update.New) {
+		return false, nil
+	}
+	parents, err := repo.Parents(update.New)
+	if err != nil || len(parents) == 0 || parents[0] != update.Old {
+		return false, nil
+	}
+	_, found, err := repo.ReadNote(update.New)
+	if err != nil {
+		return false, err
+	}
+	return !found, nil
+}
+
 func handleHeadMove(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult, error) {
 	if update.Old == update.New {
+		return RewriteResult{}, nil
+	}
+	advance, err := commitAdvance(repo, update)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	if advance {
 		return RewriteResult{}, nil
 	}
 	dataStore := store.New(repo.GitDir)
@@ -836,6 +864,18 @@ func handleHeadMove(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult,
 			if projectErr != nil {
 				return RewriteResult{}, projectErr
 			}
+			// Existing pending entries win for a path already pending;
+			// note-derived entries fill the remaining paths, mirroring
+			// the documented stash restore rules.
+			if state.Pending.Files == nil {
+				state.Pending.Files = map[string]model.PendingFile{}
+			}
+			for path, file := range pending {
+				if _, exists := state.Pending.Files[path]; !exists {
+					state.Pending.Files[path] = file
+				}
+			}
+			pending = state.Pending.Files
 			boundary := annotationBoundary(repo, update.New)
 			result := RewriteResult{Mapped: len(pending)}
 			if boundary == "" {

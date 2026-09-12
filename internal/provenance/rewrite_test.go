@@ -1123,3 +1123,134 @@ func presetAI(session, path string) preset.Event {
 		Session: session, Paths: []string{path},
 	}
 }
+
+func TestReferenceTransactionKeepsPendingAcrossOrdinaryCommit(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "base.txt", "base\n")
+	first := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	// Partial commit: p1 is committed, p2 stays excluded with AI evidence.
+	write(t, root, "p1.txt", "p1\n")
+	write(t, root, "p2.txt", "p2\n")
+	now := time.Now()
+	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p1.txt"}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p2.txt"}}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "add", "p1.txt")
+	git(t, root, "commit", "-m", "only p1")
+	second := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	input := first + " " + second + " HEAD\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "add", "p2.txt")
+	git(t, root, "commit", "-m", "p2 now")
+	third := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	input = second + " " + third + " HEAD\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Blame(repo, "p2.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Lines) != 1 || after.Lines[0].Attribution.Author != model.AuthorAI {
+		t.Fatalf("p2 attribution after second commit = %+v, want ai", after.Lines)
+	}
+}
+
+func TestAnnotateSkipsRebaseReplayAndPostRewriteRemaps(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "base.txt", "base\n")
+	base := commit(t, root, "base")
+	git(t, root, "checkout", "-b", "feat")
+	write(t, root, "f1.txt", "f1\n")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"f1.txt"}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	old := commit(t, root, "f1")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "checkout", "main")
+	if _, err := HandlePostCheckout(repo, old, base); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "mw.txt", "mw\n")
+	mid := commit(t, root, "mainwork")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "checkout", "feat")
+	if _, err := HandlePostCheckout(repo, mid, old); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "rebase", "main")
+	newHead := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	if newHead == old {
+		t.Fatal("rebase did not rewrite")
+	}
+	// The post-commit hook fires during the replay; annotation must skip
+	// the replayed commit so post-rewrite can remap the real evidence.
+	result, err := Annotate(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Skipped {
+		t.Fatalf("Annotate on replayed commit = %+v, want skipped", result)
+	}
+	if _, err := HandlePostRewrite(repo, strings.NewReader(old+" "+newHead+"\n")); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastAnnotatedCommit != newHead {
+		t.Fatalf("boundary after post-rewrite = %s, want remapped head %s", state.LastAnnotatedCommit, newHead)
+	}
+	blame, err := Blame(repo, "f1.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blame.Lines) != 1 || blame.Lines[0].Attribution.Author != model.AuthorAI {
+		t.Fatalf("f1 attribution after rebase = %+v, want ai", blame.Lines)
+	}
+	// The commit after the rebase must annotate without a gap error.
+	write(t, root, "f2.txt", "f2\n")
+	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s2", Paths: []string{"f2.txt"}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	commit(t, root, "f2")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	blame, err = Blame(repo, "f2.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blame.Lines) != 1 || blame.Lines[0].Attribution.Author != model.AuthorAI {
+		t.Fatalf("f2 attribution after rebase = %+v, want ai", blame.Lines)
+	}
+}

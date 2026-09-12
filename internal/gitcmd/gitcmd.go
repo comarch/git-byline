@@ -212,6 +212,22 @@ func (repo *Repo) Parents(commit string) ([]string, error) {
 	return parents, nil
 }
 
+// HeadReflogAction returns the action that created HEAD, such as "commit",
+// "rebase (pick)", or "cherry-pick". It distinguishes sequencer replays from
+// user-created commits.
+func (repo *Repo) HeadReflogAction() (string, error) {
+	out, err := repo.run("read HEAD reflog action", nil, "log", "-g", "-1", "--pretty=%gs", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	subject := strings.TrimSpace(string(out))
+	if subject == "" {
+		return "", errors.New("git returned an empty HEAD reflog action")
+	}
+	action, _, _ := strings.Cut(subject, ":")
+	return strings.TrimSpace(action), nil
+}
+
 // Changes returns changed paths for commit relative to its first parent.
 func (repo *Repo) Changes(commit, parent string) ([]Change, error) {
 	if !model.ValidObjectID(commit) {
