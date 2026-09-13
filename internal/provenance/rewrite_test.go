@@ -1175,6 +1175,64 @@ func TestReferenceTransactionKeepsPendingAcrossOrdinaryCommit(t *testing.T) {
 	}
 }
 
+// TestReferenceTransactionIgnoresZeroOldHeadShadow covers the reference
+// transaction input shape Git versions before 2.55 produce: an attached
+// HEAD move arrives as a zero-old shadow line next to the real branch
+// update in the same transaction. The shadow line must not run reset
+// handling, or an ordinary partial commit loses its pending provenance.
+func TestReferenceTransactionIgnoresZeroOldHeadShadow(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "base.txt", "base\n")
+	first := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "p1.txt", "p1\n")
+	write(t, root, "p2.txt", "p2\n")
+	now := time.Now()
+	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p1.txt"}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p2.txt"}}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	zero := strings.Repeat("0", 40)
+	git(t, root, "add", "p1.txt")
+	git(t, root, "commit", "-m", "only p1")
+	second := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	input := zero + " " + second + " HEAD\n" +
+		first + " " + second + " refs/heads/main\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "add", "p2.txt")
+	git(t, root, "commit", "-m", "p2 now")
+	third := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	input = zero + " " + third + " HEAD\n" +
+		second + " " + third + " refs/heads/main\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Blame(repo, "p2.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Lines) != 1 || after.Lines[0].Attribution.Author != model.AuthorAI {
+		t.Fatalf("p2 attribution after shadow commit = %+v, want ai", after.Lines)
+	}
+}
+
 func TestReferenceTransactionTreatsNonCommitMovesAsReset(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

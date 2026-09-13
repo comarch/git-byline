@@ -770,6 +770,9 @@ func HandleReferenceTransaction(repo *gitcmd.Repo, input io.Reader, phase string
 	}
 	var result RewriteResult
 	for _, update := range updates {
+		if isSymrefShadow(updates, update, attached, currentBranch) {
+			continue
+		}
 		switch {
 		case update.Ref == "HEAD" || (attached && update.Ref == currentBranch):
 			value, err := handleHeadMove(repo, update)
@@ -792,18 +795,33 @@ func HandleReferenceTransaction(repo *gitcmd.Repo, input io.Reader, phase string
 	return result, nil
 }
 
+// isSymrefShadow reports whether a zero-old HEAD update only mirrors the
+// branch update in the same transaction. Git versions before 2.55 report an
+// attached HEAD move as a zero-old update next to the real branch line,
+// which carries the actual old tip. The shadow line must not run reset
+// handling with a zero old value; the branch update decides the outcome.
+func isSymrefShadow(updates []rewrite.RefUpdate, update rewrite.RefUpdate, attached bool, currentBranch string) bool {
+	if update.Ref != "HEAD" || !isZero(update.Old) || !attached || currentBranch == "" {
+		return false
+	}
+	for _, candidate := range updates {
+		if candidate.Ref == currentBranch && candidate.New == update.New {
+			return true
+		}
+	}
+	return false
+}
+
 // commitAdvance reports whether update moves a branch to a newly created
 // commit whose first parent is the previous tip and that carries no note
 // yet. That is an ordinary commit (or merge), not a reset: pending state and
 // the annotated boundary stay untouched for the post-commit annotation,
 // which validates them. A commit that already carries a note or an invalid
-// note falls through to reset handling.
-// commitAdvance reports whether update moves a branch to a newly created
-// commit whose first parent is the previous tip and that carries no note
-// yet. The HEAD reflog action must prove that Git just created the commit
-// through its commit machinery; moving an existing object into place by
-// reset or update-ref runs reset handling instead. Parent lookup errors
-// fail closed so a broken read never clears or rewrites state.
+// note falls through to reset handling. The HEAD reflog action must prove
+// that Git just created the commit through its commit machinery; moving an
+// existing object into place by reset or update-ref runs reset handling
+// instead. Parent lookup errors fail closed so a broken read never clears
+// or rewrites state.
 func commitAdvance(repo *gitcmd.Repo, update rewrite.RefUpdate) (bool, error) {
 	if update.Old == "" || update.New == "" || isZero(update.Old) || isZero(update.New) {
 		return false, nil
