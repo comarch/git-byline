@@ -568,7 +568,8 @@ func runModelResolutionCase(t *testing.T, transcript, sidecar, want string) {
 	root := appRepo(t)
 	appWrite(t, root, "file.txt", "base\n")
 	appCommit(t, root, "base")
-	payload := `{"session_id":"s","tool_name":"Edit","transcript_path":"` + filepath.Join(dir, "session.jsonl") +
+	// Backslashes in a Windows temp path are not JSON escapes.
+	payload := `{"session_id":"s","tool_name":"Edit","transcript_path":"` + filepath.ToSlash(filepath.Join(dir, "session.jsonl")) +
 		`","tool_input":{"file_path":"file.txt"}}`
 	code, _, stderr, err := appRun(root, now, strings.NewReader(payload),
 		"checkpoint", "droid", "--type", "human", "--hook-input", "stdin")
