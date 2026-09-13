@@ -229,6 +229,9 @@ func extractUpdateBinary(archivePath, targetDir string) (string, error) {
 	kept := false
 	defer func() {
 		if !kept {
+			// Windows refuses to remove an open file, so close before
+			// removing on every failure path.
+			_ = staged.Close()
 			_ = os.Remove(staged.Name())
 		}
 	}()
