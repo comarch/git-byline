@@ -21,6 +21,21 @@ if ($Version -notmatch "^v[0-9]+\.[0-9]+\.[0-9]+$") {
     throw "Unsupported release version: $Version"
 }
 
+# Re-running the installer is the update path: skip the download entirely
+# when the installed binary already reports the target release.
+$target = Join-Path $BinDir "git-byline.exe"
+$previous = $null
+if (Test-Path -LiteralPath $target -PathType Leaf) {
+    $current = try { & $target version 2>$null } catch { $null }
+    if ($current -eq "git-byline $Version") {
+        Write-Output "git-byline $Version is already installed at $target"
+        return
+    }
+    if ($current -match "^git-byline v[0-9]+\.[0-9]+\.[0-9]+$") {
+        $previous = $current.Substring("git-byline ".Length)
+    }
+}
+
 $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
 switch ($architecture) {
     "X64" { $arch = "amd64" }
@@ -96,7 +111,6 @@ try {
     }
 
     New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-    $target = Join-Path $BinDir "git-byline.exe"
     if (Test-Path -LiteralPath $target -PathType Container) {
         throw "Destination is a directory: $target"
     }
@@ -110,7 +124,12 @@ try {
         & $target install-hooks --agent none --git --project
     }
 
-    Write-Output "Installed git-byline $Version to $target"
+    if ($previous) {
+        Write-Output "Updated git-byline $previous to $Version at $target"
+    }
+    else {
+        Write-Output "Installed git-byline $Version to $target"
+    }
 
     if (-not $NoAgentHooks) {
         # Detection reads a command name and a configuration directory. It

@@ -15,6 +15,9 @@ Usage: install.sh [--version VERSION] [--bin-dir DIR] [--no-git-hook]
 
 Install a checksum-verified git-byline release for Linux or macOS.
 
+Re-running the installer is also the update path: when the installed
+binary already reports the target release, it prints one line and exits.
+
 The installer detects the coding agents present on this machine. Agents that
 git-byline can configure on its own get a user-level hook, which covers every
 repository. For the remaining agents it prints the one command that adds their
@@ -78,6 +81,22 @@ printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || {
 	printf 'install.sh: unsupported release version: %s\n' "$version" >&2
 	exit 1
 }
+
+# Re-running the installer is the update path: skip the download entirely
+# when the installed binary already reports the target release.
+target="$bin_dir/git-byline"
+previous=""
+if [ -f "$target" ]; then
+	current="$("$target" version 2>/dev/null || true)"
+	case "$current" in
+	"git-byline v"*) previous="${current#git-byline }" ;;
+	*) ;;
+	esac
+	if [ "$current" = "git-byline $version" ]; then
+		printf 'git-byline %s is already installed at %s\n' "$version" "$target"
+		exit 0
+	fi
+fi
 
 case "$(uname -s)" in
 Darwin) os="macOS" ;;
@@ -155,7 +174,6 @@ chmod 0755 "$tmp/git-byline"
 }
 
 mkdir -p "$bin_dir"
-target="$bin_dir/git-byline"
 [ ! -d "$target" ] || {
 	printf 'install.sh: destination is a directory: %s\n' "$target" >&2
 	exit 1
@@ -172,7 +190,11 @@ if [ "$install_git_hook" != "0" ] &&
 	"$target" install-hooks --agent none --git --project
 fi
 
-printf 'Installed git-byline %s to %s\n' "$version" "$target"
+if [ -n "$previous" ]; then
+	printf 'Updated git-byline %s to %s at %s\n' "$previous" "$version" "$target"
+else
+	printf 'Installed git-byline %s to %s\n' "$version" "$target"
+fi
 
 # detected reports whether an agent is present, by its command or by its
 # configuration directory. Detection never writes anything.

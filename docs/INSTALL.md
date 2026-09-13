@@ -218,6 +218,61 @@ Copy-Item .\git-byline_VERSION_windows_ARCH\git-byline.exe `
 
 Compare the Windows hash with the exact archive line in `checksums.txt`.
 
+## Update
+
+Re-running the same one-liner is the update path. The installer compares the
+release version with the binary it is about to replace: when they match it
+prints `git-byline ... is already installed at ...` and exits without
+downloading anything. When they differ it installs the new release over the
+old binary and re-runs the hook installs, so managed hook blocks refresh to
+the new version. No backup file is kept; the installer reports the version it
+replaced.
+
+Go installs update through the toolchain:
+
+```sh
+go install github.com/comarch/git-byline/cmd/git-byline@latest
+```
+
+Agent packages update by re-running their `/git-byline-setup` command.
+
+### Air-gapped update
+
+Download the release archive and `checksums.txt` yourself, then let the
+binary verify and swap itself with no network access:
+
+```sh
+git-byline update --archive git-byline_1.0.0_linux_amd64.tar.gz \
+  --checksums checksums.txt
+```
+
+Windows uses the matching `.zip` release; the command rejects an archive
+built for another operating system, because a checksummed cross-system binary
+would still install a binary that cannot run. `--dry-run` verifies the
+archive without replacing anything. The command enforces the same rules as the
+installers: SHA-256 from `checksums.txt`, the exact archive allowlist, no
+symlink in place of the binary, and a regular-file check. On Windows the
+previous binary stays as `git-byline.exe.old` until the running process
+exits. After any update, confirm with `git-byline version`.
+
+### Automatic updates
+
+git-byline ships no daemon and the binary performs no update check, so an
+automatic update is a scheduled re-run of the installer, which is a no-op
+when the version is current.
+
+Linux and macOS, weekly with cron:
+
+```text
+17 8 * * 1 curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubusercontent.com/comarch/git-byline/main/install.sh | sh >/dev/null
+```
+
+Windows, weekly with Task Scheduler:
+
+```powershell
+schtasks /Create /TN "git-byline update" /SC WEEKLY /ST 08:17 /TR 'powershell -NoProfile -Command \"irm https://raw.githubusercontent.com/comarch/git-byline/main/install.ps1 | iex\"'
+```
+
 ## Go toolchain
 
 With Go 1.24 or newer:
@@ -248,4 +303,6 @@ need elevation, which they never request. Agent detection reads a command name
 and a directory name, writes nothing of its own, and only ever calls
 `git-byline install-hooks`. When run inside a Git worktree, installers enable automatic
 attribution-note sharing unless `--no-git-hook` is used and hooks are later
-installed with `--local-notes`.
+installed with `--local-notes`. The `update` command follows the same rules
+offline: it refuses an archive whose checksum, file allowlist, or entry types
+do not match, and it never downloads anything.

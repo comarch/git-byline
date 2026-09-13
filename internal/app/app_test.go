@@ -83,6 +83,42 @@ var runCases = []runCase{
 		stdout: "Usage: git-byline version", noStderr: true,
 	},
 	{
+		name:   "version --json prints the version and note format",
+		args:   []string{"version", "--json"},
+		code:   ExitSuccess,
+		stdout: `{"version":"dev","note_version":3}` + "\n", noStderr: true,
+	},
+	{
+		name:   "help update prints the update usage",
+		args:   []string{"help", "update"},
+		code:   ExitSuccess,
+		stdout: "Usage: git-byline update", noStderr: true,
+	},
+	{
+		name:   "update without flags exits 2",
+		args:   []string{"update"},
+		code:   ExitUsage,
+		stderr: "--archive and --checksums are required", noStdout: true,
+	},
+	{
+		name:   "update with an unsupported archive exits 2",
+		args:   []string{"update", "--archive", "release.tar.xz", "--checksums", "checksums.txt"},
+		code:   ExitUsage,
+		stderr: "unsupported archive", noStdout: true,
+	},
+	{
+		name:   "update with a positional argument exits 2",
+		args:   []string{"update", "--archive", "a.tar.gz", "--checksums", "c.txt", "extra"},
+		code:   ExitUsage,
+		stderr: "update takes no positional arguments", noStdout: true,
+	},
+	{
+		name:   "update help flag prints usage on stdout and exits 0",
+		args:   []string{"update", "-h"},
+		code:   ExitSuccess,
+		stdout: "Usage: git-byline update", noStderr: true,
+	},
+	{
 		name:   "unknown command exits 2 with usage on stderr",
 		args:   []string{"bogus"},
 		code:   ExitUsage,

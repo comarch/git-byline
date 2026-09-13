@@ -39,6 +39,7 @@ func checkInstallers(root string) error {
 			"https://github.com/comarch/git-byline",
 			"checksums.txt",
 			"git-byline $version",
+			"already installed",
 		} {
 			if !strings.Contains(strings.ToLower(text), strings.ToLower(required)) {
 				return fmt.Errorf("%s is missing %q", name, required)
