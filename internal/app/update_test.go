@@ -580,10 +580,14 @@ func TestSwapBinaryWindowsPaths(t *testing.T) {
 // an operational failure (exit 1), not a usage error.
 func TestRunUpdateOperationalFailure(t *testing.T) {
 	dir := t.TempDir()
+	archiveName := "absent.tar.gz"
+	if runtime.GOOS == "windows" {
+		archiveName = "absent.zip"
+	}
 	var stdout, stderr bytes.Buffer
 	env := &Env{Stdin: &bytes.Buffer{}, Stdout: &stdout, Stderr: &stderr}
 	args := []string{"update",
-		"--archive", filepath.Join(dir, "absent.tar.gz"),
+		"--archive", filepath.Join(dir, archiveName),
 		"--checksums", filepath.Join(dir, "absent.txt")}
 	code, err := Run(args, env)
 	if code != ExitFailure {
