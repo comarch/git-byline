@@ -897,4 +897,18 @@ func TestHeadReflogAction(t *testing.T) {
 	if !strings.HasPrefix(action, "commit") {
 		t.Fatalf("action = %q, want a commit action", action)
 	}
+	// A bare git update-ref records a reflog entry without an action.
+	writeFile(t, root, "f.txt", "one\ntwo\n")
+	runGit(t, root, "commit", "-am", "two")
+	two := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))
+	one := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD~1"))
+	runGit(t, root, "reset", "--hard", one)
+	runGit(t, root, "update-ref", "refs/heads/main", two, one)
+	action, err = repo.HeadReflogAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != "" {
+		t.Fatalf("bare update-ref action = %q, want empty", action)
+	}
 }

@@ -798,12 +798,28 @@ func HandleReferenceTransaction(repo *gitcmd.Repo, input io.Reader, phase string
 // the annotated boundary stay untouched for the post-commit annotation,
 // which validates them. A commit that already carries a note or an invalid
 // note falls through to reset handling.
+// commitAdvance reports whether update moves a branch to a newly created
+// commit whose first parent is the previous tip and that carries no note
+// yet. The HEAD reflog action must prove that Git just created the commit
+// through its commit machinery; moving an existing object into place by
+// reset or update-ref runs reset handling instead. Parent lookup errors
+// fail closed so a broken read never clears or rewrites state.
 func commitAdvance(repo *gitcmd.Repo, update rewrite.RefUpdate) (bool, error) {
 	if update.Old == "" || update.New == "" || isZero(update.Old) || isZero(update.New) {
 		return false, nil
 	}
 	parents, err := repo.Parents(update.New)
-	if err != nil || len(parents) == 0 || parents[0] != update.Old {
+	if err != nil {
+		return false, fmt.Errorf("read commit parents %s: %w", update.New, err)
+	}
+	if len(parents) == 0 || parents[0] != update.Old {
+		return false, nil
+	}
+	action, err := repo.HeadReflogAction()
+	if err != nil {
+		return false, err
+	}
+	if !commitCreatingAction(action) {
 		return false, nil
 	}
 	_, found, err := repo.ReadNote(update.New)
@@ -811,6 +827,22 @@ func commitAdvance(repo *gitcmd.Repo, update rewrite.RefUpdate) (bool, error) {
 		return false, err
 	}
 	return !found, nil
+}
+
+// commitCreatingAction reports whether a HEAD reflog action was produced by
+// Git commit creation: commits, merges, pulls, rebases, cherry-picks, and
+// reverts all record an action with one of these prefixes. Empty actions
+// (update-ref) and reset or checkout entries do not qualify.
+func commitCreatingAction(action string) bool {
+	if action == "" {
+		return false
+	}
+	for _, prefix := range []string{"commit", "merge", "rebase", "pull", "cherry-pick", "revert"} {
+		if strings.HasPrefix(action, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func handleHeadMove(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult, error) {

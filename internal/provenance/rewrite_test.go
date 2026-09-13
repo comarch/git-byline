@@ -1175,6 +1175,96 @@ func TestReferenceTransactionKeepsPendingAcrossOrdinaryCommit(t *testing.T) {
 	}
 }
 
+func TestReferenceTransactionTreatsForwardResetAsReset(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "base.txt", "base\n")
+	base := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	// A commit created without the hook flow carries no note yet.
+	write(t, root, "child.txt", "child\n")
+	git(t, root, "add", "child.txt")
+	git(t, root, "commit", "-m", "child")
+	child := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	// Moving the branch forward to an existing object is a reset, not a
+	// commit advance, even though the child's parent is the old tip.
+	git(t, root, "reset", "--hard", base)
+	git(t, root, "reset", "--hard", child)
+	input := base + " " + child + " refs/heads/main\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A forward move of an existing object must clear the boundary for a
+	// fresh initialization instead of pretending a commit was created.
+	if state.LastAnnotatedCommit != "" {
+		t.Fatalf("forward reset kept commit state: %+v", state)
+	}
+	// The next annotate must initialize on the moved commit, not fail.
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	blame, err := Blame(repo, "child.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blame.Lines) != 1 || blame.Lines[0].Attribution.Author != model.AuthorHuman {
+		t.Fatalf("child attribution = %+v, want human from initialization", blame.Lines)
+	}
+}
+
+func TestReferenceTransactionTreatsBareRefUpdateAsReset(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "base.txt", "base\n")
+	base := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "child.txt", "child\n")
+	git(t, root, "add", "child.txt")
+	git(t, root, "commit", "-m", "child")
+	child := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	// git update-ref records a bare reflog entry without a commit action,
+	// so the move to the unannotated child must run reset handling.
+	git(t, root, "reset", "--hard", base)
+	git(t, root, "update-ref", "refs/heads/main", child, base)
+	input := base + " " + child + " refs/heads/main\n"
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastAnnotatedCommit != "" {
+		t.Fatalf("bare ref update kept commit state: %+v", state)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	blame, err := Blame(repo, "child.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blame.Lines) != 1 || blame.Lines[0].Attribution.Author != model.AuthorHuman {
+		t.Fatalf("child attribution = %+v, want human from initialization", blame.Lines)
+	}
+}
+
 func TestAnnotateSkipsRebaseReplayAndPostRewriteRemaps(t *testing.T) {
 	t.Parallel()
 	root := testRepo(t)
