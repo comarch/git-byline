@@ -246,8 +246,10 @@ git-byline update --archive git-byline_1.0.0_linux_amd64.tar.gz \
   --checksums checksums.txt
 ```
 
-Windows uses the matching `.zip` release. `--dry-run` verifies the archive
-without replacing anything. The command enforces the same rules as the
+Windows uses the matching `.zip` release; the command rejects an archive
+built for another operating system, because a checksummed cross-system binary
+would still install a binary that cannot run. `--dry-run` verifies the
+archive without replacing anything. The command enforces the same rules as the
 installers: SHA-256 from `checksums.txt`, the exact archive allowlist, no
 symlink in place of the binary, and a regular-file check. On Windows the
 previous binary stays as `git-byline.exe.old` until the running process
@@ -268,7 +270,7 @@ Linux and macOS, weekly with cron:
 Windows, weekly with Task Scheduler:
 
 ```powershell
-schtasks /Create /TN "git-byline update" /SC WEEKLY /ST 08:17 /TR "powershell -NoProfile -Command \"irm https://raw.githubusercontent.com/comarch/git-byline/main/install.ps1 | iex\""
+schtasks /Create /TN "git-byline update" /SC WEEKLY /ST 08:17 /TR 'powershell -NoProfile -Command \"irm https://raw.githubusercontent.com/comarch/git-byline/main/install.ps1 | iex\"'
 ```
 
 ## Go toolchain

@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -182,6 +183,8 @@ func assertTarget(t *testing.T, target, want string) {
 }
 
 // assertNoStagingLeftovers fails when a staging file was not cleaned up.
+// Both the archive copy and the extracted binary stage under dot-prefixed
+// names in the target directory.
 func assertNoStagingLeftovers(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -189,7 +192,8 @@ func assertNoStagingLeftovers(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".git-byline-update-") {
+		if strings.HasPrefix(entry.Name(), ".git-byline-update-") ||
+			strings.HasPrefix(entry.Name(), ".git-byline-archive-") {
 			t.Errorf("staging file %s was not cleaned up", entry.Name())
 		}
 	}
@@ -430,19 +434,146 @@ func TestReadChecksumFor(t *testing.T) {
 func TestSupportedUpdateArchive(t *testing.T) {
 	cases := []struct {
 		path string
+		goos string
 		want bool
 	}{
-		{"git-byline_1.0.0_linux_amd64.tar.gz", true},
-		{"git-byline_1.0.0_macOS_arm64.TAR.GZ", true},
-		{"git-byline_1.0.0_windows_amd64.zip", true},
-		{"git-byline_1.0.0_linux_amd64.tar.xz", false},
-		{"checksums.txt", false},
+		{"git-byline_1.0.0_linux_amd64.tar.gz", "linux", true},
+		{"git-byline_1.0.0_linux_amd64.tar.gz", "darwin", true},
+		{"git-byline_1.0.0_linux_amd64.tar.gz", "windows", false},
+		{"git-byline_1.0.0_windows_amd64.zip", "windows", true},
+		{"git-byline_1.0.0_windows_amd64.zip", "linux", false},
+		{"git-byline_1.0.0_macOS_arm64.TAR.GZ", "darwin", true},
+		{"git-byline_1.0.0_linux_amd64.tar.xz", "linux", false},
+		{"checksums.txt", "windows", false},
 	}
 	for _, tt := range cases {
-		if got := supportedUpdateArchive(tt.path); got != tt.want {
-			t.Errorf("supportedUpdateArchive(%q) = %v, want %v", tt.path, got, tt.want)
+		if got := supportedUpdateArchive(tt.path, tt.goos); got != tt.want {
+			t.Errorf("supportedUpdateArchive(%q, %q) = %v, want %v", tt.path, tt.goos, got, tt.want)
 		}
 	}
+}
+
+// TestApplyUpdateRejectsOversizedEntry checks that every declared entry is
+// bounded, so a tiny gzip stream cannot claim a huge allowlisted file and
+// force the reader to drain it.
+func TestApplyUpdateRejectsOversizedEntry(t *testing.T) {
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, "git-byline_1.0.0_linux_amd64.tar.gz")
+	file, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gzipWriter := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(gzipWriter)
+	header := &tar.Header{
+		Typeflag: tar.TypeReg,
+		Name:     "LICENSE",
+		// Declared size far above the archive budget with almost no bytes
+		// behind it: the bound must fire before any draining.
+		Size: maxUpdateArchiveBytes + 1,
+		Mode: 0o644,
+	}
+	if err := tarWriter.WriteHeader(header); err != nil {
+		t.Fatal(err)
+	}
+	// The entry is intentionally underwritten; the reader rejects the
+	// declared size before it tries to drain the content.
+	_ = tarWriter.Close()
+	_ = gzipWriter.Close()
+	_ = file.Close()
+	options, _ := stageUpdate(t, dir, archivePath, "git-byline")
+	err = applyUpdate(testEnv(&bytes.Buffer{}), options)
+	if err == nil {
+		t.Fatal("applyUpdate succeeded, want an oversized-entry rejection")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error = %v, want it to contain the archive budget", err)
+	}
+	assertTarget(t, options.targetPath, "old binary")
+}
+
+// TestSwapBinaryWindowsPaths covers the Windows rename dance with the file
+// operations injected, so the failure paths run on every platform.
+func TestSwapBinaryWindowsPaths(t *testing.T) {
+	t.Run("undead old file is reported", func(t *testing.T) {
+		var ops []string
+		rename := func(from, to string) error {
+			ops = append(ops, from+"->"+to)
+			return nil
+		}
+		remove := func(path string) error {
+			ops = append(ops, "remove:"+path)
+			return errors.New("locked")
+		}
+		leftOld, err := swapBinaryFunc("windows", rename, remove, "staged", "target")
+		if err != nil {
+			t.Fatalf("swapBinaryFunc: %v", err)
+		}
+		if leftOld != "target.old" {
+			t.Errorf("leftOld = %q, want target.old", leftOld)
+		}
+		want := "remove:target.old,target->target.old,staged->target,remove:target.old"
+		if got := strings.Join(ops, ","); got != want {
+			t.Errorf("operations = %q, want %q", got, want)
+		}
+	})
+	t.Run("failed place restores the previous binary", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "git-byline")
+		staged := filepath.Join(dir, "staged")
+		if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(staged, []byte("new binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		calls := 0
+		rename := func(from, to string) error {
+			calls++
+			if calls == 2 {
+				return errors.New("disk full")
+			}
+			return os.Rename(from, to)
+		}
+		_, err := swapBinaryFunc("windows", rename, os.Remove, staged, target)
+		if err == nil || !strings.Contains(err.Error(), "place new binary") {
+			t.Fatalf("error = %v, want a place-new-binary failure", err)
+		}
+		assertTarget(t, target, "old binary")
+	})
+	t.Run("failed place with failed rollback reports the old path", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "git-byline")
+		staged := filepath.Join(dir, "staged")
+		if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(staged, []byte("new binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		calls := 0
+		rename := func(from, to string) error {
+			calls++
+			if calls >= 2 {
+				return errors.New("disk full")
+			}
+			return os.Rename(from, to)
+		}
+		_, err := swapBinaryFunc("windows", rename, os.Remove, staged, target)
+		if err == nil {
+			t.Fatal("swapBinaryFunc succeeded, want an error")
+		}
+		if !strings.Contains(err.Error(), "restoring the previous binary also failed") {
+			t.Errorf("error = %v, want it to report the failed restore", err)
+		}
+		if !strings.Contains(err.Error(), filepath.Join(dir, "git-byline.old")) {
+			t.Errorf("error = %v, want it to name the .old path", err)
+		}
+		assertTarget(t, filepath.Join(dir, "git-byline.old"), "old binary")
+		if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+			t.Errorf("target exists after a failed place and restore, stat: %v", statErr)
+		}
+	})
 }
 
 // TestRunUpdateOperationalFailure checks that a missing checksums file is

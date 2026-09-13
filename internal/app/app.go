@@ -175,9 +175,10 @@ func commands() []*command {
 			short: "replace the running binary from a verified archive",
 			usage: "Usage: git-byline update --archive FILE --checksums FILE [--dry-run]\n\n" +
 				"Verify a staged release archive against its checksums and replace\n" +
-				"the running binary in place. The binary never downloads anything:\n" +
-				"fetch the archive and checksums yourself. After the swap, run\n" +
-				"'git-byline version' to confirm the new version.",
+				"the running binary in place. Use the .tar.gz release on Linux and\n" +
+				"macOS and the .zip release on Windows. The binary never downloads\n" +
+				"anything: fetch the archive and checksums yourself. After the swap,\n" +
+				"run 'git-byline version' to confirm the new version.",
 			run: runUpdate,
 		},
 		{

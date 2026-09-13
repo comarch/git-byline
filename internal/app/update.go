@@ -64,8 +64,8 @@ func runUpdate(env *Env, command *command, args []string) (int, error) {
 	if !archiveSpecified || !checksumsSpecified {
 		return commandUsageError(env, command, errors.New("--archive and --checksums are required"))
 	}
-	if !supportedUpdateArchive(archivePath) {
-		return commandUsageError(env, command, errors.New("unsupported archive: expected .tar.gz (Linux, macOS) or .zip (Windows)"))
+	if !supportedUpdateArchive(archivePath, runtime.GOOS) {
+		return commandUsageError(env, command, errors.New("unsupported archive: expected .tar.gz on Linux and macOS, .zip on Windows"))
 	}
 	target, err := currentExecutable()
 	if err != nil {
@@ -97,14 +97,22 @@ func applyUpdate(env *Env, o updateOptions) error {
 	if err != nil {
 		return err
 	}
-	actual, err := hashFile(o.archivePath)
+	// The archive is hashed and read through one private staging copy, so
+	// a file swapped at the original path between the checksum check and
+	// extraction cannot bypass verification.
+	verifiedArchive, err := stageArchiveCopy(o.archivePath, filepath.Dir(o.targetPath))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(verifiedArchive) }()
+	actual, err := hashFile(verifiedArchive)
 	if err != nil {
 		return err
 	}
 	if actual != expected {
 		return fmt.Errorf("checksum mismatch for %s", o.archivePath)
 	}
-	staged, err := extractUpdateBinary(o.archivePath, filepath.Dir(o.targetPath))
+	staged, err := extractUpdateBinary(verifiedArchive, filepath.Dir(o.targetPath))
 	if err != nil {
 		return err
 	}
@@ -145,11 +153,16 @@ func currentExecutable() (string, error) {
 	return resolved, nil
 }
 
-// supportedUpdateArchive reports whether the archive name uses a supported
-// release layout: .tar.gz for Linux and macOS, .zip for Windows.
-func supportedUpdateArchive(archivePath string) bool {
+// supportedUpdateArchive reports whether the archive name matches the
+// release layout for one operating system: .tar.gz on Linux and macOS,
+// .zip on Windows. A checksummed archive for the wrong system would pass
+// verification and install a binary that cannot run there.
+func supportedUpdateArchive(archivePath, goos string) bool {
 	lower := strings.ToLower(archivePath)
-	return strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".zip")
+	if goos == "windows" {
+		return strings.HasSuffix(lower, ".zip")
+	}
+	return strings.HasSuffix(lower, ".tar.gz")
 }
 
 // readChecksumFor returns the SHA-256 value recorded for one archive in a
@@ -199,6 +212,44 @@ func readChecksumFor(checksumsPath, archiveName string) (string, error) {
 	return expected, nil
 }
 
+// stageArchiveCopy copies the archive into a private staging file in
+// targetDir, bounded by the update archive cap. The staging name keeps the
+// archive suffix, because extraction dispatches on it. The caller removes it.
+func stageArchiveCopy(archivePath, targetDir string) (string, error) {
+	source, err := os.Open(archivePath)
+	if err != nil {
+		return "", fmt.Errorf("open archive: %w", err)
+	}
+	defer source.Close()
+	suffix := ".tar.gz"
+	if updateIsZip(archivePath) {
+		suffix = ".zip"
+	}
+	staged, err := os.CreateTemp(targetDir, ".git-byline-archive-*"+suffix)
+	if err != nil {
+		return "", fmt.Errorf("create archive staging file: %w", err)
+	}
+	kept := false
+	defer func() {
+		if !kept {
+			_ = staged.Close()
+			_ = os.Remove(staged.Name())
+		}
+	}()
+	written, err := io.Copy(staged, io.LimitReader(source, maxUpdateArchiveBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("read archive: %w", err)
+	}
+	if written > maxUpdateArchiveBytes {
+		return "", fmt.Errorf("archive exceeds %d bytes", maxUpdateArchiveBytes)
+	}
+	if err := staged.Close(); err != nil {
+		return "", fmt.Errorf("close archive staging file: %w", err)
+	}
+	kept = true
+	return staged.Name(), nil
+}
+
 // hashFile returns the lowercase SHA-256 of one file, bounded by the update
 // archive cap.
 func hashFile(path string) (string, error) {
@@ -236,11 +287,16 @@ func extractUpdateBinary(archivePath, targetDir string) (string, error) {
 		}
 	}()
 	binaryName := "git-byline"
-	if strings.HasSuffix(strings.ToLower(archivePath), ".zip") {
+	if updateIsZip(archivePath) {
 		binaryName = "git-byline.exe"
 	}
 	allowlist := []string{"LICENSE", "README.md", "SECURITY.md", binaryName}
-	names, err := readUpdateArchive(archivePath, binaryName, staged)
+	var names []string
+	if updateIsZip(archivePath) {
+		names, err = readUpdateZip(archivePath, binaryName, staged)
+	} else {
+		names, err = readUpdateTar(archivePath, binaryName, staged)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -260,13 +316,10 @@ func extractUpdateBinary(archivePath, targetDir string) (string, error) {
 	return staged.Name(), nil
 }
 
-// readUpdateArchive walks one archive, copies the release binary into staged,
-// and returns the sorted entry names it contains.
-func readUpdateArchive(archivePath, binaryName string, staged *os.File) ([]string, error) {
-	if strings.HasSuffix(strings.ToLower(archivePath), ".zip") {
-		return readUpdateZip(archivePath, binaryName, staged)
-	}
-	return readUpdateTar(archivePath, binaryName, staged)
+// updateIsZip reports whether the update reads the Windows zip release
+// layout instead of the POSIX tar.gz one.
+func updateIsZip(archivePath string) bool {
+	return strings.HasSuffix(strings.ToLower(archivePath), ".zip")
 }
 
 func readUpdateTar(archivePath, binaryName string, staged *os.File) ([]string, error) {
@@ -283,6 +336,7 @@ func readUpdateTar(archivePath, binaryName string, staged *os.File) ([]string, e
 	reader := tar.NewReader(gzipReader)
 	names := []string{}
 	found := false
+	var remaining int64 = maxUpdateArchiveBytes
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
@@ -291,6 +345,13 @@ func readUpdateTar(archivePath, binaryName string, staged *os.File) ([]string, e
 		if err != nil {
 			return nil, fmt.Errorf("read archive: %w", err)
 		}
+		// Bound every declared entry, not only the binary: a tiny gzip
+		// stream can declare a huge allowlisted entry and force the
+		// reader to drain it.
+		if header.Size > remaining {
+			return nil, fmt.Errorf("archive entry %s exceeds the %d-byte archive budget", header.Name, maxUpdateArchiveBytes)
+		}
+		remaining -= header.Size
 		name := updateEntryName(header.Name)
 		if name == "" {
 			continue
@@ -326,7 +387,14 @@ func readUpdateZip(archivePath, binaryName string, staged *os.File) ([]string, e
 	defer reader.Close()
 	names := []string{}
 	found := false
+	var remaining int64 = maxUpdateArchiveBytes
 	for _, entry := range reader.File {
+		// Bound every declared entry like the tar path, so a small zip
+		// cannot declare an oversized allowlisted file.
+		if entry.UncompressedSize64 > uint64(remaining) {
+			return nil, fmt.Errorf("archive entry %s exceeds the %d-byte archive budget", entry.Name, maxUpdateArchiveBytes)
+		}
+		remaining -= int64(entry.UncompressedSize64)
 		name := updateEntryName(entry.Name)
 		if name == "" {
 			continue
@@ -388,28 +456,38 @@ func sameStringSlice(a, b []string) bool {
 	return true
 }
 
-// swapBinary replaces target with staged. On Windows the running image cannot
-// be overwritten in place, so the old binary moves aside first; when the old
-// file cannot be deleted because this process still runs, its path is
-// returned for the caller to report. On every error path the target is left
-// unchanged.
+// swapBinary replaces target with staged. On Windows the running image
+// cannot be overwritten in place, so the old binary moves aside first; when
+// the old file cannot be deleted because this process still runs, its path
+// is returned for the caller to report.
 func swapBinary(staged, target string) (string, error) {
-	if runtime.GOOS != "windows" {
-		if err := os.Rename(staged, target); err != nil {
+	return swapBinaryFunc(runtime.GOOS, os.Rename, os.Remove, staged, target)
+}
+
+// swapBinaryFunc is swapBinary with the platform and the file operations
+// injected, so the Windows failure paths stay testable on every platform.
+// When the swap fails, the previous binary is restored; if the restore also
+// fails, the error says so and where the previous binary remains, rather
+// than hiding the recovery path.
+func swapBinaryFunc(goos string, rename func(string, string) error, remove func(string) error, staged, target string) (string, error) {
+	if goos != "windows" {
+		if err := rename(staged, target); err != nil {
 			return "", fmt.Errorf("replace binary: %w", err)
 		}
 		return "", nil
 	}
 	old := target + ".old"
-	_ = os.Remove(old)
-	if err := os.Rename(target, old); err != nil {
+	_ = remove(old)
+	if err := rename(target, old); err != nil {
 		return "", fmt.Errorf("move current binary away: %w", err)
 	}
-	if err := os.Rename(staged, target); err != nil {
-		_ = os.Rename(old, target)
+	if err := rename(staged, target); err != nil {
+		if restoreErr := rename(old, target); restoreErr != nil {
+			return "", fmt.Errorf("place new binary: %w; restoring the previous binary also failed: %v; the previous binary remains at %s", err, restoreErr, old)
+		}
 		return "", fmt.Errorf("place new binary: %w", err)
 	}
-	if err := os.Remove(old); err != nil {
+	if err := remove(old); err != nil {
 		return old, nil
 	}
 	return "", nil
