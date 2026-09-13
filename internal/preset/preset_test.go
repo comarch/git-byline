@@ -168,16 +168,18 @@ func TestParseTranscriptPath(t *testing.T) {
 	}
 }
 
+type windsurfCase struct {
+	name      string
+	author    model.Author
+	payload   string
+	handled   bool
+	wantKind  string
+	wantPaths int
+}
+
 func TestParseWindsurfEvents(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name      string
-		author    model.Author
-		payload   string
-		handled   bool
-		wantKind  string
-		wantPaths int
-	}{
+	tests := []windsurfCase{
 		{
 			name:     "write post captures the edited path",
 			author:   model.AuthorAI,
@@ -223,25 +225,31 @@ func TestParseWindsurfEvents(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			event, handled, err := Parse("portable-windsurf", test.author, strings.NewReader(test.payload))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if handled != test.handled {
-				t.Fatalf("handled = %t, want %t", handled, test.handled)
-			}
-			if !handled {
-				return
-			}
-			if event.Kind != test.wantKind || len(event.Paths) != test.wantPaths {
-				t.Fatalf("event = %+v, want kind %q with %d paths", event, test.wantKind, test.wantPaths)
-			}
-			if test.author == model.AuthorAI {
-				if event.Agent != "windsurf" || event.Model != "Claude Sonnet 4" || event.Session != "traj-1" {
-					t.Fatalf("attribution = %+v", event)
-				}
-			}
+			runWindsurfCase(t, test)
 		})
+	}
+}
+
+func runWindsurfCase(t *testing.T, test windsurfCase) {
+	t.Helper()
+	event, handled, err := Parse("portable-windsurf", test.author, strings.NewReader(test.payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled != test.handled {
+		t.Fatalf("handled = %t, want %t", handled, test.handled)
+	}
+	if !handled {
+		return
+	}
+	if event.Kind != test.wantKind || len(event.Paths) != test.wantPaths {
+		t.Fatalf("event = %+v, want kind %q with %d paths", event, test.wantKind, test.wantPaths)
+	}
+	if test.author != model.AuthorAI {
+		return
+	}
+	if event.Agent != "windsurf" || event.Model != "Claude Sonnet 4" || event.Session != "traj-1" {
+		t.Fatalf("attribution = %+v", event)
 	}
 }
 
