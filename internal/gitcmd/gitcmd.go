@@ -1144,6 +1144,58 @@ func (repo *Repo) ConfigPath(key string) (string, bool, error) {
 	return "", false, err
 }
 
+// GlobalConfig reads one user-level Git configuration value. It runs
+// outside any repository, so callers must pass an explicit --global key.
+func GlobalConfig(key string) (string, bool, error) {
+	out, err := runGitOutsideRepo("read global git config", "config", "--global", "--get", key)
+	if err == nil {
+		return strings.TrimSpace(string(out)), true, nil
+	}
+	var commandErr *CommandError
+	if errors.As(err, &commandErr) && commandErr.ExitCode == 1 {
+		return "", false, nil
+	}
+	return "", false, err
+}
+
+// SetGlobalConfig writes one user-level Git configuration value.
+func SetGlobalConfig(key, value string) error {
+	if key == "" || strings.ContainsRune(key, 0) {
+		return errors.New("global git config key is empty or contains NUL")
+	}
+	if strings.ContainsRune(value, 0) {
+		return errors.New("global git config value contains NUL")
+	}
+	_, err := runGitOutsideRepo("write global git config", "config", "--global", key, value)
+	return err
+}
+
+// UnsetGlobalConfig removes one user-level Git configuration value and
+// reports whether the value existed.
+func UnsetGlobalConfig(key string) (bool, error) {
+	_, err := runGitOutsideRepo("unset global git config", "config", "--global", "--unset", key)
+	if err == nil {
+		return true, nil
+	}
+	var commandErr *CommandError
+	if errors.As(err, &commandErr) && commandErr.ExitCode == 5 {
+		return false, nil
+	}
+	return false, err
+}
+
+// runGitOutsideRepo runs one Git command that needs no repository, such as
+// user-level configuration, with the same environment stripping, output
+// limits, and timeout as repository commands.
+func runGitOutsideRepo(operation string, args ...string) ([]byte, error) {
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		return nil, fmt.Errorf("find git executable: %w", err)
+	}
+	temp := &Repo{gitBin: gitBin}
+	return temp.run(operation, nil, args...)
+}
+
 func tempFile(dir, pattern string, data []byte) (string, error) {
 	file, err := os.CreateTemp(dir, pattern)
 	if err != nil {

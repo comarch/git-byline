@@ -451,8 +451,11 @@ func runInstallHooks(env *Env, command *command, args []string) (int, error) {
 	for _, path := range result.Changed {
 		fmt.Fprintf(env.Stdout, "updated %s\n", path)
 	}
-	if len(result.Changed) == 0 {
+	if len(result.Changed) == 0 && !result.ConfigChanged {
 		fmt.Fprintln(env.Stdout, "hooks already installed")
+	}
+	if result.ConfigChanged {
+		fmt.Fprintln(env.Stdout, "updated global git config init.templateDir")
 	}
 	if options.Git && !options.LocalNotes {
 		fmt.Fprintln(env.Stdout, "attribution notes will be pushed automatically")
@@ -480,8 +483,11 @@ func runUninstall(env *Env, command *command, args []string) (int, error) {
 	for _, path := range result.Changed {
 		fmt.Fprintf(env.Stdout, "updated %s\n", path)
 	}
-	if len(result.Changed) == 0 {
+	if len(result.Changed) == 0 && !result.ConfigChanged {
 		fmt.Fprintln(env.Stdout, "no managed hooks found")
+	}
+	if result.ConfigChanged {
+		fmt.Fprintln(env.Stdout, "removed global git config init.templateDir")
 	}
 	return ExitSuccess, nil
 }
@@ -494,6 +500,7 @@ func parseHookOptions(command *command, args []string) (hooks.Options, error) {
 	localNotes := flags.Bool("local-notes", false, "disable automatic attribution note sharing")
 	user := flags.Bool("user", false, "use user agent configuration")
 	project := flags.Bool("project", false, "use project agent configuration")
+	template := flags.Bool("template", false, "manage Git hooks in the git-byline Git template directory")
 	if err := flags.Parse(args); err != nil {
 		return hooks.Options{}, err
 	}
@@ -517,7 +524,10 @@ func parseHookOptions(command *command, args []string) (hooks.Options, error) {
 	if *localNotes && !*gitHook {
 		return hooks.Options{}, errors.New("--local-notes requires --git")
 	}
-	return hooks.Options{Agent: *agent, Git: *gitHook, User: *user, LocalNotes: *localNotes}, nil
+	if *template && !*gitHook {
+		return hooks.Options{}, errors.New("--template requires --git")
+	}
+	return hooks.Options{Agent: *agent, Git: *gitHook, User: *user, LocalNotes: *localNotes, Template: *template}, nil
 }
 
 func parseJSONFlag(args []string) (bool, []string, error) {

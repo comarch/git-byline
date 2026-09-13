@@ -158,15 +158,17 @@ func commands() []*command {
 		{
 			name:  "install-hooks",
 			short: "install agent and Git hooks",
-			usage: "Usage: git-byline install-hooks [--agent droid|claude|all|none] [--git] [--local-notes] [--user|--project]\n\n" +
+			usage: "Usage: git-byline install-hooks [--agent droid|claude|all|none] [--git] [--local-notes] [--user|--project] [--template]\n\n" +
 				"Merge managed hooks without replacing existing configuration.\n" +
-				"Git hooks share attribution notes on push unless --local-notes is set.",
+				"Git hooks share attribution notes on push unless --local-notes is set.\n" +
+				"--template manages Git hooks in the git-byline Git template\n" +
+				"directory, so every new git init and git clone is attributed.",
 			run: runInstallHooks,
 		},
 		{
 			name:  "uninstall",
 			short: "remove managed hooks",
-			usage: "Usage: git-byline uninstall [--agent droid|claude|all|none] [--git] [--user|--project]\n\n" +
+			usage: "Usage: git-byline uninstall [--agent droid|claude|all|none] [--git] [--user|--project] [--template]\n\n" +
 				"Remove only configuration managed by git-byline.",
 			run: runUninstall,
 		},

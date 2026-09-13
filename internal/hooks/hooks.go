@@ -19,6 +19,21 @@ const (
 	blockStart   = "# >>> git-byline managed >>>"
 	blockEnd     = "# <<< git-byline managed <<<"
 	maxHookBytes = 1 << 20
+	// templateConfigKey is the user-level Git configuration entry that
+	// points every new git init and git clone at the managed template.
+	templateConfigKey = "init.templateDir"
+	// templateInfoExclude and templateDescription mirror the files Git
+	// normally copies from its default template directory. A custom
+	// template replaces that directory entirely, so without these files
+	// every new repository would miss .git/info/exclude.
+	templateInfoExclude = `# git ls-files --others --exclude-from=.git/info/exclude
+# Lines that start with '#' are comments.
+# For a project with two submodules a and b:
+# a/b
+# *.[oa]
+# *~
+`
+	templateDescription = "Unnamed repository; edit this file 'description' to name the repository.\n"
 )
 
 // Options selects hook systems and scope.
@@ -27,11 +42,15 @@ type Options struct {
 	Git        bool
 	User       bool
 	LocalNotes bool
+	Template   bool
 }
 
 // Result lists files changed by an operation.
 type Result struct {
 	Changed []string
+	// ConfigChanged reports that the user-level init.templateDir value was
+	// written or removed by a template-scope operation.
+	ConfigChanged bool
 }
 
 // Install merges selected hooks.
@@ -45,16 +64,21 @@ func Uninstall(dir string, options Options) (Result, error) {
 }
 
 func change(dir string, options Options, install bool) (Result, error) {
+	agents := selectedAgents(options.Agent)
 	var repo *gitcmd.Repo
-	var err error
-	if options.Git || !options.User {
-		repo, err = gitcmd.Discover(dir)
+	// Template-scope Git hooks live in the user-level template directory,
+	// so only repository-scoped work discovers a worktree.
+	needRepo := (options.Git && !options.Template) || (len(agents) > 0 && !options.User && !options.Template)
+	if needRepo {
+		discovered, err := gitcmd.Discover(dir)
 		if err != nil {
 			return Result{}, err
 		}
+		repo = discovered
 	}
 	executable := "git-byline"
 	if install {
+		var err error
 		executable, err = os.Executable()
 		if err != nil {
 			return Result{}, fmt.Errorf("resolve git-byline executable: %w", err)
@@ -69,7 +93,7 @@ func change(dir string, options Options, install bool) (Result, error) {
 	if install && !options.User {
 		agentExecutable = "git-byline"
 	}
-	for _, agent := range selectedAgents(options.Agent) {
+	for _, agent := range agents {
 		root := ""
 		if repo != nil {
 			root = repo.Root
@@ -85,6 +109,14 @@ func change(dir string, options Options, install bool) (Result, error) {
 		if didChange {
 			changed = append(changed, path)
 		}
+	}
+	configChanged := false
+	if options.Template {
+		setConfig, err := prepareTemplate(install)
+		if err != nil {
+			return Result{}, err
+		}
+		configChanged = setConfig
 	}
 	if options.Git {
 		specs := []struct {
@@ -124,7 +156,13 @@ func change(dir string, options Options, install bool) (Result, error) {
 			},
 		}
 		for _, spec := range specs {
-			path, err := gitHookPath(repo, spec.name)
+			var path string
+			var err error
+			if options.Template {
+				path, err = templateHookPath(spec.name)
+			} else {
+				path, err = gitHookPath(repo, spec.name)
+			}
 			if err != nil {
 				return Result{}, err
 			}
@@ -137,8 +175,18 @@ func change(dir string, options Options, install bool) (Result, error) {
 			}
 		}
 	}
+	if options.Template {
+		if err := finalizeTemplate(install, &changed); err != nil {
+			return Result{}, err
+		}
+		if configChanged {
+			if err := writeTemplateConfig(install); err != nil {
+				return Result{}, err
+			}
+		}
+	}
 	sort.Strings(changed)
-	return Result{Changed: changed}, nil
+	return Result{Changed: changed, ConfigChanged: configChanged}, nil
 }
 
 func notesPushCommand() string {
@@ -185,6 +233,161 @@ func selectedAgents(value string) []string {
 	default:
 		return nil
 	}
+}
+
+// templateDir returns the trusted base directory and the managed Git
+// template directory inside it. XDG_CONFIG_HOME takes precedence so tests
+// and custom setups can relocate the template.
+func templateDir() (string, string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		if !filepath.IsAbs(xdg) {
+			return "", "", fmt.Errorf("XDG_CONFIG_HOME is not an absolute path: %s", xdg)
+		}
+		return xdg, filepath.Join(xdg, "git-byline", "templates"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	return home, filepath.Join(home, ".config", "git-byline", "templates"), nil
+}
+
+// templateHookPath resolves one hook file inside the managed template
+// directory and refuses symlinked path components.
+func templateHookPath(name string) (string, error) {
+	base, dir, err := templateDir()
+	if err != nil {
+		return "", err
+	}
+	hooksDir := filepath.Join(dir, "hooks")
+	if err := rejectSymlinkPath(base, hooksDir); err != nil {
+		return "", err
+	}
+	return filepath.Join(hooksDir, name), nil
+}
+
+// prepareTemplate guards the user-level init.templateDir value before
+// any template file is touched. An install refuses a foreign value; the
+// return value reports whether the configuration still has to be
+// written or removed.
+func prepareTemplate(install bool) (bool, error) {
+	_, dir, err := templateDir()
+	if err != nil {
+		return false, err
+	}
+	current, exists, err := gitcmd.GlobalConfig(templateConfigKey)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return install, nil
+	}
+	if filepath.Clean(current) != filepath.Clean(dir) {
+		if !install {
+			return false, nil
+		}
+		return false, fmt.Errorf("refuse to replace existing %s %s", templateConfigKey, current)
+	}
+	return !install, nil
+}
+
+// finalizeTemplate runs the file work that follows the hook loop: an
+// install writes the stock template files, an uninstall removes them
+// and any directory that became empty.
+func finalizeTemplate(install bool, changed *[]string) error {
+	_, dir, err := templateDir()
+	if err != nil {
+		return err
+	}
+	if install {
+		return writeTemplateStock(dir, changed)
+	}
+	return pruneTemplate(dir, changed)
+}
+
+func writeTemplateStock(dir string, changed *[]string) error {
+	stock := []struct {
+		relative string
+		content  string
+	}{
+		{"info/exclude", templateInfoExclude},
+		{"description", templateDescription},
+	}
+	for _, file := range stock {
+		path := filepath.Join(dir, filepath.FromSlash(file.relative))
+		if _, err := os.Lstat(path); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+		if err := atomicWrite(path, []byte(file.content), 0o644); err != nil {
+			return err
+		}
+		*changed = append(*changed, path)
+	}
+	return nil
+}
+
+// pruneTemplate removes the stock files git-byline wrote and any
+// directory that became empty. Foreign files and edits keep their place.
+func pruneTemplate(dir string, changed *[]string) error {
+	stock := []struct {
+		relative string
+		content  string
+	}{
+		{"info/exclude", templateInfoExclude},
+		{"description", templateDescription},
+	}
+	for _, file := range stock {
+		path := filepath.Join(dir, filepath.FromSlash(file.relative))
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		if string(data) != file.content {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+		*changed = append(*changed, path)
+	}
+	for _, relative := range []string{"hooks", "info", "."} {
+		path := filepath.Join(dir, relative)
+		entries, err := os.ReadDir(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read directory %s: %w", path, err)
+		}
+		if len(entries) > 0 {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// writeTemplateConfig writes or removes the user-level init.templateDir
+// value after the template directory reached the requested state.
+func writeTemplateConfig(install bool) error {
+	_, dir, err := templateDir()
+	if err != nil {
+		return err
+	}
+	if install {
+		return gitcmd.SetGlobalConfig(templateConfigKey, dir)
+	}
+	if _, err := gitcmd.UnsetGlobalConfig(templateConfigKey); err != nil {
+		return err
+	}
+	return nil
 }
 
 func agentConfigPath(root, agent string, user bool) (string, error) {

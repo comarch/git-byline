@@ -40,6 +40,7 @@ func checkInstallers(root string) error {
 			"checksums.txt",
 			"git-byline $version",
 			"already installed",
+			"install-hooks --agent none --git --template",
 		} {
 			if !strings.Contains(strings.ToLower(text), strings.ToLower(required)) {
 				return fmt.Errorf("%s is missing %q", name, required)
@@ -63,6 +64,7 @@ func checkInstallers(root string) error {
 	// path for an agent git-byline cannot configure itself.
 	for _, required := range []string{
 		"--no-agent-hooks",
+		"--git-template",
 		"install-hooks --agent",
 		"marketplace/harness",
 	} {
@@ -72,6 +74,7 @@ func checkInstallers(root string) error {
 	}
 	for _, required := range []string{
 		"NoAgentHooks",
+		"GitTemplate",
 		"install-hooks",
 		"marketplace/harness",
 	} {

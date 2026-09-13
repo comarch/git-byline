@@ -355,6 +355,22 @@ git byline install-hooks --agent droid --git --user --local-notes
 Repeat this step once per repository. Agent hooks installed with `--user`
 apply everywhere; Git hooks are per repository.
 
+New repositories can start attributed without repeating this step:
+
+```sh
+git byline install-hooks --agent none --git --template
+```
+
+`--template` manages Git hooks in the git-byline Git template directory
+and points user-level `init.templateDir` at it, so every new `git init`
+and `git clone` receives them. Existing repositories stay untouched. A
+foreign `init.templateDir` value is refused. The template replaces Git's
+default template directory, so git-byline also writes the stock
+`info/exclude` and `description` files. Add `--local-notes` to ship the
+template without automatic note sharing. The installers accept
+`--git-template` on macOS and Linux and `-GitTemplate` on Windows to set
+this up during install.
+
 ## Step 3: work normally
 
 Use your agent, edit by hand, stage selected changes, and commit:
@@ -418,7 +434,10 @@ Remove only hooks managed by git-byline:
 git byline uninstall --agent droid --git --user
 ```
 
-Use `--agent none --git` to manage only the Git hook.
+Use `--agent none --git` to manage only the Git hook. Remove the managed
+template hooks and the `init.templateDir` entry with
+`git byline uninstall --agent none --git --template`; the entry is removed
+only when it points at the git-byline template directory.
 
 Backups of changed agent and Git hook configuration use the
 `.git-byline.bak` suffix. Existing shell hooks and unrelated agent

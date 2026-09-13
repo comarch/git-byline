@@ -405,6 +405,8 @@ func TestProductCommandUsageAndFailures(t *testing.T) {
 		{"local notes without git", "", []string{"install-hooks", "--agent", "droid", "--local-notes"}, ExitUsage},
 		{"install conflicting scope", "", []string{"install-hooks", "--user", "--project"}, ExitUsage},
 		{"install unknown agent", "", []string{"install-hooks", "--agent", "other"}, ExitUsage},
+		{"template without git", "", []string{"install-hooks", "--agent", "none", "--template"}, ExitUsage},
+		{"uninstall template without git", "", []string{"uninstall", "--agent", "none", "--template"}, ExitUsage},
 	}
 	for _, test := range tests {
 		test := test

@@ -127,6 +127,40 @@ To disable automatic note sharing:
 git-byline install-hooks --agent none --git --project --local-notes
 ```
 
+## Git template
+
+Git hooks are per repository. To attribute every new repository instead,
+manage Git hooks in the git-byline Git template directory:
+
+```sh
+git-byline install-hooks --agent none --git --template
+```
+
+`--template` writes the same managed Git hooks to the template directory
+and points user-level `init.templateDir` at it, so every `git init` and
+`git clone` receives them. Existing repositories are never touched.
+
+The template replaces Git's default template directory entirely, so
+git-byline also writes the stock `info/exclude` and `description` files a
+default template provides. An existing foreign `init.templateDir` value is
+refused, never overwritten. Add `--local-notes` to ship the template without
+automatic note sharing. Because template hooks embed the absolute binary
+path, re-run `--template` after moving the binary.
+
+`git-byline uninstall --agent none --git --template` removes the managed
+template hooks and the `init.templateDir` entry, but only when the entry
+points at the git-byline template directory. Foreign template content and
+backups are preserved.
+
+The installers set this up during install with `--git-template` on Linux
+and macOS and `-GitTemplate` on Windows:
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  https://raw.githubusercontent.com/comarch/git-byline/main/install.sh |
+  bash -s -- --git-template
+```
+
 ## Linux and macOS
 
 Fast install:
@@ -139,7 +173,8 @@ curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
 The script supports Linux and macOS on amd64 and arm64. It downloads the
 matching release archive and `checksums.txt`, verifies SHA-256 and binary
 version, installs to `$HOME/.local/bin`, and adds the current repository Git
-hook when run inside a worktree.
+hook when run inside a worktree. Pass `--git-template` to also manage the
+Git template directory; it is off by default.
 
 It then detects the coding agents present on the machine, by their command
 name or their configuration directory, and never writes during detection:
@@ -172,7 +207,8 @@ irm https://raw.githubusercontent.com/comarch/git-byline/main/install.ps1 | iex
 
 The script supports Windows on amd64 and arm64. It performs the same checksum
 and binary-version checks, installs to `$HOME\bin`, and runs the same agent
-detection. Pass `-NoAgentHooks` to skip it.
+detection. Pass `-NoAgentHooks` to skip it and `-GitTemplate` to also manage
+the Git template directory.
 
 Run a reviewed local script with custom options:
 

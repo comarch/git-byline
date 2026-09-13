@@ -3,7 +3,8 @@ param(
     [string]$Version = $(if ($env:GIT_BYLINE_VERSION) { $env:GIT_BYLINE_VERSION } else { "latest" }),
     [string]$BinDir = $(if ($env:GIT_BYLINE_BIN_DIR) { $env:GIT_BYLINE_BIN_DIR } else { Join-Path $HOME "bin" }),
     [switch]$NoGitHook,
-    [switch]$NoAgentHooks
+    [switch]$NoAgentHooks,
+    [switch]$GitTemplate
 )
 
 $ErrorActionPreference = "Stop"
@@ -122,6 +123,12 @@ try {
         (Get-Command git -ErrorAction SilentlyContinue) -and
         (git rev-parse --is-inside-work-tree 2>$null) -eq "true") {
         & $target install-hooks --agent none --git --project
+    }
+
+    # -GitTemplate manages Git hooks in the git-byline Git template
+    # directory, so every new git init and git clone is attributed.
+    if ($GitTemplate) {
+        & $target install-hooks --agent none --git --template
     }
 
     if ($previous) {
