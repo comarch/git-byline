@@ -492,88 +492,88 @@ func TestApplyUpdateRejectsOversizedEntry(t *testing.T) {
 	assertTarget(t, options.targetPath, "old binary")
 }
 
-// TestSwapBinaryWindowsPaths covers the Windows rename dance with the file
-// operations injected, so the failure paths run on every platform.
-func TestSwapBinaryWindowsPaths(t *testing.T) {
-	t.Run("undead old file is reported", func(t *testing.T) {
-		var ops []string
-		rename := func(from, to string) error {
-			ops = append(ops, from+"->"+to)
-			return nil
+// The swapBinaryFunc Windows tests inject the file operations, so the
+// rename dance and its failure paths run on every platform.
+
+func TestSwapBinaryReportsUndeadOldFile(t *testing.T) {
+	var ops []string
+	rename := func(from, to string) error {
+		ops = append(ops, from+"->"+to)
+		return nil
+	}
+	remove := func(path string) error {
+		ops = append(ops, "remove:"+path)
+		return errors.New("locked")
+	}
+	leftOld, err := swapBinaryFunc("windows", rename, remove, "staged", "target")
+	if err != nil {
+		t.Fatalf("swapBinaryFunc: %v", err)
+	}
+	if leftOld != "target.old" {
+		t.Errorf("leftOld = %q, want target.old", leftOld)
+	}
+	want := "remove:target.old,target->target.old,staged->target,remove:target.old"
+	if got := strings.Join(ops, ","); got != want {
+		t.Errorf("operations = %q, want %q", got, want)
+	}
+}
+
+// writeSwapFixture writes the old target and the staged new binary.
+func writeSwapFixture(t *testing.T, dir string) (target, staged string) {
+	t.Helper()
+	target = filepath.Join(dir, "git-byline")
+	staged = filepath.Join(dir, "staged")
+	if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, []byte("new binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return target, staged
+}
+
+func TestSwapBinaryFailedPlaceRestoresPrevious(t *testing.T) {
+	target, staged := writeSwapFixture(t, t.TempDir())
+	calls := 0
+	rename := func(from, to string) error {
+		calls++
+		if calls == 2 {
+			return errors.New("disk full")
 		}
-		remove := func(path string) error {
-			ops = append(ops, "remove:"+path)
-			return errors.New("locked")
+		return os.Rename(from, to)
+	}
+	_, err := swapBinaryFunc("windows", rename, os.Remove, staged, target)
+	if err == nil || !strings.Contains(err.Error(), "place new binary") {
+		t.Fatalf("error = %v, want a place-new-binary failure", err)
+	}
+	assertTarget(t, target, "old binary")
+}
+
+func TestSwapBinaryFailedRestoreReportsOldPath(t *testing.T) {
+	dir := t.TempDir()
+	target, staged := writeSwapFixture(t, dir)
+	calls := 0
+	rename := func(from, to string) error {
+		calls++
+		if calls >= 2 {
+			return errors.New("disk full")
 		}
-		leftOld, err := swapBinaryFunc("windows", rename, remove, "staged", "target")
-		if err != nil {
-			t.Fatalf("swapBinaryFunc: %v", err)
-		}
-		if leftOld != "target.old" {
-			t.Errorf("leftOld = %q, want target.old", leftOld)
-		}
-		want := "remove:target.old,target->target.old,staged->target,remove:target.old"
-		if got := strings.Join(ops, ","); got != want {
-			t.Errorf("operations = %q, want %q", got, want)
-		}
-	})
-	t.Run("failed place restores the previous binary", func(t *testing.T) {
-		dir := t.TempDir()
-		target := filepath.Join(dir, "git-byline")
-		staged := filepath.Join(dir, "staged")
-		if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(staged, []byte("new binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		calls := 0
-		rename := func(from, to string) error {
-			calls++
-			if calls == 2 {
-				return errors.New("disk full")
-			}
-			return os.Rename(from, to)
-		}
-		_, err := swapBinaryFunc("windows", rename, os.Remove, staged, target)
-		if err == nil || !strings.Contains(err.Error(), "place new binary") {
-			t.Fatalf("error = %v, want a place-new-binary failure", err)
-		}
-		assertTarget(t, target, "old binary")
-	})
-	t.Run("failed place with failed rollback reports the old path", func(t *testing.T) {
-		dir := t.TempDir()
-		target := filepath.Join(dir, "git-byline")
-		staged := filepath.Join(dir, "staged")
-		if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(staged, []byte("new binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		calls := 0
-		rename := func(from, to string) error {
-			calls++
-			if calls >= 2 {
-				return errors.New("disk full")
-			}
-			return os.Rename(from, to)
-		}
-		_, err := swapBinaryFunc("windows", rename, os.Remove, staged, target)
-		if err == nil {
-			t.Fatal("swapBinaryFunc succeeded, want an error")
-		}
-		if !strings.Contains(err.Error(), "restoring the previous binary also failed") {
-			t.Errorf("error = %v, want it to report the failed restore", err)
-		}
-		if !strings.Contains(err.Error(), filepath.Join(dir, "git-byline.old")) {
-			t.Errorf("error = %v, want it to name the .old path", err)
-		}
-		assertTarget(t, filepath.Join(dir, "git-byline.old"), "old binary")
-		if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
-			t.Errorf("target exists after a failed place and restore, stat: %v", statErr)
-		}
-	})
+		return os.Rename(from, to)
+	}
+	_, err := swapBinaryFunc("windows", rename, os.Remove, staged, target)
+	if err == nil {
+		t.Fatal("swapBinaryFunc succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "restoring the previous binary also failed") {
+		t.Errorf("error = %v, want it to report the failed restore", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(dir, "git-byline.old")) {
+		t.Errorf("error = %v, want it to name the .old path", err)
+	}
+	assertTarget(t, filepath.Join(dir, "git-byline.old"), "old binary")
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Errorf("target exists after a failed place and restore, stat: %v", statErr)
+	}
 }
 
 // TestRunUpdateOperationalFailure checks that a missing checksums file is
