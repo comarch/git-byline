@@ -1,6 +1,6 @@
 {
   "name": "git-byline",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Local human and AI line attribution for Git",
   "contextFileName": "GEMINI.md"
 }
