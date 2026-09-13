@@ -1362,6 +1362,8 @@ func TestBlameResolvesCwdRelativePath(t *testing.T) {
 		{name: "cwd-relative hits nested file", chdir: filepath.Join(root, "sub"), path: "f.txt", wantHit: "nested", wantAuthor: model.AuthorAI},
 		{name: "root-relative still works from subdirectory", chdir: filepath.Join(root, "sub"), path: "sub/f.txt", wantHit: "nested", wantAuthor: model.AuthorAI},
 		{name: "cwd-relative wins on ambiguity like git", chdir: filepath.Join(root, "sub"), path: "f.txt", wantHit: "nested", wantAuthor: model.AuthorAI},
+		{name: "absolute path is exact from subdirectory", chdir: filepath.Join(root, "sub"), path: filepath.Join(root, "f.txt"), wantHit: "root", wantAuthor: model.AuthorHuman},
+		{name: "parent-relative resolves root file", chdir: filepath.Join(root, "sub"), path: filepath.Join("..", "f.txt"), wantHit: "root", wantAuthor: model.AuthorHuman},
 		{name: "root-relative hits root file without evidence", chdir: root, path: "f.txt", wantHit: "root", wantAuthor: model.AuthorHuman},
 	}
 	for _, tc := range cases {
@@ -1399,6 +1401,17 @@ func TestBlameResolvesCwdRelativePath(t *testing.T) {
 		}
 		if len(result.Lines) != 1 || result.Lines[0].Content != "nested" {
 			t.Fatalf("dashboard blame content = %q, want nested", result.Lines[0].Content)
+		}
+	})
+
+	t.Run("dashboard absolute path is exact from subdirectory", func(t *testing.T) {
+		t.Chdir(filepath.Join(root, "sub"))
+		result, err := BlameHeadFile(repo, filepath.Join(root, "f.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Lines) != 1 || result.Lines[0].Content != "root" {
+			t.Fatalf("dashboard blame content = %q, want root", result.Lines[0].Content)
 		}
 	})
 }
