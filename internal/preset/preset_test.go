@@ -101,6 +101,147 @@ func TestParseToolHooks(t *testing.T) {
 	}
 }
 
+func TestParseTranscriptPath(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		preset  string
+		author  model.Author
+		payload string
+	}{
+		{
+			name:    "droid edit",
+			preset:  "droid",
+			author:  model.AuthorAI,
+			payload: `{"tool_name":"Edit","transcript_path":"/tmp/s.jsonl","tool_input":{"file_path":"a.go"}}`,
+		},
+		{
+			name:    "droid shell",
+			preset:  "droid",
+			author:  model.AuthorAI,
+			payload: `{"tool_name":"Bash","transcript_path":"/tmp/s.jsonl"}`,
+		},
+		{
+			name:    "claude write",
+			preset:  "claude",
+			author:  model.AuthorAI,
+			payload: `{"tool_name":"Write","transcript_path":"/tmp/s.jsonl","tool_input":{"file_path":"a.go"}}`,
+		},
+		{
+			name:    "portable claude",
+			preset:  "portable-claude",
+			author:  model.AuthorAI,
+			payload: `{"hook_event_name":"Write","transcript_path":"/tmp/s.jsonl","tool_input":{"file_path":"a.go"}}`,
+		},
+		{
+			name:    "human events keep it too",
+			preset:  "droid",
+			author:  model.AuthorHuman,
+			payload: `{"tool_name":"Edit","transcript_path":"/tmp/s.jsonl","tool_input":{"file_path":"a.go"}}`,
+		},
+		{
+			name:    "absent field stays empty",
+			preset:  "droid",
+			author:  model.AuthorAI,
+			payload: `{"tool_name":"Edit","tool_input":{"file_path":"a.go"}}`,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			event, handled, err := Parse(test.preset, test.author, strings.NewReader(test.payload))
+			if err != nil || !handled {
+				t.Fatalf("Parse() = %+v, %t, %v", event, handled, err)
+			}
+			want := ""
+			if strings.Contains(test.payload, "transcript_path") {
+				want = "/tmp/s.jsonl"
+			}
+			if event.TranscriptPath != want {
+				t.Fatalf("TranscriptPath = %q, want %q", event.TranscriptPath, want)
+			}
+		})
+	}
+}
+
+func TestParseWindsurfEvents(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		author    model.Author
+		payload   string
+		handled   bool
+		wantKind  string
+		wantPaths int
+	}{
+		{
+			name:     "write post captures the edited path",
+			author:   model.AuthorAI,
+			payload:  `{"agent_action_name":"post_write_code","trajectory_id":"traj-1","execution_id":"exec-1","timestamp":"2026-09-13T22:00:00Z","model_name":"Claude Sonnet 4","tool_info":{"file_path":"a.go","edits":[{"old_string":"a","new_string":"b"}]}}`,
+			handled:  true,
+			wantKind: model.CheckpointKindEdit, wantPaths: 1,
+		},
+		{
+			name:     "write pre captures the edited path",
+			author:   model.AuthorHuman,
+			payload:  `{"agent_action_name":"pre_write_code","trajectory_id":"traj-1","model_name":"Claude Sonnet 4","tool_info":{"file_path":"a.go"}}`,
+			handled:  true,
+			wantKind: model.CheckpointKindEdit, wantPaths: 1,
+		},
+		{
+			name:     "run pre is a shell event",
+			author:   model.AuthorHuman,
+			payload:  `{"agent_action_name":"pre_run_command","trajectory_id":"traj-1","model_name":"Claude Sonnet 4","tool_info":{"command_line":"go test ./...","cwd":"/repo"}}`,
+			handled:  true,
+			wantKind: model.CheckpointKindShellPre,
+		},
+		{
+			name:     "run post is a shell event",
+			author:   model.AuthorAI,
+			payload:  `{"agent_action_name":"post_run_command","trajectory_id":"traj-1","model_name":"Claude Sonnet 4","tool_info":{"command_line":"go test ./...","cwd":"/repo"}}`,
+			handled:  true,
+			wantKind: model.CheckpointKindShellPost,
+		},
+		{
+			name:    "read is ignored",
+			author:  model.AuthorAI,
+			payload: `{"agent_action_name":"pre_read_code","trajectory_id":"traj-1","model_name":"Claude Sonnet 4","tool_info":{"file_path":"a.go"}}`,
+			handled: false,
+		},
+		{
+			name:    "mcp tool use is ignored",
+			author:  model.AuthorAI,
+			payload: `{"agent_action_name":"pre_mcp_tool_use","trajectory_id":"traj-1","model_name":"Claude Sonnet 4","tool_info":{"mcp_server_name":"github","mcp_tool_name":"create_issue","mcp_tool_arguments":{"owner":"o","repo":"r"}}}`,
+			handled: false,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			event, handled, err := Parse("portable-windsurf", test.author, strings.NewReader(test.payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if handled != test.handled {
+				t.Fatalf("handled = %t, want %t", handled, test.handled)
+			}
+			if !handled {
+				return
+			}
+			if event.Kind != test.wantKind || len(event.Paths) != test.wantPaths {
+				t.Fatalf("event = %+v, want kind %q with %d paths", event, test.wantKind, test.wantPaths)
+			}
+			if test.author == model.AuthorAI {
+				if event.Agent != "windsurf" || event.Model != "Claude Sonnet 4" || event.Session != "traj-1" {
+					t.Fatalf("attribution = %+v", event)
+				}
+			}
+		})
+	}
+}
+
 func TestParseAgentV1(t *testing.T) {
 	t.Parallel()
 	payload := `{"type":"ai_agent","agent_name":"other","model":"m","conversation_id":"c","edited_filepaths":["a.go","a.go","b.go"]}`

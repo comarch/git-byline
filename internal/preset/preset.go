@@ -18,14 +18,18 @@ const MaxInputBytes = 1 << 20
 
 // Event is one normalized agent event.
 type Event struct {
-	Kind    string
-	Type    model.Author
-	Agent   string
-	Model   string
-	Session string
-	EventID string
-	Paths   []string
+	Kind           string
+	Type           model.Author
+	Agent          string
+	Model          string
+	Session        string
+	EventID        string
+	Paths          []string
+	TranscriptPath string
 }
+
+// FallbackModel marks AI attribution without a known model.
+const FallbackModel = "unknown"
 
 // Parse converts a supported preset payload. handled is false for a valid,
 // unrelated hook event.
@@ -80,6 +84,7 @@ func parseToolHook(agent string, explicit model.Author, data []byte, allowed []s
 		Model           string          `json:"model"`
 		ModelName       string          `json:"model_name"`
 		ModelNameCamel  string          `json:"modelName"`
+		TranscriptPath  string          `json:"transcript_path"`
 		ID              string          `json:"id"`
 		EventID         string          `json:"event_id"`
 		EventIDCamel    string          `json:"eventId"`
@@ -101,8 +106,12 @@ func parseToolHook(agent string, explicit model.Author, data []byte, allowed []s
 		payload.ToolCallID, payload.ToolCallIDCamel,
 	)
 	if isShellOperation(tool) {
-		return shellEvent(agent, explicit, firstValue(payload.Model, payload.ModelName, payload.ModelNameCamel),
+		event, handled, err := shellEvent(agent, explicit, firstValue(payload.Model, payload.ModelName, payload.ModelNameCamel),
 			firstValue(payload.SessionID, payload.SessionIDCamel, payload.ConversationID), eventID)
+		if err == nil && handled {
+			event.TranscriptPath = payload.TranscriptPath
+		}
+		return event, handled, err
 	}
 	if !slices.Contains(allowed, tool) {
 		return Event{}, false, nil
@@ -138,13 +147,13 @@ func parseToolHook(agent string, explicit model.Author, data []byte, allowed []s
 	}
 	modelName := firstValue(payload.Model, payload.ModelName, payload.ModelNameCamel)
 	if modelName == "" {
-		modelName = "unknown"
+		modelName = FallbackModel
 	}
 	paths = uniquePaths(paths)
 	if len(paths) == 0 {
 		return Event{}, false, errors.New("hook input contains no usable file path")
 	}
-	event := Event{Kind: model.CheckpointKindEdit, Type: explicit, Paths: paths, EventID: eventID}
+	event := Event{Kind: model.CheckpointKindEdit, Type: explicit, Paths: paths, EventID: eventID, TranscriptPath: payload.TranscriptPath}
 	if explicit == model.AuthorAI {
 		event.Agent = agent
 		event.Model = modelName
@@ -201,7 +210,7 @@ func parseAgentV1(data []byte) (Event, bool, error) {
 	if kind != model.CheckpointKindEdit {
 		modelName := payload.Model
 		if modelName == "" {
-			modelName = "unknown"
+			modelName = FallbackModel
 		}
 		eventID := firstValue(
 			payload.ID, payload.EventID, payload.EventIDCamel,
@@ -223,7 +232,7 @@ func parseAgentV1(data []byte) (Event, bool, error) {
 	}
 	modelName := payload.Model
 	if modelName == "" {
-		modelName = "unknown"
+		modelName = FallbackModel
 	}
 	paths := uniquePaths(payload.EditedFilepaths)
 	if len(paths) == 0 {
@@ -261,15 +270,20 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		SessionIDCamel       string          `json:"sessionId"`
 		ConversationID       string          `json:"conversation_id"`
 		ConversationIDCamel  string          `json:"conversationId"`
+		TrajectoryID         string          `json:"trajectory_id"`
+		TrajectoryIDCamel    string          `json:"trajectoryId"`
 		ThreadID             string          `json:"thread_id"`
 		ThreadIDCamel        string          `json:"threadId"`
 		Model                string          `json:"model"`
 		ModelName            string          `json:"model_name"`
 		ModelNameCamel       string          `json:"modelName"`
+		TranscriptPath       string          `json:"transcript_path"`
 		HookEventName        string          `json:"hook_event_name"`
 		HookEventNameCamel   string          `json:"hookEventName"`
 		EventName            string          `json:"event_name"`
 		EventNameCamel       string          `json:"eventName"`
+		AgentActionName      string          `json:"agent_action_name"`
+		AgentActionNameCamel string          `json:"agentActionName"`
 		ToolName             string          `json:"tool_name"`
 		ToolNameCamel        string          `json:"toolName"`
 		ID                   string          `json:"id"`
@@ -280,6 +294,8 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		ToolCallID           string          `json:"tool_call_id"`
 		ToolCallIDCamel      string          `json:"toolCallId"`
 		ToolInput            json.RawMessage `json:"tool_input"`
+		ToolInfo             json.RawMessage `json:"tool_info"`
+		ToolInfoCamel        json.RawMessage `json:"toolInfo"`
 		Arguments            json.RawMessage `json:"arguments"`
 		ToolArgs             json.RawMessage `json:"toolArgs"`
 		FilePath             string          `json:"file_path"`
@@ -300,18 +316,22 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		payload.HookEventNameCamel,
 		payload.EventName,
 		payload.EventNameCamel,
+		payload.AgentActionName,
+		payload.AgentActionNameCamel,
 		payload.ToolName,
 		payload.ToolNameCamel,
 	)
 	modelName := payload.Model
 	if modelName == "" {
-		modelName = firstValue(payload.ModelName, payload.ModelNameCamel, "unknown")
+		modelName = firstValue(payload.ModelName, payload.ModelNameCamel, FallbackModel)
 	}
 	session := firstValue(
 		payload.SessionID,
 		payload.SessionIDCamel,
 		payload.ConversationID,
 		payload.ConversationIDCamel,
+		payload.TrajectoryID,
+		payload.TrajectoryIDCamel,
 		payload.ThreadID,
 		payload.ThreadIDCamel,
 	)
@@ -327,6 +347,8 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		readOnlyOperation(payload.HookEventNameCamel) ||
 		readOnlyOperation(payload.EventName) ||
 		readOnlyOperation(payload.EventNameCamel) ||
+		readOnlyOperation(payload.AgentActionName) ||
+		readOnlyOperation(payload.AgentActionNameCamel) ||
 		readOnlyOperation(firstValue(payload.ToolName, payload.ToolNameCamel)) {
 		return Event{}, false, nil
 	}
@@ -339,7 +361,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 	paths = append(paths, payload.EditedFilepaths...)
 	paths = append(paths, payload.EditedFilepathsCamel...)
 	paths = append(paths, payload.Files...)
-	for _, raw := range []json.RawMessage{payload.ToolInput, payload.Arguments, payload.ToolArgs} {
+	for _, raw := range []json.RawMessage{payload.ToolInput, payload.ToolInfo, payload.ToolInfoCamel, payload.Arguments, payload.ToolArgs} {
 		if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			continue
 		}
@@ -400,7 +422,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		}
 		return Event{}, false, nil
 	}
-	event := Event{Kind: model.CheckpointKindEdit, Type: explicit, Paths: paths, EventID: eventID}
+	event := Event{Kind: model.CheckpointKindEdit, Type: explicit, Paths: paths, EventID: eventID, TranscriptPath: payload.TranscriptPath}
 	if explicit == model.AuthorAI {
 		event.Agent = agent
 		event.Model = modelName
@@ -428,7 +450,7 @@ func shellEvent(agent string, explicit model.Author, modelName, session, eventID
 	}
 	if explicit == model.AuthorAI {
 		if modelName == "" {
-			modelName = "unknown"
+			modelName = FallbackModel
 		}
 		event.Kind = model.CheckpointKindShellPost
 		event.Agent = agent

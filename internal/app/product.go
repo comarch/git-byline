@@ -23,6 +23,7 @@ import (
 	"github.com/comarch/git-byline/internal/preset"
 	"github.com/comarch/git-byline/internal/provenance"
 	"github.com/comarch/git-byline/internal/report"
+	"github.com/comarch/git-byline/internal/transcript"
 )
 
 var checkpointInputTimeoutNanos atomic.Int64
@@ -75,6 +76,17 @@ func runCheckpoint(env *Env, command *command, args []string) (int, error) {
 	}
 	if parseErr != nil {
 		return operationalError(env, command.name, parseErr)
+	}
+	if event.Type == model.AuthorAI && event.Model == preset.FallbackModel && event.TranscriptPath != "" {
+		if resolved, err := transcript.ResolveModel(event.TranscriptPath); err == nil && resolved != "" {
+			candidate := event
+			candidate.Model = resolved
+			if model.ValidateAttribution(model.Attribution{
+				Author: candidate.Type, Agent: candidate.Agent, Model: candidate.Model, Session: candidate.Session,
+			}) == nil {
+				event = candidate
+			}
+		}
 	}
 	result, err := provenance.Capture(repo, event, env.now())
 	if err != nil {

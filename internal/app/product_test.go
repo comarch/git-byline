@@ -518,6 +518,110 @@ func TestCheckpointInputDeadline(t *testing.T) {
 	}
 }
 
+func TestCheckpointModelResolution(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	tests := []struct {
+		name       string
+		transcript string
+		sidecar    string
+		want       string
+	}{
+		{
+			name:       "transcript model",
+			transcript: `{"type":"message","message":{"role":"assistant","modelId":"droid-test-model"}}` + "\n",
+			want:       "ai:droid/droid-test-model",
+		},
+		{
+			name:       "sidecar fallback",
+			transcript: "{\"message\":{\"role\":\"user\"}}\n",
+			sidecar:    `{"model":"sidecar-model"}`,
+			want:       "ai:droid/sidecar-model",
+		},
+		{
+			name: "unresolved stays unknown",
+			want: "ai:droid/unknown",
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			transcriptPath := filepath.Join(dir, "session.jsonl")
+			if test.transcript != "" {
+				if err := os.WriteFile(transcriptPath, []byte(test.transcript), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.sidecar != "" {
+				if err := os.WriteFile(filepath.Join(dir, "session.settings.json"), []byte(test.sidecar), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			root := appRepo(t)
+			appWrite(t, root, "file.txt", "base\n")
+			appCommit(t, root, "base")
+			payload := `{"session_id":"s","tool_name":"Edit","transcript_path":"` + transcriptPath +
+				`","tool_input":{"file_path":"file.txt"}}`
+			code, _, stderr, err := appRun(root, now, strings.NewReader(payload),
+				"checkpoint", "droid", "--type", "human", "--hook-input", "stdin")
+			if code != ExitSuccess || err != nil || stderr != "" {
+				t.Fatalf("human checkpoint = %d, %q, %v", code, stderr, err)
+			}
+			appWrite(t, root, "file.txt", "base\nai\n")
+			code, _, stderr, err = appRun(root, now.Add(time.Second), strings.NewReader(payload),
+				"checkpoint", "droid", "--type", "ai", "--hook-input", "stdin")
+			if code != ExitSuccess || err != nil || stderr != "" {
+				t.Fatalf("ai checkpoint = %d, %q, %v", code, stderr, err)
+			}
+			appCommit(t, root, "ai")
+			if code, _, _, err = appRun(root, now, nil, "annotate"); code != ExitSuccess || err != nil {
+				t.Fatalf("annotate = %d, %v", code, err)
+			}
+			code, stdout, stderr, err := appRun(root, now, nil, "blame", "file.txt")
+			if code != ExitSuccess || err != nil || stderr != "" {
+				t.Fatalf("blame = %d, %q, %v", code, stderr, err)
+			}
+			if !strings.Contains(stdout, test.want) {
+				t.Fatalf("blame %q does not contain %q", stdout, test.want)
+			}
+		})
+	}
+}
+
+func TestWindsurfCheckpointFlow(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "base\n")
+	appCommit(t, root, "base")
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	prePayload := `{"agent_action_name":"pre_write_code","trajectory_id":"traj-1","model_name":"Claude Sonnet 4","tool_info":{"file_path":"file.txt"}}`
+	postPayload := `{"agent_action_name":"post_write_code","trajectory_id":"traj-1","model_name":"Claude Sonnet 4","tool_info":{"file_path":"file.txt"}}`
+	code, _, stderr, err := appRun(root, now, strings.NewReader(prePayload),
+		"checkpoint", "portable-windsurf", "--type", "human", "--hook-input", "stdin")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("human checkpoint = %d, %q, %v", code, stderr, err)
+	}
+	appWrite(t, root, "file.txt", "base\nai\n")
+	code, _, stderr, err = appRun(root, now.Add(time.Second), strings.NewReader(postPayload),
+		"checkpoint", "portable-windsurf", "--type", "ai", "--hook-input", "stdin")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("ai checkpoint = %d, %q, %v", code, stderr, err)
+	}
+	appCommit(t, root, "ai")
+	if code, _, _, err = appRun(root, now, nil, "annotate"); code != ExitSuccess || err != nil {
+		t.Fatalf("annotate = %d, %v", code, err)
+	}
+	code, stdout, stderr, err := appRun(root, now, nil, "blame", "file.txt")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("blame = %d, %q, %v", code, stderr, err)
+	}
+	if !strings.Contains(stdout, "ai:windsurf/Claude Sonnet 4") {
+		t.Fatalf("blame %q does not contain the windsurf model", stdout)
+	}
+}
+
 func appRun(root string, now time.Time, input io.Reader, args ...string) (int, string, string, error) {
 	if input == nil {
 		input = strings.NewReader("")

@@ -35,12 +35,47 @@ file, but interactive file switching requires JavaScript.
 | Cursor | `portable-cursor` | Generated pre/post tool hooks | Common file and patch fields |
 | Codex | `portable-codex` | Generated pre/post tool hooks | Common file and patch fields |
 | Gemini CLI | `portable-gemini` | Generated pre/post tool hooks | Common file and patch fields |
-| Windsurf | `portable-windsurf` | Generated write-event hooks | Common file and patch fields |
+| Windsurf | `portable-windsurf` | Generated write-event hooks | `tool_info` file and command fields |
 | Grok | `portable-grok` | Generated pre/post tool hooks | Common file and patch fields |
 | agent-v1 | `agent-v1` | Standard edit payload, `agent_name` required | `edited_filepaths` |
 
 Unknown valid tool events are ignored. Malformed supported events fail without
 writing a checkpoint.
+
+## Model detection
+
+AI attribution records the model that produced each edit. Sources, verified
+per surface:
+
+| Surface | Model source | Verification |
+| --- | --- | --- |
+| Factory | session transcript `modelId`, then the session settings sidecar | Live hook capture |
+| Claude Code | session transcript `model` | Live hook capture |
+| Codex | hook payload `model` field | Upstream hooks documentation |
+| Cursor | hook payload `model` field | Upstream hooks documentation |
+| Windsurf | hook payload `model_name` field | Upstream hooks documentation and replayed payload tests |
+| Gemini CLI | none in tool hook payloads; transcript read is unverified | Follow-up |
+| VS Code | none in hook payload; transcript read is unverified | Follow-up |
+| Copilot CLI | none in tool hook payloads | Upstream gap |
+| Grok | none in tool hook payloads | Upstream gap |
+| agent-v1 | hook payload `model` field | By schema |
+
+Factory, Claude Code, Gemini CLI, VS Code, and Cursor payloads carry
+`transcript_path`. When a payload names no model, git-byline reads the newest
+model identifier from that local transcript and falls back to the session
+settings sidecar before keeping `unknown`. Only the model name is read and
+kept; transcript content never enters any record.
+
+Known gaps:
+
+- Gemini CLI tool hooks expose no model. The `BeforeModel` hook payload
+  carries `llm_request.model`, which a future generated hook could relay.
+- Copilot CLI and Grok tool hook payloads expose neither a model nor
+  `transcript_path`.
+
+Windsurf nests event details in `agent_action_name` and `tool_info`; the
+portable preset reads both, including `trajectory_id` as the session and
+`model_name` as the model.
 
 ## Shell attribution
 

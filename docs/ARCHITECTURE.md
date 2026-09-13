@@ -38,6 +38,7 @@ explicit refspec publishes them.
 | `internal/engine` | Pure line splitting, replay, projection, ranges |
 | `internal/notes` | Canonical note encoding and history lookup |
 | `internal/provenance` | Checkpoint, annotate, blame, and status workflows |
+| `internal/transcript` | Bounded session transcript and settings reads for model names |
 | `internal/dashboard` | Deterministic self-contained HTML reports |
 | `internal/disclosure` | Deterministic native, CycloneDX, and SPDX disclosure input |
 | `internal/hooks` | Idempotent agent and Git hook mutation |
@@ -58,8 +59,18 @@ attached directly to `HEAD`, with limits of 16 MiB for the note, 500 files,
 2. The agent edits files.
 3. A PostToolUse hook snapshots resulting paths as `ai`.
 4. Snapshot bytes are written to the Git object database.
-5. A worktree-local retention ref protects pending blobs from Git garbage
+5. Droid and Claude Code payloads name no model, so an AI checkpoint with the
+   fallback model resolves the newest model from the session transcript or
+   the session settings file named by `transcript_path`. Only the model
+   identifier is read; transcript content never enters any record.
+6. A worktree-local retention ref protects pending blobs from Git garbage
    collection.
+7. After commit, `annotate` replays snapshots against the first parent.
+8. Committed lines receive complete, ordered, non-overlapping ranges.
+9. Canonical note JSON is written to `refs/notes/byline`.
+10. State advances atomically, then the retention ref is compacted.
+11. Unless installed with `--local-notes`, a managed `pre-push` hook
+    publishes the notes ref before an ordinary branch push.
 6. After commit, `annotate` replays snapshots against the first parent.
 7. Committed lines receive complete, ordered, non-overlapping ranges.
 8. Canonical note JSON is written to `refs/notes/byline`.
