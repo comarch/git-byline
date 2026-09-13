@@ -879,36 +879,75 @@ func TestCwdRelative(t *testing.T) {
 }
 
 func TestHeadReflogAction(t *testing.T) {
-	root := initRepository(t)
-	repo, err := Discover(root)
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name       string
+		prepare    func(t *testing.T) string
+		wantAction string
+		wantErr    bool
+	}{
+		{
+			name:       "unborn repository errors",
+			prepare:    func(t *testing.T) string { return initRepository(t) },
+			wantErr:    true,
+			wantAction: "",
+		},
+		{
+			name: "commit records a commit action",
+			prepare: func(t *testing.T) string {
+				root := initRepository(t)
+				writeFile(t, root, "f.txt", "one\n")
+				runGit(t, root, "add", "f.txt")
+				runGit(t, root, "commit", "-m", "one")
+				return root
+			},
+			wantAction: "commit",
+		},
+		{
+			name: "bare update-ref records an empty action",
+			prepare: func(t *testing.T) string {
+				root := initRepository(t)
+				writeFile(t, root, "f.txt", "one\n")
+				runGit(t, root, "add", "f.txt")
+				runGit(t, root, "commit", "-m", "one")
+				writeFile(t, root, "f.txt", "one\ntwo\n")
+				runGit(t, root, "commit", "-am", "two")
+				two := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))
+				one := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD~1"))
+				runGit(t, root, "reset", "--hard", one)
+				runGit(t, root, "update-ref", "refs/heads/main", two, one)
+				return root
+			},
+			wantAction: "",
+		},
 	}
-	if _, err := repo.HeadReflogAction(); err == nil {
-		t.Fatal("expected an error on a repository without commits")
-	}
-	writeFile(t, root, "f.txt", "one\n")
-	runGit(t, root, "add", "f.txt")
-	runGit(t, root, "commit", "-m", "one")
-	action, err := repo.HeadReflogAction()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(action, "commit") {
-		t.Fatalf("action = %q, want a commit action", action)
-	}
-	// A bare git update-ref records a reflog entry without an action.
-	writeFile(t, root, "f.txt", "one\ntwo\n")
-	runGit(t, root, "commit", "-am", "two")
-	two := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))
-	one := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD~1"))
-	runGit(t, root, "reset", "--hard", one)
-	runGit(t, root, "update-ref", "refs/heads/main", two, one)
-	action, err = repo.HeadReflogAction()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if action != "" {
-		t.Fatalf("bare update-ref action = %q, want empty", action)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := tc.prepare(t)
+			repo, err := Discover(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			action, err := repo.HeadReflogAction()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("HeadReflogAction() = %q, want an error", action)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantAction == "" {
+				if action != "" {
+					t.Fatalf("HeadReflogAction() = %q, want empty", action)
+				}
+				return
+			}
+			if !strings.HasPrefix(action, tc.wantAction) {
+				t.Fatalf("HeadReflogAction() = %q, want prefix %q", action, tc.wantAction)
+			}
+		})
 	}
 }
