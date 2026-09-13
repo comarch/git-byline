@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/comarch/git-byline/compare/v1.0.0...v1.0.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* **provenance:** keep pending provenance across zero-old HEAD updates ([#15](https://github.com/comarch/git-byline/issues/15)) ([7f33b59](https://github.com/comarch/git-byline/commit/7f33b599b2ab01c5f965c4e21101afeb8e256697))
+
 ## 1.0.0 (2026-09-13)
 
 
