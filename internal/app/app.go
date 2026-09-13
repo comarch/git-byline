@@ -70,7 +70,9 @@ func commands() []*command {
 			short: "show line-level attribution",
 			usage: "Usage: git-byline blame [--json] [--color=auto|always|never] <file>\n\n" +
 				"Show human, AI, human-override, or untracked attribution for every line at HEAD.\n" +
-				"Human lines carry the identity of the commit author that introduced them.",
+				"Human lines carry the identity of the commit author that introduced them.\n" +
+				"The file argument resolves against the working directory first, then\n" +
+				"the repository root.",
 			run: runBlame,
 		},
 		{
@@ -87,7 +89,8 @@ func commands() []*command {
 				"Generate a self-contained HTML report for one file or every\n" +
 				"file attributed on HEAD. Use --range or --repo for a bounded\n" +
 				"repository report without source lines. Existing output files\n" +
-				"are not replaced.",
+				"are not replaced. The file argument resolves against the\n" +
+				"working directory first, then the repository root.",
 			run: runDashboard,
 		},
 		{

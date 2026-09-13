@@ -333,6 +333,7 @@ type AnnotateResult struct {
 	Commit   string
 	Files    int
 	Noop     bool
+	Skipped  bool
 	Warnings []string
 }
 
@@ -358,6 +359,22 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	}
 	if head == "" {
 		return AnnotateResult{}, errors.New("cannot annotate an unborn repository")
+	}
+	// A rebase replay creates commits without fresh checkpoint evidence.
+	// Annotating them would guess attribution and then block the post-rewrite
+	// remap of the real evidence, so replayed commits wait for post-rewrite.
+	action, err := repo.HeadReflogAction()
+	if err != nil {
+		return AnnotateResult{}, err
+	}
+	if strings.HasPrefix(action, "rebase") {
+		return AnnotateResult{
+			Commit:  head,
+			Skipped: true,
+			Warnings: []string{
+				"skipped annotate: rebase replay created this commit; post-rewrite will remap attribution",
+			},
+		}, nil
 	}
 	state, err := dataStore.ReadState()
 	if err != nil {
@@ -881,29 +898,68 @@ func BlameHead(repo *gitcmd.Repo) (BlameCollection, error) {
 	return result, nil
 }
 
+// blameCandidates resolves a raw user-supplied path into the candidate
+// paths it can name: the path resolved against the current working
+// directory first, then the repository-root-relative reading, matching
+// Git's own argument handling. An absolute path names exactly one file.
+func blameCandidates(repo *gitcmd.Repo, rawPath string) ([]string, error) {
+	if filepath.IsAbs(filepath.FromSlash(rawPath)) {
+		normalized, err := repo.NormalizeWorktreePath(rawPath)
+		if err != nil {
+			return nil, err
+		}
+		return []string{normalized}, nil
+	}
+	var candidates []string
+	cwdRelative, ok, err := repo.CwdRelative(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		candidates = append(candidates, cwdRelative)
+	}
+	normalized, err := repo.NormalizeWorktreePath(rawPath)
+	if err != nil {
+		if len(candidates) > 0 {
+			return candidates, nil
+		}
+		return nil, err
+	}
+	if len(candidates) == 0 || candidates[len(candidates)-1] != normalized {
+		candidates = append(candidates, normalized)
+	}
+	return candidates, nil
+}
+
 // BlameHeadFile reads one file from the attribution note attached to HEAD.
 func BlameHeadFile(repo *gitcmd.Repo, path string) (BlameResult, error) {
-	path, err := repo.NormalizeWorktreePath(path)
-	if err != nil {
-		return BlameResult{}, err
-	}
 	head, note, err := headNote(repo)
 	if err != nil {
 		return BlameResult{}, err
 	}
-	file, found := note.Files[path]
-	if !found {
-		return BlameResult{}, fmt.Errorf("file %q is not attributed on HEAD", path)
-	}
-	blobs, err := preflightBlameFiles(repo, head, []string{path}, note)
+	candidates, err := blameCandidates(repo, path)
 	if err != nil {
 		return BlameResult{}, err
 	}
-	result, err := blameNotedFile(repo, head, path, blobs[0], file)
-	if err != nil {
-		return BlameResult{}, fmt.Errorf("blame %q: %w", path, err)
+	for _, candidate := range candidates {
+		file, found := note.Files[candidate]
+		if !found {
+			continue
+		}
+		blobs, err := preflightBlameFiles(repo, head, []string{candidate}, note)
+		if err != nil {
+			return BlameResult{}, err
+		}
+		result, err := blameNotedFile(repo, head, candidate, blobs[0], file)
+		if err != nil {
+			return BlameResult{}, fmt.Errorf("blame %q: %w", candidate, err)
+		}
+		return result, nil
 	}
-	return result, nil
+	if len(candidates) > 1 {
+		return BlameResult{}, fmt.Errorf("file %q is not attributed on HEAD (tried %q against the working directory, then %q against the repository root)", path, candidates[0], candidates[1])
+	}
+	return BlameResult{}, fmt.Errorf("file %q is not attributed on HEAD", candidates[0])
 }
 
 func headNote(repo *gitcmd.Repo) (string, model.Note, error) {
@@ -990,10 +1046,6 @@ func blameNotedFile(repo *gitcmd.Repo, head, path, blob string, file model.NoteF
 
 // Blame reads line attribution for path at HEAD.
 func Blame(repo *gitcmd.Repo, path string) (BlameResult, error) {
-	path, err := repo.NormalizeWorktreePath(path)
-	if err != nil {
-		return BlameResult{}, err
-	}
 	head, err := repo.Head()
 	if err != nil {
 		return BlameResult{}, err
@@ -1001,12 +1053,34 @@ func Blame(repo *gitcmd.Repo, path string) (BlameResult, error) {
 	if head == "" {
 		return BlameResult{}, errors.New("cannot blame an unborn repository")
 	}
+	candidates, err := blameCandidates(repo, path)
+	if err != nil {
+		return BlameResult{}, err
+	}
+	for _, candidate := range candidates {
+		result, err := blamePath(repo, head, candidate)
+		if err == nil {
+			return result, nil
+		}
+		if !errors.Is(err, errBlamePathMissing) {
+			return BlameResult{}, err
+		}
+	}
+	if len(candidates) > 1 {
+		return BlameResult{}, fmt.Errorf("path %q does not exist at HEAD (tried %q against the working directory, then %q against the repository root)", path, candidates[0], candidates[1])
+	}
+	return BlameResult{}, fmt.Errorf("path %q does not exist at HEAD", candidates[0])
+}
+
+var errBlamePathMissing = errors.New("blame path is missing at HEAD")
+
+func blamePath(repo *gitcmd.Repo, head, path string) (BlameResult, error) {
 	blob, exists, err := repo.BlobID(head, path)
 	if err != nil {
 		return BlameResult{}, err
 	}
 	if !exists {
-		return BlameResult{}, fmt.Errorf("path %q does not exist at HEAD", path)
+		return BlameResult{}, errBlamePathMissing
 	}
 	content, err := repo.ReadBlob(blob)
 	if err != nil {

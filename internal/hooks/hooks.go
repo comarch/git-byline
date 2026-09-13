@@ -109,7 +109,7 @@ func change(dir string, options Options, install bool) (Result, error) {
 			},
 			{
 				name:    "post-merge",
-				command: rewriteHookCommand(executable, "post-merge", true),
+				command: postMergeCommand(executable),
 				install: install,
 			},
 			{
@@ -149,6 +149,15 @@ fi`
 
 func postCommitCommand(executable string) string {
 	return quoteExecutable(executable) + ` rewrite --mode post-merge --hook-input stdin || exit 1
+` + quoteExecutable(executable) + " annotate || exit 1"
+}
+
+// postMergeCommand annotates merge commits right after Git records them.
+// git merge runs no post-commit hook, so without the annotate step every
+// merge would leave the annotated boundary behind and the next commit
+// would fail with a commit gap.
+func postMergeCommand(executable string) string {
+	return quoteExecutable(executable) + ` rewrite --mode post-merge --hook-input stdin "$@" || exit 1
 ` + quoteExecutable(executable) + " annotate || exit 1"
 }
 
@@ -885,6 +894,7 @@ func managedGitHookBlock(block string) bool {
 	command := strings.TrimSuffix(strings.TrimPrefix(block, prefix), suffix)
 	return command == notesPushCommand() ||
 		isPostCommitCommand(command) ||
+		isPostMergeCommand(command) ||
 		commandHasGitBylineExecutable(command, " annotate || exit 1") ||
 		commandHasGitBylineExecutable(command, " annotate") ||
 		commandHasGitBylineExecutable(command, ` rewrite --mode post-rewrite --hook-input stdin "$@" || exit 1`) ||
@@ -899,6 +909,17 @@ func isPostCommitCommand(command string) bool {
 		return false
 	}
 	return commandHasGitBylineExecutable(lines[0], ` rewrite --mode post-merge --hook-input stdin || exit 1`) &&
+		commandHasGitBylineExecutable(lines[1], " annotate || exit 1")
+}
+
+// isPostMergeCommand recognizes both the current rewrite-plus-annotate
+// block and accepts replacement of the older rewrite-only block.
+func isPostMergeCommand(command string) bool {
+	lines := strings.Split(command, "\n")
+	if len(lines) != 2 {
+		return false
+	}
+	return commandHasGitBylineExecutable(lines[0], ` rewrite --mode post-merge --hook-input stdin "$@" || exit 1`) &&
 		commandHasGitBylineExecutable(lines[1], " annotate || exit 1")
 }
 

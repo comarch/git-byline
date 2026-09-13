@@ -836,3 +836,118 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	}
 	return string(out)
 }
+
+func TestCwdRelative(t *testing.T) {
+	root := initRepository(t)
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, "f.txt", "root\n")
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name  string
+		chdir string
+		path  string
+		want  string
+		ok    bool
+	}{
+		{name: "cwd at root yields no candidate", chdir: root, path: "f.txt", ok: false},
+		{name: "subdirectory rewrites path", chdir: filepath.Join(root, "sub"), path: "f.txt", want: "sub/f.txt", ok: true},
+		{name: "parent reference resolves inside the worktree", chdir: filepath.Join(root, "sub"), path: "../f.txt", want: "f.txt", ok: true},
+		{name: "absolute path yields no candidate", chdir: filepath.Join(root, "sub"), path: root, ok: false},
+		{name: "cwd outside the worktree yields no candidate", chdir: t.TempDir(), path: "f.txt", ok: false},
+		{name: "escape above the worktree yields no candidate", chdir: filepath.Join(root, "sub"), path: "../../escape.txt", ok: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(tc.chdir)
+			got, ok, err := repo.CwdRelative(tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v", ok, tc.ok)
+			}
+			if got != tc.want {
+				t.Fatalf("path = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHeadReflogAction(t *testing.T) {
+	cases := []struct {
+		name       string
+		prepare    func(t *testing.T) string
+		wantAction string
+		wantErr    bool
+	}{
+		{
+			name:       "unborn repository errors",
+			prepare:    func(t *testing.T) string { return initRepository(t) },
+			wantErr:    true,
+			wantAction: "",
+		},
+		{
+			name: "commit records a commit action",
+			prepare: func(t *testing.T) string {
+				root := initRepository(t)
+				writeFile(t, root, "f.txt", "one\n")
+				runGit(t, root, "add", "f.txt")
+				runGit(t, root, "commit", "-m", "one")
+				return root
+			},
+			wantAction: "commit",
+		},
+		{
+			name: "bare update-ref records an empty action",
+			prepare: func(t *testing.T) string {
+				root := initRepository(t)
+				writeFile(t, root, "f.txt", "one\n")
+				runGit(t, root, "add", "f.txt")
+				runGit(t, root, "commit", "-m", "one")
+				writeFile(t, root, "f.txt", "one\ntwo\n")
+				runGit(t, root, "commit", "-am", "two")
+				two := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))
+				one := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD~1"))
+				runGit(t, root, "reset", "--hard", one)
+				runGit(t, root, "update-ref", "refs/heads/main", two, one)
+				return root
+			},
+			wantAction: "",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := tc.prepare(t)
+			repo, err := Discover(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			action, err := repo.HeadReflogAction()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("HeadReflogAction() = %q, want an error", action)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantAction == "" {
+				if action != "" {
+					t.Fatalf("HeadReflogAction() = %q, want empty", action)
+				}
+				return
+			}
+			if !strings.HasPrefix(action, tc.wantAction) {
+				t.Fatalf("HeadReflogAction() = %q, want prefix %q", action, tc.wantAction)
+			}
+		})
+	}
+}

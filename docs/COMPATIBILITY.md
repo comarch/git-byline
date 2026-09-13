@@ -77,6 +77,9 @@ Track native support in
 - SHA-1 and longer opaque object IDs are accepted.
 - Partial commits preserve excluded provenance for the next commit.
 - Renames preserve provenance through Git rename detection.
+- `blame` and `dashboard` file arguments resolve against the current
+  directory first, then the repository root, matching `git blame`; stored
+  attribution and checkpoint paths stay repository-relative.
 
 ## History rewrite matrix
 

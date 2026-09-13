@@ -531,3 +531,29 @@ func appGit(t *testing.T, root string, args ...string) string {
 	}
 	return string(out)
 }
+
+func TestAnnotatePrintsSkippedDuringRebase(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "base\n")
+	appCommit(t, root, "base")
+	appGit(t, root, "checkout", "-q", "-b", "feat")
+	appWrite(t, root, "feat.txt", "feat\n")
+	appCommit(t, root, "feat")
+	appGit(t, root, "checkout", "-q", "main")
+	appWrite(t, root, "main.txt", "main\n")
+	appCommit(t, root, "main work")
+	appGit(t, root, "checkout", "-q", "feat")
+	appGit(t, root, "rebase", "-q", "main")
+
+	code, stdout, stderr, err := appRun(root, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), nil, "annotate")
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("annotate during rebase = %d, %v", code, err)
+	}
+	if !strings.Contains(stdout, "skipped ") || strings.Contains(stdout, "annotated ") {
+		t.Fatalf("annotate output = %q, want skipped", stdout)
+	}
+	if !strings.Contains(stderr, "rebase replay") {
+		t.Fatalf("annotate warnings = %q, want rebase replay hint", stderr)
+	}
+}

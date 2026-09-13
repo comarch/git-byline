@@ -212,6 +212,23 @@ func (repo *Repo) Parents(commit string) ([]string, error) {
 	return parents, nil
 }
 
+// HeadReflogAction returns the action that created HEAD, such as "commit",
+// "rebase (pick)", or "cherry-pick". It distinguishes sequencer replays
+// from user-created commits. A bare ref update without a message, such as
+// git update-ref, yields an empty action rather than a guess.
+func (repo *Repo) HeadReflogAction() (string, error) {
+	out, err := repo.run("read HEAD reflog action", nil, "log", "-g", "-1", "--pretty=%gs", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	subject := strings.TrimSpace(string(out))
+	if subject == "" {
+		return "", nil
+	}
+	action, _, _ := strings.Cut(subject, ":")
+	return strings.TrimSpace(action), nil
+}
+
 // Changes returns changed paths for commit relative to its first parent.
 func (repo *Repo) Changes(commit, parent string) ([]Change, error) {
 	if !model.ValidObjectID(commit) {
@@ -725,6 +742,42 @@ func (repo *Repo) NormalizeWorktreePath(path string) (string, error) {
 		path = filepath.ToSlash(relative)
 	}
 	return NormalizePath(path)
+}
+
+// CwdRelative rewrites a repository-relative path against the current
+// working directory, mirroring how Git resolves blame and log pathspec
+// arguments. It reports false when the path is absolute, the working
+// directory is the repository root, or the working directory lies outside
+// the worktree.
+func (repo *Repo) CwdRelative(path string) (string, bool, error) {
+	native := filepath.FromSlash(path)
+	if native == "" || filepath.IsAbs(native) {
+		return "", false, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", false, fmt.Errorf("read working directory: %w", err)
+	}
+	cwd, err = filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve working directory: %w", err)
+	}
+	if !inside(repo.Root, cwd) {
+		return "", false, nil
+	}
+	relative, err := filepath.Rel(repo.Root, cwd)
+	if err != nil {
+		return "", false, nil
+	}
+	if relative == "." {
+		return "", false, nil
+	}
+	joined := filepath.ToSlash(filepath.Join(relative, native))
+	joined, err = NormalizePath(joined)
+	if err != nil {
+		return "", false, nil
+	}
+	return joined, true, nil
 }
 
 // SnapshotWorktree hashes one allowed worktree path.

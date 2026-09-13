@@ -11,19 +11,57 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  smoke:
+    name: Smoke test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.24.x"
+          cache: false
+
+      - name: Build and smoke test the release binary
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
+        run: |
+          set -euo pipefail
+          bin="git-byline"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            bin="git-byline.exe"
+          fi
+          go build -o "$bin" ./cmd/git-byline
+          BYLINE_BIN="$PWD/$bin" bash scripts/smoke.sh
+
   release:
     name: Build and publish release
+    needs: smoke
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
+    permissions:
+      contents: write
     steps:
       - name: Resolve release tag
         id: tag

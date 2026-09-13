@@ -1124,3 +1124,39 @@ func TestQuoteExecutableUsesLiteralSingleQuotes(t *testing.T) {
 		t.Fatalf("quoteExecutable() = %q", got)
 	}
 }
+
+func TestPostMergeHookAnnotatesAndUpgradesOldBlock(t *testing.T) {
+	t.Parallel()
+	root := hookRepo(t)
+	path := filepath.Join(root, ".git", "hooks", "post-merge")
+	old := "#!/bin/sh\n" + blockStart + "\n" +
+		rewriteHookCommand("/old/git-byline", "post-merge", true) + "\n" + blockEnd + "\n"
+	if err := os.WriteFile(path, []byte(old), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := string(mustRead(t, path))
+	if !strings.Contains(got, ` rewrite --mode post-merge --hook-input stdin "$@" || exit 1`) {
+		t.Fatalf("post-merge rewrite step missing: %q", got)
+	}
+	if !strings.Contains(got, " annotate || exit 1") {
+		t.Fatalf("post-merge annotate step missing: %q", got)
+	}
+	result, err := Install(root, Options{Agent: "none", Git: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, changed := range result.Changed {
+		if changed == path {
+			t.Fatal("second install rewrote an already managed post-merge hook")
+		}
+	}
+	if _, err := Uninstall(root, Options{Agent: "none", Git: true}); err != nil {
+		t.Fatal(err)
+	}
+	if after := string(mustRead(t, path)); strings.Contains(after, "byline") {
+		t.Fatalf("uninstall left managed content behind: %q", after)
+	}
+}
