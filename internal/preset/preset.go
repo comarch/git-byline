@@ -49,12 +49,17 @@ func Parse(name string, explicit model.Author, input io.Reader) (event Event, ha
 		}
 		return parseAgentV1(data)
 	default:
-		agent, ok := strings.CutPrefix(name, "portable-")
-		if !ok || !slices.Contains(portableAgents, agent) {
-			return Event{}, false, fmt.Errorf("unknown preset %q", name)
-		}
-		return parsePortableHook(agent, explicit, data)
+		return parsePortablePreset(name, explicit, data)
 	}
+}
+
+// parsePortablePreset routes a portable-<agent> preset to its adapter.
+func parsePortablePreset(name string, explicit model.Author, data []byte) (Event, bool, error) {
+	agent, ok := strings.CutPrefix(name, "portable-")
+	if !ok || !slices.Contains(portableAgents, agent) {
+		return Event{}, false, fmt.Errorf("unknown preset %q", name)
+	}
+	return parsePortableHook(agent, explicit, data)
 }
 
 var portableAgents = []string{

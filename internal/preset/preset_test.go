@@ -108,42 +108,49 @@ func TestParseTranscriptPath(t *testing.T) {
 		preset  string
 		author  model.Author
 		payload string
+		want    string
 	}{
 		{
 			name:    "droid edit",
 			preset:  "droid",
 			author:  model.AuthorAI,
 			payload: `{"tool_name":"Edit","transcript_path":"/tmp/s.jsonl","tool_input":{"file_path":"a.go"}}`,
+			want:    "/tmp/s.jsonl",
 		},
 		{
 			name:    "droid shell",
 			preset:  "droid",
 			author:  model.AuthorAI,
 			payload: `{"tool_name":"Bash","transcript_path":"/tmp/s.jsonl"}`,
+			want:    "/tmp/s.jsonl",
 		},
 		{
 			name:    "claude write",
 			preset:  "claude",
 			author:  model.AuthorAI,
 			payload: `{"tool_name":"Write","transcript_path":"/tmp/s.jsonl","tool_input":{"file_path":"a.go"}}`,
+			want:    "/tmp/s.jsonl",
 		},
 		{
 			name:    "portable claude",
 			preset:  "portable-claude",
 			author:  model.AuthorAI,
 			payload: `{"hook_event_name":"Write","transcript_path":"/tmp/s.jsonl","tool_input":{"file_path":"a.go"}}`,
+			want:    "/tmp/s.jsonl",
 		},
 		{
 			name:    "human events keep it too",
 			preset:  "droid",
 			author:  model.AuthorHuman,
 			payload: `{"tool_name":"Edit","transcript_path":"/tmp/s.jsonl","tool_input":{"file_path":"a.go"}}`,
+			want:    "/tmp/s.jsonl",
 		},
 		{
 			name:    "absent field stays empty",
 			preset:  "droid",
 			author:  model.AuthorAI,
 			payload: `{"tool_name":"Edit","tool_input":{"file_path":"a.go"}}`,
+			want:    "",
 		},
 	}
 	for _, test := range tests {
@@ -154,12 +161,8 @@ func TestParseTranscriptPath(t *testing.T) {
 			if err != nil || !handled {
 				t.Fatalf("Parse() = %+v, %t, %v", event, handled, err)
 			}
-			want := ""
-			if strings.Contains(test.payload, "transcript_path") {
-				want = "/tmp/s.jsonl"
-			}
-			if event.TranscriptPath != want {
-				t.Fatalf("TranscriptPath = %q, want %q", event.TranscriptPath, want)
+			if event.TranscriptPath != test.want {
+				t.Fatalf("TranscriptPath = %q, want %q", event.TranscriptPath, test.want)
 			}
 		})
 	}

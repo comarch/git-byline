@@ -520,7 +520,6 @@ func TestCheckpointInputDeadline(t *testing.T) {
 
 func TestCheckpointModelResolution(t *testing.T) {
 	t.Parallel()
-	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	tests := []struct {
 		name       string
 		transcript string
@@ -547,46 +546,51 @@ func TestCheckpointModelResolution(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
-			transcriptPath := filepath.Join(dir, "session.jsonl")
-			if test.transcript != "" {
-				if err := os.WriteFile(transcriptPath, []byte(test.transcript), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if test.sidecar != "" {
-				if err := os.WriteFile(filepath.Join(dir, "session.settings.json"), []byte(test.sidecar), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			root := appRepo(t)
-			appWrite(t, root, "file.txt", "base\n")
-			appCommit(t, root, "base")
-			payload := `{"session_id":"s","tool_name":"Edit","transcript_path":"` + transcriptPath +
-				`","tool_input":{"file_path":"file.txt"}}`
-			code, _, stderr, err := appRun(root, now, strings.NewReader(payload),
-				"checkpoint", "droid", "--type", "human", "--hook-input", "stdin")
-			if code != ExitSuccess || err != nil || stderr != "" {
-				t.Fatalf("human checkpoint = %d, %q, %v", code, stderr, err)
-			}
-			appWrite(t, root, "file.txt", "base\nai\n")
-			code, _, stderr, err = appRun(root, now.Add(time.Second), strings.NewReader(payload),
-				"checkpoint", "droid", "--type", "ai", "--hook-input", "stdin")
-			if code != ExitSuccess || err != nil || stderr != "" {
-				t.Fatalf("ai checkpoint = %d, %q, %v", code, stderr, err)
-			}
-			appCommit(t, root, "ai")
-			if code, _, _, err = appRun(root, now, nil, "annotate"); code != ExitSuccess || err != nil {
-				t.Fatalf("annotate = %d, %v", code, err)
-			}
-			code, stdout, stderr, err := appRun(root, now, nil, "blame", "file.txt")
-			if code != ExitSuccess || err != nil || stderr != "" {
-				t.Fatalf("blame = %d, %q, %v", code, stderr, err)
-			}
-			if !strings.Contains(stdout, test.want) {
-				t.Fatalf("blame %q does not contain %q", stdout, test.want)
-			}
+			runModelResolutionCase(t, test.transcript, test.sidecar, test.want)
 		})
+	}
+}
+
+func runModelResolutionCase(t *testing.T, transcript, sidecar, want string) {
+	t.Helper()
+	dir := t.TempDir()
+	if transcript != "" {
+		if err := os.WriteFile(filepath.Join(dir, "session.jsonl"), []byte(transcript), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sidecar != "" {
+		if err := os.WriteFile(filepath.Join(dir, "session.settings.json"), []byte(sidecar), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "base\n")
+	appCommit(t, root, "base")
+	payload := `{"session_id":"s","tool_name":"Edit","transcript_path":"` + filepath.Join(dir, "session.jsonl") +
+		`","tool_input":{"file_path":"file.txt"}}`
+	code, _, stderr, err := appRun(root, now, strings.NewReader(payload),
+		"checkpoint", "droid", "--type", "human", "--hook-input", "stdin")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("human checkpoint = %d, %q, %v", code, stderr, err)
+	}
+	appWrite(t, root, "file.txt", "base\nai\n")
+	code, _, stderr, err = appRun(root, now.Add(time.Second), strings.NewReader(payload),
+		"checkpoint", "droid", "--type", "ai", "--hook-input", "stdin")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("ai checkpoint = %d, %q, %v", code, stderr, err)
+	}
+	appCommit(t, root, "ai")
+	if code, _, _, err = appRun(root, now, nil, "annotate"); code != ExitSuccess || err != nil {
+		t.Fatalf("annotate = %d, %v", code, err)
+	}
+	code, stdout, stderr, err := appRun(root, now, nil, "blame", "file.txt")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("blame = %d, %q, %v", code, stderr, err)
+	}
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("blame %q does not contain %q", stdout, want)
 	}
 }
 

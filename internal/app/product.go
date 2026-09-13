@@ -28,42 +28,22 @@ import (
 
 var checkpointInputTimeoutNanos atomic.Int64
 
+// checkpointArgs holds the validated checkpoint command surface.
+type checkpointArgs struct {
+	presetName string
+	explicit   model.Author
+}
+
 func runCheckpoint(env *Env, command *command, args []string) (int, error) {
-	if len(args) == 0 {
-		return commandUsageError(env, command, errors.New("preset is required"))
-	}
-	presetName := args[0]
-	flags := flag.NewFlagSet(command.name, flag.ContinueOnError)
-	var output strings.Builder
-	flags.SetOutput(&output)
-	typeName := flags.String("type", "", "human or ai")
-	hookInput := flags.String("hook-input", "", "must be stdin")
-	managedBy := flags.String("managed-by", "", "managed hook owner")
-	if err := flags.Parse(args[1:]); err != nil {
-		return flagError(env, command, output.String(), err)
-	}
-	if flags.NArg() != 0 {
-		return commandUsageError(env, command, errors.New("checkpoint takes no positional arguments after the preset"))
-	}
-	if *hookInput != "stdin" {
-		return commandUsageError(env, command, errors.New("--hook-input must be stdin"))
-	}
-	if *managedBy != "" && *managedBy != "git-byline" {
-		return commandUsageError(env, command, errors.New("--managed-by must be git-byline"))
-	}
-	explicit := model.Author(*typeName)
-	if presetName == "agent-v1" {
-		if explicit != "" {
-			return commandUsageError(env, command, errors.New("agent-v1 does not accept --type"))
-		}
-	} else if explicit != model.AuthorHuman && explicit != model.AuthorAI {
-		return commandUsageError(env, command, errors.New("--type must be human or ai"))
+	parsed, code, done, err := parseCheckpointArgs(env, command, args)
+	if done {
+		return code, err
 	}
 	input, err := readCheckpointInput(env.Stdin)
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
-	event, handled, parseErr := preset.Parse(presetName, explicit, bytes.NewReader(input))
+	event, handled, parseErr := preset.Parse(parsed.presetName, parsed.explicit, bytes.NewReader(input))
 	if parseErr == nil && !handled {
 		return ExitSuccess, nil
 	}
@@ -77,23 +57,78 @@ func runCheckpoint(env *Env, command *command, args []string) (int, error) {
 	if parseErr != nil {
 		return operationalError(env, command.name, parseErr)
 	}
-	if event.Type == model.AuthorAI && event.Model == preset.FallbackModel && event.TranscriptPath != "" {
-		if resolved, err := transcript.ResolveModel(event.TranscriptPath); err == nil && resolved != "" {
-			candidate := event
-			candidate.Model = resolved
-			if model.ValidateAttribution(model.Attribution{
-				Author: candidate.Type, Agent: candidate.Agent, Model: candidate.Model, Session: candidate.Session,
-			}) == nil {
-				event = candidate
-			}
-		}
-	}
+	event = resolveEventModel(event)
 	result, err := provenance.Capture(repo, event, env.now())
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
 	writeWarnings(env, result.Warnings)
 	return ExitSuccess, nil
+}
+
+// parseCheckpointArgs validates flags and the preset surface. done marks a
+// finished exit path with its code and error.
+func parseCheckpointArgs(env *Env, command *command, args []string) (checkpointArgs, int, bool, error) {
+	if len(args) == 0 {
+		code, err := commandUsageError(env, command, errors.New("preset is required"))
+		return checkpointArgs{}, code, true, err
+	}
+	parsed := checkpointArgs{presetName: args[0]}
+	flags := flag.NewFlagSet(command.name, flag.ContinueOnError)
+	var output strings.Builder
+	flags.SetOutput(&output)
+	typeName := flags.String("type", "", "human or ai")
+	hookInput := flags.String("hook-input", "", "must be stdin")
+	managedBy := flags.String("managed-by", "", "managed hook owner")
+	if err := flags.Parse(args[1:]); err != nil {
+		code, err := flagError(env, command, output.String(), err)
+		return checkpointArgs{}, code, true, err
+	}
+	if flags.NArg() != 0 {
+		code, err := commandUsageError(env, command, errors.New("checkpoint takes no positional arguments after the preset"))
+		return checkpointArgs{}, code, true, err
+	}
+	if *hookInput != "stdin" {
+		code, err := commandUsageError(env, command, errors.New("--hook-input must be stdin"))
+		return checkpointArgs{}, code, true, err
+	}
+	if *managedBy != "" && *managedBy != "git-byline" {
+		code, err := commandUsageError(env, command, errors.New("--managed-by must be git-byline"))
+		return checkpointArgs{}, code, true, err
+	}
+	parsed.explicit = model.Author(*typeName)
+	if parsed.presetName == "agent-v1" {
+		if parsed.explicit != "" {
+			code, err := commandUsageError(env, command, errors.New("agent-v1 does not accept --type"))
+			return checkpointArgs{}, code, true, err
+		}
+		return parsed, ExitSuccess, false, nil
+	}
+	if parsed.explicit != model.AuthorHuman && parsed.explicit != model.AuthorAI {
+		code, err := commandUsageError(env, command, errors.New("--type must be human or ai"))
+		return checkpointArgs{}, code, true, err
+	}
+	return parsed, ExitSuccess, false, nil
+}
+
+// resolveEventModel replaces the fallback model with the model named by the
+// session transcript or sidecar when the event allows it.
+func resolveEventModel(event preset.Event) preset.Event {
+	if event.Type != model.AuthorAI || event.Model != preset.FallbackModel || event.TranscriptPath == "" {
+		return event
+	}
+	resolved, err := transcript.ResolveModel(event.TranscriptPath)
+	if err != nil || resolved == "" {
+		return event
+	}
+	candidate := event
+	candidate.Model = resolved
+	if model.ValidateAttribution(model.Attribution{
+		Author: candidate.Type, Agent: candidate.Agent, Model: candidate.Model, Session: candidate.Session,
+	}) != nil {
+		return event
+	}
+	return candidate
 }
 
 func readCheckpointInput(input io.Reader) ([]byte, error) {

@@ -117,12 +117,12 @@ func TestResolveModelInvalidPath(t *testing.T) {
 func TestResolveModelRejectsSymlink(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	real := filepath.Join(dir, "session.jsonl")
-	if err := os.WriteFile(real, []byte(`{"message":{"role":"assistant","modelId":"droid-a"}}`), 0o600); err != nil {
+	target := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(target, []byte(`{"message":{"role":"assistant","modelId":"droid-a"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "link.jsonl")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ResolveModel(link)
