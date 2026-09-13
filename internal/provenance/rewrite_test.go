@@ -1126,110 +1126,74 @@ func presetAI(session, path string) preset.Event {
 
 func TestReferenceTransactionKeepsPendingAcrossOrdinaryCommit(t *testing.T) {
 	t.Parallel()
-	root := testRepo(t)
-	write(t, root, "base.txt", "base\n")
-	first := commit(t, root, "base")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
+	// Git 2.55 reports an attached HEAD move as one HEAD line with the real
+	// old tip. Older Git sends a zero-old shadow line next to the real
+	// branch update; the branch line must decide the outcome there.
+	shapes := []struct {
+		name  string
+		input func(old, new string) string
+	}{
+		{
+			"real-old HEAD line",
+			func(old, new string) string { return old + " " + new + " HEAD\n" },
+		},
+		{
+			"zero-old HEAD shadow with branch line",
+			func(old, new string) string {
+				zero := strings.Repeat("0", 40)
+				return zero + " " + new + " HEAD\n" + old + " " + new + " refs/heads/main\n"
+			},
+		},
 	}
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
-	// Partial commit: p1 is committed, p2 stays excluded with AI evidence.
-	write(t, root, "p1.txt", "p1\n")
-	write(t, root, "p2.txt", "p2\n")
-	now := time.Now()
-	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p1.txt"}}, now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p2.txt"}}, now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	git(t, root, "add", "p1.txt")
-	git(t, root, "commit", "-m", "only p1")
-	second := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
-	input := first + " " + second + " HEAD\n"
-	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
-	git(t, root, "add", "p2.txt")
-	git(t, root, "commit", "-m", "p2 now")
-	third := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
-	input = second + " " + third + " HEAD\n"
-	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
-	after, err := Blame(repo, "p2.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(after.Lines) != 1 || after.Lines[0].Attribution.Author != model.AuthorAI {
-		t.Fatalf("p2 attribution after second commit = %+v, want ai", after.Lines)
-	}
-}
-
-// TestReferenceTransactionIgnoresZeroOldHeadShadow covers the reference
-// transaction input shape Git versions before 2.55 produce: an attached
-// HEAD move arrives as a zero-old shadow line next to the real branch
-// update in the same transaction. The shadow line must not run reset
-// handling, or an ordinary partial commit loses its pending provenance.
-func TestReferenceTransactionIgnoresZeroOldHeadShadow(t *testing.T) {
-	t.Parallel()
-	root := testRepo(t)
-	write(t, root, "base.txt", "base\n")
-	first := commit(t, root, "base")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
-	write(t, root, "p1.txt", "p1\n")
-	write(t, root, "p2.txt", "p2\n")
-	now := time.Now()
-	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p1.txt"}}, now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p2.txt"}}, now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	zero := strings.Repeat("0", 40)
-	git(t, root, "add", "p1.txt")
-	git(t, root, "commit", "-m", "only p1")
-	second := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
-	input := zero + " " + second + " HEAD\n" +
-		first + " " + second + " refs/heads/main\n"
-	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
-	git(t, root, "add", "p2.txt")
-	git(t, root, "commit", "-m", "p2 now")
-	third := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
-	input = zero + " " + third + " HEAD\n" +
-		second + " " + third + " refs/heads/main\n"
-	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
-	after, err := Blame(repo, "p2.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(after.Lines) != 1 || after.Lines[0].Attribution.Author != model.AuthorAI {
-		t.Fatalf("p2 attribution after shadow commit = %+v, want ai", after.Lines)
+	for _, shape := range shapes {
+		t.Run(shape.name, func(t *testing.T) {
+			t.Parallel()
+			root := testRepo(t)
+			write(t, root, "base.txt", "base\n")
+			first := commit(t, root, "base")
+			repo, err := gitcmd.Discover(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Annotate(repo); err != nil {
+				t.Fatal(err)
+			}
+			// Partial commit: p1 is committed, p2 stays excluded with AI evidence.
+			write(t, root, "p1.txt", "p1\n")
+			write(t, root, "p2.txt", "p2\n")
+			now := time.Now()
+			if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p1.txt"}}, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p2.txt"}}, now.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			git(t, root, "add", "p1.txt")
+			git(t, root, "commit", "-m", "only p1")
+			second := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+			if _, err := HandleReferenceTransaction(repo, strings.NewReader(shape.input(first, second)), "committed"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Annotate(repo); err != nil {
+				t.Fatal(err)
+			}
+			git(t, root, "add", "p2.txt")
+			git(t, root, "commit", "-m", "p2 now")
+			third := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+			if _, err := HandleReferenceTransaction(repo, strings.NewReader(shape.input(second, third)), "committed"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Annotate(repo); err != nil {
+				t.Fatal(err)
+			}
+			after, err := Blame(repo, "p2.txt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(after.Lines) != 1 || after.Lines[0].Attribution.Author != model.AuthorAI {
+				t.Fatalf("p2 attribution after second commit = %+v, want ai", after.Lines)
+			}
+		})
 	}
 }
 
