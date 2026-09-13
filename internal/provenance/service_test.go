@@ -1336,7 +1336,10 @@ func git(t *testing.T, root string, args ...string) string {
 	return string(out)
 }
 
-func TestBlameResolvesCwdRelativePath(t *testing.T) {
+// blameResolveRepo prepares a repository where the nested sub/f.txt carries
+// AI evidence and the root f.txt has none, with both committed and annotated.
+func blameResolveRepo(t *testing.T) (string, *gitcmd.Repo) {
+	t.Helper()
 	root := testRepo(t)
 	write(t, root, "sub/f.txt", "nested\n")
 	write(t, root, "f.txt", "root\n")
@@ -1351,6 +1354,11 @@ func TestBlameResolvesCwdRelativePath(t *testing.T) {
 	if _, err := Annotate(repo); err != nil {
 		t.Fatal(err)
 	}
+	return root, repo
+}
+
+func TestBlameResolvesCwdRelativePath(t *testing.T) {
+	root, repo := blameResolveRepo(t)
 
 	cases := []struct {
 		name       string
@@ -1381,37 +1389,40 @@ func TestBlameResolvesCwdRelativePath(t *testing.T) {
 			}
 		})
 	}
+}
 
-	t.Run("missing path names both interpretations", func(t *testing.T) {
-		t.Chdir(filepath.Join(root, "sub"))
-		_, err := Blame(repo, "missing.txt")
-		if err == nil {
-			t.Fatal("expected an error for a missing path")
-		}
-		if !strings.Contains(err.Error(), "sub/missing.txt") || !strings.Contains(err.Error(), "missing.txt") {
-			t.Fatalf("error should name both candidates: %v", err)
-		}
-	})
+func TestBlameMissingPathNamesBothInterpretations(t *testing.T) {
+	root, repo := blameResolveRepo(t)
+	t.Chdir(filepath.Join(root, "sub"))
+	_, err := Blame(repo, "missing.txt")
+	if err == nil {
+		t.Fatal("expected an error for a missing path")
+	}
+	if !strings.Contains(err.Error(), "sub/missing.txt") || !strings.Contains(err.Error(), "missing.txt") {
+		t.Fatalf("error should name both candidates: %v", err)
+	}
+}
 
-	t.Run("dashboard file argument resolves cwd-relative", func(t *testing.T) {
-		t.Chdir(filepath.Join(root, "sub"))
-		result, err := BlameHeadFile(repo, "f.txt")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result.Lines) != 1 || result.Lines[0].Content != "nested" {
-			t.Fatalf("dashboard blame content = %q, want nested", result.Lines[0].Content)
-		}
-	})
-
-	t.Run("dashboard absolute path is exact from subdirectory", func(t *testing.T) {
-		t.Chdir(filepath.Join(root, "sub"))
-		result, err := BlameHeadFile(repo, filepath.Join(root, "f.txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result.Lines) != 1 || result.Lines[0].Content != "root" {
-			t.Fatalf("dashboard blame content = %q, want root", result.Lines[0].Content)
-		}
-	})
+func TestBlameHeadFileResolvesCwdRelativePath(t *testing.T) {
+	root, repo := blameResolveRepo(t)
+	t.Chdir(filepath.Join(root, "sub"))
+	cases := []struct {
+		name    string
+		path    string
+		wantHit string
+	}{
+		{name: "cwd-relative argument", path: "f.txt", wantHit: "nested"},
+		{name: "absolute argument is exact", path: filepath.Join(root, "f.txt"), wantHit: "root"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := BlameHeadFile(repo, tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Lines) != 1 || result.Lines[0].Content != tc.wantHit {
+				t.Fatalf("dashboard blame content = %q, want %q", result.Lines[0].Content, tc.wantHit)
+			}
+		})
+	}
 }
