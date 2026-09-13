@@ -7,6 +7,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/version"
 )
 
@@ -169,6 +171,16 @@ func commands() []*command {
 			run: runUninstall,
 		},
 		{
+			name:  "update",
+			short: "replace the running binary from a verified archive",
+			usage: "Usage: git-byline update --archive FILE --checksums FILE [--dry-run]\n\n" +
+				"Verify a staged release archive against its checksums and replace\n" +
+				"the running binary in place. The binary never downloads anything:\n" +
+				"fetch the archive and checksums yourself. After the swap, run\n" +
+				"'git-byline version' to confirm the new version.",
+			run: runUpdate,
+		},
+		{
 			name:  "help",
 			short: "show help for a command",
 			usage: "Usage: git-byline help [command]\n\n" +
@@ -178,9 +190,10 @@ func commands() []*command {
 		{
 			name:  "version",
 			short: "show the git-byline version",
-			usage: "Usage: git-byline version\n\n" +
+			usage: "Usage: git-byline version [--json]\n\n" +
 				"Print the git-byline version and exit. Release builds report the\n" +
-				"release tag; local builds report dev.",
+				"release tag; local builds report dev. --json prints the version\n" +
+				"and the highest supported attribution note version.",
 			run: runVersion,
 		},
 	}
@@ -287,9 +300,15 @@ func runHelp(env *Env, c *command, args []string) (int, error) {
 	}
 }
 
-// runVersion implements the version command. It defines a flag set only to
-// reject unknown flags and handle the help flag consistently with the rest
-// of the CLI; version itself takes no options.
+// versionJSON is the machine-readable form of the version command.
+type versionJSON struct {
+	Version     string `json:"version"`
+	NoteVersion int    `json:"note_version"`
+}
+
+// runVersion implements the version command. The default output is one
+// stable line; --json adds the highest supported attribution note version
+// for tooling that checks format compatibility before updating.
 func runVersion(env *Env, c *command, args []string) (int, error) {
 	fs := flag.NewFlagSet("git-byline "+c.name, flag.ContinueOnError)
 	var flagOutput strings.Builder
@@ -297,6 +316,7 @@ func runVersion(env *Env, c *command, args []string) (int, error) {
 	fs.Usage = func() {
 		fmt.Fprintln(&flagOutput, c.usage)
 	}
+	asJSON := fs.Bool("json", false, "print one machine-readable JSON object")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(env.Stdout, c.usage)
@@ -307,6 +327,14 @@ func runVersion(env *Env, c *command, args []string) (int, error) {
 	}
 	if fs.NArg() > 0 {
 		return commandUsageError(env, c, fmt.Errorf("version takes no arguments, got %q", fs.Arg(0)))
+	}
+	if *asJSON {
+		data, err := json.Marshal(versionJSON{Version: version.Version, NoteVersion: model.NoteVersion})
+		if err != nil {
+			return operationalError(env, c.name, fmt.Errorf("encode version JSON: %w", err))
+		}
+		fmt.Fprintf(env.Stdout, "%s\n", data)
+		return ExitSuccess, nil
 	}
 	fmt.Fprintf(env.Stdout, "git-byline %s\n", version.Version)
 	return ExitSuccess, nil

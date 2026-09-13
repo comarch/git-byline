@@ -99,6 +99,7 @@ git byline dashboard --range HEAD~10..HEAD  # trend and breakdowns
 - [Step 2: activate hooks](#step-2-activate-hooks)
 - [Step 3: work normally](#step-3-work-normally)
 - [Step 4: inspect committed provenance](#step-4-inspect-committed-provenance)
+- [Update](#update)
 - [Uninstall](#uninstall)
 
 **Reference**
@@ -391,6 +392,24 @@ git byline status --json
 git byline stats --json HEAD~10..HEAD
 ```
 
+## Update
+
+Re-run the install one-liner. The installer compares the release with the
+installed binary, skips with one line when it is already current, and
+otherwise replaces the binary and refreshes the managed hooks.
+
+Air-gapped machines download the release archive and `checksums.txt`
+themselves and let the binary swap itself, with no network access:
+
+```sh
+git-byline update --archive git-byline_1.0.0_linux_amd64.tar.gz \
+  --checksums checksums.txt
+```
+
+For automatic updates, schedule the installer; it is a no-op when current.
+The binary itself never checks for updates. Details:
+[Update](docs/INSTALL.md#update).
+
 ## Uninstall
 
 Remove only hooks managed by git-byline:
@@ -410,7 +429,7 @@ Uninstalling hooks stops new attribution. It does not delete existing notes.
 
 ## Commands
 
-Seventeen commands, one binary:
+Eighteen commands, one binary:
 
 | Capability | Commands |
 | --- | --- |
@@ -418,6 +437,7 @@ Seventeen commands, one binary:
 | Inspect | `blame`, `status`, `stats`, `dashboard`, `verify` |
 | Enforce | `check`, `disclosure` |
 | Interoperate | `export`, `import`, `ci` |
+| Maintain | `update` |
 | Meta | `version`, `help` |
 
 | Command | Purpose |
@@ -437,7 +457,8 @@ Seventeen commands, one binary:
 | `ci install\|run --provider github\|gitlab` | Install or run forge merge attribution workflows |
 | `install-hooks` | Merge agent hooks plus Git annotation and note-sharing hooks |
 | `uninstall` | Remove only git-byline-managed hooks |
-| `version` | Print the build version |
+| `update --archive FILE --checksums FILE [--dry-run]` | Replace the running binary from a checksum-verified staged archive |
+| `version [--json]` | Print the build version, optionally as JSON |
 | `help [command]` | Show command help |
 
 `git byline check` exits with status 1 when a policy violation is found.
