@@ -11,8 +11,11 @@
 set -euo pipefail
 
 BYLINE_BIN="${BYLINE_BIN:-./git-byline}"
-test -n "$BYLINE_BIN" || { echo "BYLINE_BIN is required" >&2; exit 2; }
-test -x "$BYLINE_BIN" || { echo "BYLINE_BIN is not executable: $BYLINE_BIN" >&2; exit 2; }
+[[ -n "$BYLINE_BIN" ]] || { echo "BYLINE_BIN is required" >&2; exit 2; }
+[[ -x "$BYLINE_BIN" ]] || { echo "BYLINE_BIN is not executable: $BYLINE_BIN" >&2; exit 2; }
+
+# Attribution prefix the portable-cursor preset records in notes.
+AI_CURSOR="ai:cursor"
 
 fail() {
   echo "SMOKE FAIL: $1" >&2
@@ -27,10 +30,11 @@ step() {
 # Smoke runs on runners without Python, so key greps stand in for a parser.
 require() {
   # require <description> <haystack> <needle>
-  case "$2" in
-  *"$3"*) ;;
+  local description="$1" haystack="$2" needle="$3"
+  case "$haystack" in
+  *"$needle"*) ;;
   *)
-    fail "$1: missing '$3'"
+    fail "$description: missing '$needle'"
     ;;
   esac
 }
@@ -57,7 +61,7 @@ chmod +x .git/hooks/pre-commit
 "$BIN" install-hooks --agent none --git >/dev/null || fail "install-hooks rerun"
 grep -q "USER-HOOK-RAN" .git/hooks/pre-commit || fail "user hook lost"
 grep -q "byline" .git/hooks/post-commit || fail "managed post-commit missing"
-test -f .git/hooks/pre-push || fail "pre-push hook missing"
+[[ -f .git/hooks/pre-push ]] || fail "pre-push hook missing"
 
 step "AI and human attribution through the commit hook"
 printf 'ai alpha\nai beta\n' >app.txt
@@ -131,18 +135,18 @@ printf '%s' '{"sessionId":"sp3","toolName":"str_replace_based_edit","filePath":"
 git add -A
 git commit -qm "feat: special paths" || fail "special paths commit"
 BLAME="$("$BIN" blame "dir with spaces/nested/some file.txt")"
-require "space path blame" "$BLAME" "ai:cursor"
+require "space path blame" "$BLAME" "$AI_CURSOR"
 BLAME="$("$BIN" blame "żółć/zażółć gęślą jaźń.txt")"
-require "unicode path blame" "$BLAME" "ai:cursor"
+require "unicode path blame" "$BLAME" "$AI_CURSOR"
 BLAME="$("$BIN" blame crlf.txt)"
-require "crlf blame" "$BLAME" "ai:cursor"
+require "crlf blame" "$BLAME" "$AI_CURSOR"
 
 step "cwd-relative blame from a subdirectory"
 cd "dir with spaces" || fail "cd subdir"
 BLAME="$("$BIN" blame "nested/some file.txt")"
-require "cwd-relative blame" "$BLAME" "ai:cursor"
+require "cwd-relative blame" "$BLAME" "$AI_CURSOR"
 BLAME="$("$BIN" blame "dir with spaces/nested/some file.txt")"
-require "root-relative blame" "$BLAME" "ai:cursor"
+require "root-relative blame" "$BLAME" "$AI_CURSOR"
 cd "$REPO" || fail "cd back"
 
 step "reports and policy"
@@ -175,7 +179,7 @@ git remote add origin "$WORK/remote.git" || fail "remote add"
 git push -q origin main || fail "push main"
 git --git-dir="$WORK/remote.git" notes --ref=byline list >/dev/null || fail "notes list"
 NOTES_COUNT="$(git --git-dir="$WORK/remote.git" notes --ref=byline list | wc -l | tr -d ' ')"
-test "$NOTES_COUNT" -ge 1 || fail "notes missing on remote: $NOTES_COUNT"
+[[ "$NOTES_COUNT" -ge 1 ]] || fail "notes missing on remote: $NOTES_COUNT"
 
 step "uninstall removes managed hooks only"
 "$BIN" uninstall --git >/dev/null || fail "uninstall"
@@ -183,7 +187,7 @@ grep -q "USER-HOOK-RAN" .git/hooks/pre-commit || fail "user hook deleted"
 if grep -q "byline" .git/hooks/post-commit 2>/dev/null; then
   fail "managed block left in post-commit"
 fi
-test ! -f .git/hooks/pre-push || fail "pre-push left behind"
+[[ ! -f .git/hooks/pre-push ]] || fail "pre-push left behind"
 
 echo
 echo "SMOKE OK"
