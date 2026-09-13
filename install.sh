@@ -90,6 +90,7 @@ if [ -f "$target" ]; then
 	current="$("$target" version 2>/dev/null || true)"
 	case "$current" in
 	"git-byline v"*) previous="${current#git-byline }" ;;
+	*) ;;
 	esac
 	if [ "$current" = "git-byline $version" ]; then
 		printf 'git-byline %s is already installed at %s\n' "$version" "$target"
