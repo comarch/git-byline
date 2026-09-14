@@ -331,6 +331,8 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		return Event{}, false, nil
 	}
 	applyPatch := applyPatchTool(payload.ToolName, payload.ToolNameCamel)
+	requirePatchBody := agent == "factory" && applyPatch
+	patchBodyFound := false
 	paths := []string{payload.FilePath, payload.FilePathCamel, payload.File, payload.Path}
 	paths = append(paths, payload.FilePaths...)
 	paths = append(paths, payload.FilePathsCamel...)
@@ -378,14 +380,18 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 			patch = firstValue(input.Patch, input.Input)
 		}
 		if patch != "" {
+			patchBodyFound = true
 			patchFiles, err := patchPaths(patch)
-			if err != nil && len(uniquePaths(paths)) == 0 {
+			if err != nil && (requirePatchBody || len(uniquePaths(paths)) == 0) {
 				return Event{}, false, err
 			}
 			if err == nil {
 				paths = append(paths, patchFiles...)
 			}
 		}
+	}
+	if requirePatchBody && !patchBodyFound {
+		return Event{}, false, errors.New("patch is missing")
 	}
 	paths = uniquePaths(paths)
 	if len(paths) == 0 {
