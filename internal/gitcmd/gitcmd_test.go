@@ -409,7 +409,7 @@ func TestReadNoteRefEnforcesNoteOutputLimit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX shell fake git is not executable on Windows")
 	}
-	t.Parallel()
+	// This test emits 16 MiB, so keep it serial with other Git integration tests.
 	root := t.TempDir()
 	gitBin := filepath.Join(root, "fake-git")
 	if err := os.WriteFile(
