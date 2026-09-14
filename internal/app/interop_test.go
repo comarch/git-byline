@@ -15,18 +15,7 @@ import (
 
 func TestInteropCommands(t *testing.T) {
 	t.Parallel()
-	root := appRepo(t)
-	appWrite(t, root, "file.txt", "human\nai\n")
-	appCommit(t, root, "content")
-	head := strings.TrimSpace(appGit(t, root, "rev-parse", "HEAD"))
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob, exists, err := repo.BlobID(head, "file.txt")
-	if err != nil || !exists {
-		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
-	}
+	root, repo, head, blob := appRepoWithCommittedFile(t, "file.txt", "human\nai\n")
 	if err := repo.WriteNote(head, mustAppInteropNote(t, blob)); err != nil {
 		t.Fatal(err)
 	}
