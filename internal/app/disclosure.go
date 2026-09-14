@@ -8,10 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"unicode"
 
 	"github.com/comarch/git-byline/internal/disclosure"
-	"github.com/comarch/git-byline/internal/report"
 	"github.com/comarch/git-byline/internal/version"
 )
 
@@ -46,21 +44,9 @@ func runDisclosure(env *Env, command *command, args []string) (int, error) {
 	if *format != "json" && *format != "spdx" && *format != "cyclonedx" {
 		return commandUsageError(env, command, errors.New("--format must be json, spdx, or cyclonedx"))
 	}
-	rangeArgs := []string(nil)
-	if rangeSpecified {
-		rangeArgs = []string{rangeValue}
-	}
-	from, to, err := parseRevisionRange(rangeArgs, command.name)
+	aggregate, code, err := collectRangeAggregate(env, command, rangeSpecified, rangeValue)
 	if err != nil {
-		return commandUsageError(env, command, err)
-	}
-	repo, err := discoverForEnv(env)
-	if err != nil {
-		return operationalError(env, command.name, err)
-	}
-	aggregate, err := report.Collect(repo, from, to, 0)
-	if err != nil {
-		return operationalError(env, command.name, err)
+		return code, err
 	}
 	data, err := disclosure.Render(*format, aggregate, env.now(), version.Version)
 	if err != nil {
@@ -90,20 +76,9 @@ func createDisclosureOutput(env *Env, requested string) (*os.File, string, error
 	if requested == "-" {
 		return nil, "", errors.New("disclosure output must be a file")
 	}
-	for _, char := range requested {
-		if unicode.IsControl(char) {
-			return nil, "", errors.New("disclosure output path contains a control character")
-		}
-	}
-	var path string
-	if filepath.IsAbs(requested) {
-		path = filepath.Clean(requested)
-	} else {
-		dir, err := env.workingDir()
-		if err != nil {
-			return nil, "", err
-		}
-		path = filepath.Join(dir, filepath.Clean(requested))
+	path, err := resolveOutputPath(env, requested, "disclosure")
+	if err != nil {
+		return nil, "", err
 	}
 	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
 	if err != nil {

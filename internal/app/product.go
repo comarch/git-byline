@@ -8,12 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/comarch/git-byline/internal/dashboard"
@@ -22,7 +20,6 @@ import (
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/preset"
 	"github.com/comarch/git-byline/internal/provenance"
-	"github.com/comarch/git-byline/internal/report"
 	"github.com/comarch/git-byline/internal/transcript"
 )
 
@@ -200,21 +197,9 @@ func runDashboard(env *Env, command *command, args []string) (int, error) {
 		if flags.NArg() != 0 {
 			return commandUsageError(env, command, errors.New("--range or --repo cannot be combined with a file argument"))
 		}
-		rangeArgs := []string(nil)
-		if rangeSpecified {
-			rangeArgs = []string{rangeValue}
-		}
-		from, to, err := parseRevisionRange(rangeArgs, command.name)
+		aggregate, code, err := collectRangeAggregate(env, command, rangeSpecified, rangeValue)
 		if err != nil {
-			return commandUsageError(env, command, err)
-		}
-		repo, err := discoverForEnv(env)
-		if err != nil {
-			return operationalError(env, command.name, err)
-		}
-		aggregate, err := report.Collect(repo, from, to, 0)
-		if err != nil {
-			return operationalError(env, command.name, err)
+			return code, err
 		}
 		data, err := dashboard.RenderRange(aggregate)
 		if err != nil {
@@ -224,7 +209,7 @@ func runDashboard(env *Env, command *command, args []string) (int, error) {
 		if err != nil {
 			return operationalError(env, command.name, err)
 		}
-		if err := writeDashboard(file, path, data); err != nil {
+		if err := writeExclusiveOutput(file, path, data, "dashboard"); err != nil {
 			return operationalError(env, command.name, err)
 		}
 		fmt.Fprintln(env.Stdout, path)
@@ -263,7 +248,7 @@ func runDashboard(env *Env, command *command, args []string) (int, error) {
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
-	if err := writeDashboard(file, path, data); err != nil {
+	if err := writeExclusiveOutput(file, path, data, "dashboard"); err != nil {
 		return operationalError(env, command.name, err)
 	}
 	fmt.Fprintln(env.Stdout, path)
@@ -278,53 +263,7 @@ func createDashboardOutput(env *Env, requested string) (*os.File, string, error)
 		}
 		return file, file.Name(), nil
 	}
-	if requested == "-" {
-		return nil, "", errors.New("dashboard output must be a file")
-	}
-	if strings.ContainsRune(requested, 0) {
-		return nil, "", errors.New("dashboard output path contains NUL")
-	}
-	for _, char := range requested {
-		if unicode.IsControl(char) {
-			return nil, "", errors.New("dashboard output path contains a control character")
-		}
-	}
-	var path string
-	if filepath.IsAbs(requested) {
-		path = filepath.Clean(requested)
-	} else {
-		dir, err := env.workingDir()
-		if err != nil {
-			return nil, "", err
-		}
-		path = filepath.Join(dir, filepath.Clean(requested))
-	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return nil, "", fmt.Errorf("create dashboard %s: %w", path, err)
-	}
-	return file, path, nil
-}
-
-func writeDashboard(file *os.File, path string, data []byte) error {
-	success := false
-	defer func() {
-		_ = file.Close()
-		if !success {
-			_ = os.Remove(path)
-		}
-	}()
-	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("write dashboard %s: %w", path, err)
-	}
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync dashboard %s: %w", path, err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close dashboard %s: %w", path, err)
-	}
-	success = true
-	return nil
+	return createExclusiveOutput(env, requested, "dashboard")
 }
 
 func runAnnotate(env *Env, command *command, args []string) (int, error) {

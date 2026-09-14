@@ -4,10 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"unicode"
 
 	"github.com/comarch/git-byline/internal/interop"
 )
@@ -52,60 +49,13 @@ func runExport(env *Env, command *command, args []string) (int, error) {
 		}
 		return ExitSuccess, nil
 	}
-	file, path, err := createInteropOutput(env, *outputPath)
+	file, path, err := createExclusiveOutput(env, *outputPath, "export")
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
-	if err := writeInteropOutput(file, path, data); err != nil {
+	if err := writeExclusiveOutput(file, path, data, "export"); err != nil {
 		return operationalError(env, command.name, err)
 	}
 	fmt.Fprintln(env.Stdout, path)
 	return ExitSuccess, nil
-}
-
-func createInteropOutput(env *Env, requested string) (*os.File, string, error) {
-	if requested == "-" {
-		return nil, "", errors.New("export output must be a file")
-	}
-	for _, char := range requested {
-		if unicode.IsControl(char) {
-			return nil, "", errors.New("export output path contains a control character")
-		}
-	}
-	var path string
-	if filepath.IsAbs(requested) {
-		path = filepath.Clean(requested)
-	} else {
-		dir, err := env.workingDir()
-		if err != nil {
-			return nil, "", err
-		}
-		path = filepath.Join(dir, filepath.Clean(requested))
-	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return nil, "", fmt.Errorf("create export %s: %w", path, err)
-	}
-	return file, path, nil
-}
-
-func writeInteropOutput(file *os.File, path string, data []byte) error {
-	success := false
-	defer func() {
-		_ = file.Close()
-		if !success {
-			_ = os.Remove(path)
-		}
-	}()
-	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("write export %s: %w", path, err)
-	}
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync export %s: %w", path, err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close export %s: %w", path, err)
-	}
-	success = true
-	return nil
 }

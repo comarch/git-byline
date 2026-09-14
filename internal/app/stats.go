@@ -43,6 +43,31 @@ func runStats(env *Env, command *command, args []string) (int, error) {
 	return ExitSuccess, nil
 }
 
+// collectRangeAggregate resolves one optional revision range and gathers
+// its report aggregate.
+func collectRangeAggregate(env *Env, command *command, rangeSpecified bool, rangeValue string) (report.Aggregate, int, error) {
+	rangeArgs := []string(nil)
+	if rangeSpecified {
+		rangeArgs = []string{rangeValue}
+	}
+	from, to, err := parseRevisionRange(rangeArgs, command.name)
+	if err != nil {
+		code, usageErr := commandUsageError(env, command, err)
+		return report.Aggregate{}, code, usageErr
+	}
+	repo, err := discoverForEnv(env)
+	if err != nil {
+		code, operationErr := operationalError(env, command.name, err)
+		return report.Aggregate{}, code, operationErr
+	}
+	aggregate, err := report.Collect(repo, from, to, 0)
+	if err != nil {
+		code, operationErr := operationalError(env, command.name, err)
+		return report.Aggregate{}, code, operationErr
+	}
+	return aggregate, ExitSuccess, nil
+}
+
 func parseRevisionRange(args []string, commandName string) (string, string, error) {
 	if len(args) == 0 {
 		return "", "", nil

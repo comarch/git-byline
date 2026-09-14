@@ -349,7 +349,7 @@ func TestDashboardTempOutputRemainsReserved(t *testing.T) {
 	if !errors.Is(err, os.ErrExist) {
 		t.Fatalf("second create error = %v, want file exists", err)
 	}
-	if err := writeDashboard(file, path, []byte("report")); err != nil {
+	if err := writeExclusiveOutput(file, path, []byte("report"), "dashboard"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
