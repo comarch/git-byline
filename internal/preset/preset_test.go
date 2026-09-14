@@ -185,6 +185,38 @@ func TestParsePortableHooks(t *testing.T) {
 			}
 		})
 	}
+	t.Run("patch-like input outside ApplyPatch is not a patch body", func(t *testing.T) {
+		t.Parallel()
+		payload := `{"toolName":"write_notes","toolArgs":{"input":"*** Begin Patch\n*** Update File: stray.go\n*** End Patch\n"}}`
+		event, handled, err := Parse("portable-factory", model.AuthorAI, strings.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if handled || len(event.Paths) != 0 {
+			t.Fatalf("event = %+v, handled = %t", event, handled)
+		}
+	})
+	t.Run("applypatch spellings use input as patch body", func(t *testing.T) {
+		t.Parallel()
+		for tool, path := range map[string]string{
+			"apply_patch":        "snake.go",
+			"factory.ApplyPatch": "qualified.go",
+		} {
+			tool, path := tool, path
+			t.Run(tool, func(t *testing.T) {
+				t.Parallel()
+				payload := `{"toolName":"` + tool +
+					`","toolArgs":{"input":"*** Begin Patch\n*** Update File: ` + path + `\n*** End Patch\n"}}`
+				event, handled, err := Parse("portable-factory", model.AuthorAI, strings.NewReader(payload))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !handled || len(event.Paths) != 1 || event.Paths[0] != path {
+					t.Fatalf("event = %+v, handled = %t", event, handled)
+				}
+			})
+		}
+	})
 	for _, agent := range portableAgents {
 		agent := agent
 		t.Run("shell-"+agent, func(t *testing.T) {

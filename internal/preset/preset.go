@@ -330,6 +330,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		readOnlyOperation(firstValue(payload.ToolName, payload.ToolNameCamel)) {
 		return Event{}, false, nil
 	}
+	applyPatch := applyPatchTool(payload.ToolName, payload.ToolNameCamel)
 	paths := []string{payload.FilePath, payload.FilePathCamel, payload.File, payload.Path}
 	paths = append(paths, payload.FilePaths...)
 	paths = append(paths, payload.FilePathsCamel...)
@@ -370,7 +371,13 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		paths = append(paths, input.EditedFilepathsCamel...)
 		paths = append(paths, input.Files...)
 		// Factory puts the ApplyPatch body in input; patch covers other surfaces.
-		if patch := firstValue(input.Patch, input.Input); patch != "" {
+		// Only ApplyPatch tools may use input as the patch body: ordinary tools
+		// can carry unrelated text in input that is not a patch.
+		patch := input.Patch
+		if applyPatch {
+			patch = firstValue(input.Patch, input.Input)
+		}
+		if patch != "" {
 			patchFiles, err := patchPaths(patch)
 			if err != nil && len(uniquePaths(paths)) == 0 {
 				return Event{}, false, err
@@ -444,6 +451,25 @@ func isShellOperation(values ...string) bool {
 		}
 		if strings.Contains(value, "bash") || strings.Contains(value, "command") ||
 			strings.Contains(value, "shell") || strings.Contains(value, "terminal") {
+			return true
+		}
+	}
+	return false
+}
+
+// applyPatchTool reports whether a tool name refers to the ApplyPatch tool.
+// It accepts prefixed and separated spellings like factory.ApplyPatch and
+// apply_patch, mirroring how surfaces name the tool.
+func applyPatchTool(values ...string) bool {
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if index := strings.LastIndex(value, "."); index >= 0 {
+			value = value[index+1:]
+		}
+		value = strings.ReplaceAll(value, "_", "")
+		value = strings.ReplaceAll(value, "-", "")
+		value = strings.ReplaceAll(value, " ", "")
+		if value == "applypatch" {
 			return true
 		}
 	}
