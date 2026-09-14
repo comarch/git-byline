@@ -515,22 +515,7 @@ func TestWorktreePathSafety(t *testing.T) {
 			t.Fatalf("NormalizeWorktreePath accepted %q", path)
 		}
 	}
-	if runtime.GOOS != "windows" {
-		outside := filepath.Join(t.TempDir(), "outside")
-		writeFile(t, filepath.Dir(outside), filepath.Base(outside), "outside\n")
-		if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, _, err := repo.WorktreeFile("link"); err == nil {
-			t.Fatal("WorktreeFile accepted escaping symlink")
-		}
-		if err := os.Symlink(filepath.Join(root, "missing"), filepath.Join(root, "broken")); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, _, err := repo.WorktreeFile("broken"); err == nil {
-			t.Fatal("WorktreeFile accepted broken symlink")
-		}
-	}
+	testWorktreePathSymlinks(t, repo, root)
 	if _, err := repo.ReadBlob("bad"); err == nil {
 		t.Fatal("ReadBlob accepted invalid object ID")
 	}
@@ -550,6 +535,27 @@ func TestWorktreePathSafety(t *testing.T) {
 	}
 	if _, err := repo.Parent("bad"); err == nil {
 		t.Fatal("Parent accepted invalid object ID")
+	}
+}
+
+func testWorktreePathSymlinks(t *testing.T, repo *Repo, root string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	outside := filepath.Join(t.TempDir(), "outside")
+	writeFile(t, filepath.Dir(outside), filepath.Base(outside), "outside\n")
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := repo.WorktreeFile("link"); err == nil {
+		t.Fatal("WorktreeFile accepted escaping symlink")
+	}
+	if err := os.Symlink(filepath.Join(root, "missing"), filepath.Join(root, "broken")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := repo.WorktreeFile("broken"); err == nil {
+		t.Fatal("WorktreeFile accepted broken symlink")
 	}
 }
 
@@ -929,25 +935,30 @@ func TestHeadReflogAction(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			action, err := repo.HeadReflogAction()
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("HeadReflogAction() = %q, want an error", action)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.wantAction == "" {
-				if action != "" {
-					t.Fatalf("HeadReflogAction() = %q, want empty", action)
-				}
-				return
-			}
-			if !strings.HasPrefix(action, tc.wantAction) {
-				t.Fatalf("HeadReflogAction() = %q, want prefix %q", action, tc.wantAction)
-			}
+			assertHeadReflogAction(t, repo, tc.wantAction, tc.wantErr)
 		})
+	}
+}
+
+func assertHeadReflogAction(t *testing.T, repo *Repo, wantAction string, wantErr bool) {
+	t.Helper()
+	action, err := repo.HeadReflogAction()
+	if wantErr {
+		if err == nil {
+			t.Fatalf("HeadReflogAction() = %q, want an error", action)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wantAction == "" {
+		if action != "" {
+			t.Fatalf("HeadReflogAction() = %q, want empty", action)
+		}
+		return
+	}
+	if !strings.HasPrefix(action, wantAction) {
+		t.Fatalf("HeadReflogAction() = %q, want prefix %q", action, wantAction)
 	}
 }
