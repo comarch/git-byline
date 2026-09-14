@@ -406,6 +406,23 @@ func TestTemplateHookCommands(t *testing.T) {
 		!strings.Contains(stdout, "updated global git config init.templateDir") {
 		t.Fatalf("template install = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
+	if strings.Contains(stdout, "hooks already installed") {
+		t.Fatalf("template install status = %q, config change must suppress the no-op line", stdout)
+	}
+	code, stdout, stderr, err = appRun(
+		root,
+		time.Time{},
+		nil,
+		"install-hooks",
+		"--agent", "none",
+		"--git",
+		"--template",
+		"--local-notes",
+	)
+	if code != ExitSuccess || err != nil || stderr != "" ||
+		stdout != "hooks already installed\n" {
+		t.Fatalf("template reinstall = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
 	code, stdout, stderr, err = appRun(
 		root,
 		time.Time{},
@@ -418,6 +435,22 @@ func TestTemplateHookCommands(t *testing.T) {
 	if code != ExitSuccess || err != nil || stderr != "" ||
 		!strings.Contains(stdout, "removed global git config init.templateDir") {
 		t.Fatalf("template uninstall = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	if strings.Contains(stdout, "no managed hooks found") {
+		t.Fatalf("template uninstall status = %q, config change must suppress the no-op line", stdout)
+	}
+	code, stdout, stderr, err = appRun(
+		root,
+		time.Time{},
+		nil,
+		"uninstall",
+		"--agent", "none",
+		"--git",
+		"--template",
+	)
+	if code != ExitSuccess || err != nil || stderr != "" ||
+		stdout != "no managed hooks found\n" {
+		t.Fatalf("template re-uninstall = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
 }
 

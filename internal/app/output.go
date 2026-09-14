@@ -45,8 +45,17 @@ func createExclusiveOutput(env *Env, requested, kind string) (*os.File, string, 
 	return file, path, nil
 }
 
+// outputFile is the file-operation seam of writeExclusiveOutput. Production
+// code always passes a *os.File; tests use it to inject write, sync, and
+// close failures.
+type outputFile interface {
+	Write(p []byte) (int, error)
+	Sync() error
+	Close() error
+}
+
 // writeExclusiveOutput writes and closes one output file, removing it on failure.
-func writeExclusiveOutput(file *os.File, path string, data []byte, kind string) error {
+func writeExclusiveOutput(file outputFile, path string, data []byte, kind string) error {
 	success := false
 	defer func() {
 		_ = file.Close()

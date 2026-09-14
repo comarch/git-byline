@@ -112,6 +112,58 @@ func TestStatsCommandRevisionRangeAndUsage(t *testing.T) {
 	}
 }
 
+func TestCollectRangeAggregateFailures(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "one\n")
+	appCommit(t, root, "one")
+
+	tests := []struct {
+		name   string
+		dir    string
+		args   []string
+		code   int
+		stderr string
+	}{
+		{"dashboard range uses three dots", root,
+			[]string{"dashboard", "--range", "a...b"}, ExitUsage, "two dots"},
+		{"dashboard range has whitespace", root,
+			[]string{"dashboard", "--range", "a b"}, ExitUsage, "whitespace"},
+		{"dashboard range is empty", root,
+			[]string{"dashboard", "--range", ""}, ExitUsage, "must not be empty"},
+		{"disclosure range uses three dots", root,
+			[]string{"disclosure", "--range", "a...b"}, ExitUsage, "two dots"},
+		{"dashboard outside repository", "",
+			[]string{"dashboard", "--range", "HEAD"}, ExitFailure, "git-byline dashboard"},
+		{"disclosure outside repository", "",
+			[]string{"disclosure", "--range", "HEAD"}, ExitFailure, "git-byline disclosure"},
+		{"dashboard unknown revision", root,
+			[]string{"dashboard", "--range", "missing-rev..HEAD"}, ExitFailure, "collect commit range"},
+		{"disclosure unknown revision", root,
+			[]string{"disclosure", "--range", "missing-rev..HEAD"}, ExitFailure, "collect commit range"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			dir := test.dir
+			if dir == "" {
+				dir = t.TempDir()
+			}
+			code, stdout, stderr, err := appRun(dir, zeroTime(), nil, test.args...)
+			if code != test.code || err == nil {
+				t.Fatalf("Run(%v) = %d, %v, want %d, error", test.args, code, err, test.code)
+			}
+			if stdout != "" {
+				t.Errorf("stdout = %q, want empty", stdout)
+			}
+			if !strings.Contains(stderr, test.stderr) {
+				t.Errorf("stderr = %q, want %q", stderr, test.stderr)
+			}
+		})
+	}
+}
+
 func TestWriteStatsTextReportsPeople(t *testing.T) {
 	t.Parallel()
 	aggregate := report.Aggregate{
