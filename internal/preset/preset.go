@@ -389,6 +389,9 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 	}
 	paths = uniquePaths(paths)
 	if len(paths) == 0 {
+		if applyPatch {
+			return Event{}, false, errors.New("patch is missing")
+		}
 		return Event{}, false, nil
 	}
 	event := Event{Kind: model.CheckpointKindEdit, Type: explicit, Paths: paths, EventID: eventID}

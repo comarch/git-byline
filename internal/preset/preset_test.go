@@ -217,6 +217,14 @@ func TestParsePortableHooks(t *testing.T) {
 			})
 		}
 	})
+	t.Run("applypatch without body fails", func(t *testing.T) {
+		t.Parallel()
+		payload := `{"tool_name":"ApplyPatch","tool_input":{"foo":"bar"}}`
+		event, handled, err := Parse("portable-factory", model.AuthorAI, strings.NewReader(payload))
+		if err == nil || handled || len(event.Paths) != 0 {
+			t.Fatalf("event = %+v, handled = %t, error = %v", event, handled, err)
+		}
+	})
 	for _, agent := range portableAgents {
 		agent := agent
 		t.Run("shell-"+agent, func(t *testing.T) {
