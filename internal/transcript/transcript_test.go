@@ -105,6 +105,32 @@ func TestResolveModelWindowKeepsLatestModel(t *testing.T) {
 	}
 }
 
+func TestResolveModelOversizedLineFallsBackToSidecar(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	var b strings.Builder
+	b.WriteString(`{"message":{"role":"assistant","modelId":"stale-model"}}` + "\n")
+	b.WriteString(`{"message":{"role":"assistant","content":"`)
+	b.WriteString(strings.Repeat("x", maxLineBytes+64))
+	b.WriteString(`"}}` + "\n")
+	b.WriteString(`{"message":{"role":"assistant","modelId":"latest-model"}}` + "\n")
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sidecar := filepath.Join(dir, "session.settings.json")
+	if err := os.WriteFile(sidecar, []byte(`{"model":"sidecar-model"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveModel(path)
+	if err != nil {
+		t.Fatalf("ResolveModel error = %v", err)
+	}
+	if got != "sidecar-model" {
+		t.Fatalf("ResolveModel = %q, want sidecar fallback", got)
+	}
+}
+
 func TestResolveModelInvalidPath(t *testing.T) {
 	t.Parallel()
 	for _, path := range []string{"", "relative.jsonl"} {
