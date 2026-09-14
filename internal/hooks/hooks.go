@@ -21,6 +21,7 @@ const (
 	blockStart   = "# >>> git-byline managed >>>"
 	blockEnd     = "# <<< git-byline managed <<<"
 	maxHookBytes = 1 << 20
+	productName  = "git-byline"
 	// templateConfigKey is the user-level Git configuration entry that
 	// points every new git init and git clone at the managed template.
 	templateConfigKey = "init.templateDir"
@@ -190,7 +191,7 @@ func discoverHookRepo(dir string, options Options, agents []string) (*gitcmd.Rep
 
 func hookExecutable(install bool) (string, error) {
 	if !install {
-		return "git-byline", nil
+		return productName, nil
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -212,7 +213,7 @@ func changeSelectedAgentConfigs(
 ) ([]string, error) {
 	agentExecutable := executable
 	if install && !options.User {
-		agentExecutable = "git-byline"
+		agentExecutable = productName
 	}
 	root := ""
 	if repo != nil {
@@ -354,7 +355,7 @@ func templateDir() (string, string, error) {
 		if !filepath.IsAbs(xdg) {
 			return "", "", fmt.Errorf("XDG_CONFIG_HOME is not an absolute path: %s", xdg)
 		}
-		return xdg, filepath.Join(xdg, "git-byline", "templates"), nil
+		return xdg, filepath.Join(xdg, productName, "templates"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -364,7 +365,7 @@ func templateDir() (string, string, error) {
 		return "", "", fmt.Errorf("home directory is not an absolute path: %s", home)
 	}
 	home = filepath.Clean(home)
-	return home, filepath.Join(home, ".config", "git-byline", "templates"), nil
+	return home, filepath.Join(home, ".config", productName, "templates"), nil
 }
 
 // templateHookPath resolves one hook file inside the managed template
@@ -1540,7 +1541,7 @@ func commandHasGitBylineExecutable(command, signature string) bool {
 	if index := strings.LastIndexByte(base, '/'); index >= 0 {
 		base = base[index+1:]
 	}
-	if base == "git-byline" || strings.EqualFold(base, "git-byline.exe") {
+	if base == productName || strings.EqualFold(base, productName+".exe") {
 		return true
 	}
 	current, err := os.Executable()

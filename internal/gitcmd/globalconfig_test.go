@@ -106,3 +106,62 @@ func TestGlobalConfigReadsIncludes(t *testing.T) {
 		t.Fatalf("missed included duplicate = %v, %v", removed, err)
 	}
 }
+
+func TestGlobalConfigRejectsInvalidInput(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "read empty key",
+			run: func() error {
+				_, _, err := GlobalConfig("")
+				return err
+			},
+		},
+		{
+			name: "set empty key",
+			run:  func() error { return SetGlobalConfig("", "value") },
+		},
+		{
+			name: "set NUL value",
+			run:  func() error { return SetGlobalConfig("test.key", "bad\x00value") },
+		},
+		{
+			name: "add empty key",
+			run:  func() error { return AddGlobalConfig("", "value") },
+		},
+		{
+			name: "add NUL value",
+			run:  func() error { return AddGlobalConfig("test.key", "bad\x00value") },
+		},
+		{
+			name: "unset empty key",
+			run: func() error {
+				_, err := UnsetGlobalConfig("", "value")
+				return err
+			},
+		},
+		{
+			name: "unset NUL value",
+			run: func() error {
+				_, err := UnsetGlobalConfig("test.key", "bad\x00value")
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.run(); err == nil {
+				t.Fatal("invalid global config input was accepted")
+			}
+		})
+	}
+
+	if err := validateGlobalConfigKey("valid.key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateGlobalConfigKey(""); err == nil {
+		t.Fatal("empty key was accepted")
+	}
+}

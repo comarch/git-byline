@@ -53,6 +53,138 @@ func templateOptions(localNotes bool) Options {
 	return Options{Agent: "none", Git: true, Template: true, LocalNotes: localNotes}
 }
 
+func TestTemplateHelperBranches(t *testing.T) {
+	templateEnv(t)
+	agents := selectedAgents("all")
+	if err := validateTemplateAgentScope(Options{Template: true}, agents); err == nil {
+		t.Fatal("project agents were accepted in template mode")
+	}
+	if err := validateTemplateAgentScope(Options{Template: true, User: true}, agents); err != nil {
+		t.Fatal(err)
+	}
+	if repo, err := discoverHookRepo(t.TempDir(), Options{Template: true}, nil); err != nil || repo != nil {
+		t.Fatalf("template repo = %+v, %v", repo, err)
+	}
+	if executable, err := hookExecutable(false); err != nil || executable != productName {
+		t.Fatalf("uninstall executable = %q, %v", executable, err)
+	}
+	root := hookRepo(t)
+	repo, err := discoverHookRepo(root, Options{Git: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path, err := selectedGitHookPath(repo, false, "post-commit"); err != nil ||
+		!strings.HasSuffix(path, filepath.Join("hooks", "post-commit")) {
+		t.Fatalf("repository hook path = %q, %v", path, err)
+	}
+	if path, err := selectedGitHookPath(nil, true, "post-commit"); err != nil ||
+		!strings.Contains(path, filepath.Join(productName, "templates", "hooks")) {
+		t.Fatalf("template hook path = %q, %v", path, err)
+	}
+}
+
+func TestTemplateDirFallbackAndValidation(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "relative")
+	if _, _, err := templateDir(); err == nil {
+		t.Fatal("relative XDG_CONFIG_HOME was accepted")
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	base, dir, err := templateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base != home || dir != filepath.Join(home, ".config", productName, "templates") {
+		t.Fatalf("home template = %q, %q", base, dir)
+	}
+}
+
+func TestAcquireTemplateLockRejectsDirectory(t *testing.T) {
+	xdg := templateEnv(t)
+	if err := os.Mkdir(filepath.Join(xdg, templateLockName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acquireTemplateLock(); err == nil {
+		t.Fatal("directory was accepted as template lock")
+	}
+}
+
+func TestWriteTemplateConfigRefusesForeignValue(t *testing.T) {
+	xdg := templateEnv(t)
+	foreign := filepath.Join(xdg, "foreign")
+	if err := gitcmd.SetGlobalConfig(templateConfigKey, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTemplateConfig(true); err == nil {
+		t.Fatal("foreign template config was replaced")
+	}
+	current, exists, err := gitcmd.GlobalConfig(templateConfigKey)
+	if err != nil || !exists || current != foreign {
+		t.Fatalf("foreign config = %q, %v, %v", current, exists, err)
+	}
+}
+
+func TestOpenTemplateRootWithoutManagedDirectory(t *testing.T) {
+	templateEnv(t)
+	root, exists, err := openTemplateRoot(false)
+	if err != nil || exists || root != nil {
+		t.Fatalf("missing template root = %v, %v, %v", root, exists, err)
+	}
+}
+
+func TestFinishRootFileWriteCleansPartial(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	file, err := root.OpenFile("partial", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("write failed")
+	if err := finishRootFileWrite(root, file, "partial", false, sentinel); !errors.Is(err, sentinel) {
+		t.Fatalf("finish error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "partial")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial file survived: %v", err)
+	}
+}
+
+func TestInstallTemplatePreservesInvalidRegularMarker(t *testing.T) {
+	xdg := templateEnv(t)
+	file := templateStockByRelative(t, "description")
+	markerPath, _, err := templateStockMarkerPath(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, []byte("invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Install(t.TempDir(), templateOptions(false)); err == nil {
+		t.Fatal("install accepted invalid regular marker")
+	}
+	data, err := os.ReadFile(markerPath)
+	if err != nil || string(data) != "invalid" {
+		t.Fatalf("invalid marker = %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(xdg, productName, "templates", file.relative)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stock file was created for invalid marker: %v", err)
+	}
+}
+
 func TestInstallTemplateHooks(t *testing.T) {
 	xdg := templateEnv(t)
 	result, err := Install(t.TempDir(), templateOptions(false))

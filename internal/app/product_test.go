@@ -381,6 +381,46 @@ func TestHookCommands(t *testing.T) {
 	}
 }
 
+func TestTemplateHookCommands(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	if err := os.MkdirAll(filepath.Join(xdg, "git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(xdg, "git", "config"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	code, stdout, stderr, err := appRun(
+		root,
+		time.Time{},
+		nil,
+		"install-hooks",
+		"--agent", "none",
+		"--git",
+		"--template",
+		"--local-notes",
+	)
+	if code != ExitSuccess || err != nil || stderr != "" ||
+		!strings.Contains(stdout, "updated global git config init.templateDir") {
+		t.Fatalf("template install = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	code, stdout, stderr, err = appRun(
+		root,
+		time.Time{},
+		nil,
+		"uninstall",
+		"--agent", "none",
+		"--git",
+		"--template",
+	)
+	if code != ExitSuccess || err != nil || stderr != "" ||
+		!strings.Contains(stdout, "removed global git config init.templateDir") {
+		t.Fatalf("template uninstall = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+}
+
 func TestProductCommandUsageAndFailures(t *testing.T) {
 	t.Parallel()
 	root := appRepo(t)
