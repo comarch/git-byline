@@ -77,7 +77,6 @@ func TestInstallTemplateHooks(t *testing.T) {
 func assertTemplateChangedPaths(t *testing.T, result Result, dir string) {
 	t.Helper()
 	want := []string{
-		filepath.Join(filepath.Dir(dir), templateStockMarker),
 		filepath.Join(dir, "description"),
 		filepath.Join(dir, "hooks", "post-checkout"),
 		filepath.Join(dir, "hooks", "post-commit"),
@@ -87,7 +86,7 @@ func assertTemplateChangedPaths(t *testing.T, result Result, dir string) {
 		filepath.Join(dir, "hooks", "reference-transaction"),
 		filepath.Join(dir, "info", "exclude"),
 	}
-	if len(result.Changed) != len(want) {
+	if len(result.Changed) != len(want)+len(templateStockFiles) {
 		t.Fatalf("Install changed = %v", result.Changed)
 	}
 	changed := strings.Join(result.Changed, "\n")
@@ -96,6 +95,7 @@ func assertTemplateChangedPaths(t *testing.T, result Result, dir string) {
 			t.Fatalf("changed list missing %s: %v", path, result.Changed)
 		}
 	}
+	assertTemplateStockMarkers(t, result.Changed)
 }
 
 func assertTemplateConfig(t *testing.T, result Result, dir string) {
@@ -136,6 +136,19 @@ func assertTemplateStock(t *testing.T, dir string) {
 	exclude, err := os.ReadFile(filepath.Join(dir, "info", "exclude"))
 	if err != nil || string(exclude) != templateInfoExclude {
 		t.Fatalf("info/exclude = %q, %v", exclude, err)
+	}
+}
+
+func assertTemplateStockMarkers(t *testing.T, changed []string) {
+	t.Helper()
+	count := 0
+	for _, path := range changed {
+		if strings.HasPrefix(filepath.Base(path), templateStockMarkerPrefix) {
+			count++
+		}
+	}
+	if count != len(templateStockFiles) {
+		t.Fatalf("template stock markers = %d in %v", count, changed)
 	}
 }
 
@@ -189,20 +202,16 @@ func TestInstallTemplateRefusesIncludedForeignTemplateDir(t *testing.T) {
 	xdg := templateEnv(t)
 	foreign := filepath.Join(t.TempDir(), "custom-templates")
 	included := filepath.Join(xdg, "included")
-	if err := os.WriteFile(
-		included,
-		[]byte("[init]\n\ttemplateDir = "+foreign+"\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
+	templateGit(t, xdg, "config", "--file", included, templateConfigKey, foreign)
+	templateGit(
+		t,
+		xdg,
+		"config",
+		"--file",
 		filepath.Join(xdg, "git", "config"),
-		[]byte("[include]\n\tpath = "+included+"\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
+		"include.path",
+		included,
+	)
 
 	_, err := Install(t.TempDir(), templateOptions(false))
 	if err == nil || !strings.Contains(err.Error(), templateConfigKey) {
@@ -224,7 +233,6 @@ func TestUninstallTemplateHooks(t *testing.T) {
 	}
 	dir := filepath.Join(xdg, "git-byline", "templates")
 	if len(result.Changed) != len([]string{
-		filepath.Join(filepath.Dir(dir), templateStockMarker),
 		filepath.Join(dir, "description"),
 		filepath.Join(dir, "hooks", "post-checkout"),
 		filepath.Join(dir, "hooks", "post-commit"),
@@ -233,9 +241,10 @@ func TestUninstallTemplateHooks(t *testing.T) {
 		filepath.Join(dir, "hooks", "pre-push"),
 		filepath.Join(dir, "hooks", "reference-transaction"),
 		filepath.Join(dir, "info", "exclude"),
-	}) {
+	})+len(templateStockFiles) {
 		t.Fatalf("uninstall changed = %v", result.Changed)
 	}
+	assertTemplateStockMarkers(t, result.Changed)
 	if !result.ConfigChanged {
 		t.Fatal("uninstall did not report the init.templateDir removal")
 	}
@@ -263,13 +272,9 @@ func TestUninstallTemplateRemovesDuplicateManagedValues(t *testing.T) {
 	}
 	foreign := filepath.Join(t.TempDir(), "foreign")
 	config := filepath.Join(xdg, "git", "config")
-	if err := os.WriteFile(
-		config,
-		[]byte("[init]\n\ttemplateDir = "+foreign+"\n\ttemplateDir = "+dir+"\n\ttemplateDir = "+dir+"\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
+	templateGit(t, xdg, "config", "--file", config, "--add", templateConfigKey, foreign)
+	templateGit(t, xdg, "config", "--file", config, "--add", templateConfigKey, dir)
+	templateGit(t, xdg, "config", "--file", config, "--add", templateConfigKey, dir)
 
 	result, err := Uninstall(t.TempDir(), templateOptions(false))
 	if err != nil {
@@ -302,7 +307,7 @@ func TestUninstallTemplatePreservesForeignContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Changed) != 9 {
+	if len(result.Changed) != 10 {
 		t.Fatalf("uninstall changed = %v", result.Changed)
 	}
 	data, err := os.ReadFile(hookPath)
@@ -321,18 +326,146 @@ func TestUninstallTemplatePreservesForeignContent(t *testing.T) {
 }
 
 func TestUninstallTemplatePreservesPreexistingStock(t *testing.T) {
+	testUninstallTemplatePreservesStock(t, []string{"info/exclude", "description"})
+}
+
+func TestUninstallTemplateDropsOwnershipOfEditedStock(t *testing.T) {
+	xdg := templateEnv(t)
+	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
+		t.Fatal(err)
+	}
+	file := templateStockByRelative(t, "description")
+	dir := filepath.Join(xdg, "git-byline", "templates")
+	path := filepath.Join(dir, file.relative)
+	edited := []byte("custom description\n")
+	if err := os.WriteFile(path, edited, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	markerPath, _, err := templateStockMarkerPath(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Uninstall(t.TempDir(), templateOptions(false)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(markerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ownership marker survived edited stock: %v", err)
+	}
+	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, edited) {
+		t.Fatalf("edited stock after reinstall = %q, %v", data, err)
+	}
+}
+
+func TestUninstallTemplatePreservesInvalidMarker(t *testing.T) {
+	xdg := templateEnv(t)
+	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
+		t.Fatal(err)
+	}
+	file := templateStockByRelative(t, "description")
+	markerPath, _, err := templateStockMarkerPath(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(markerPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(markerPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Uninstall(t.TempDir(), templateOptions(false)); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(markerPath); err != nil || !info.IsDir() {
+		t.Fatalf("invalid marker = %v, %v", info, err)
+	}
+	stockPath := filepath.Join(xdg, "git-byline", "templates", file.relative)
+	if _, err := os.Stat(stockPath); err != nil {
+		t.Fatalf("stock with invalid marker was removed: %v", err)
+	}
+	if _, err := Install(t.TempDir(), templateOptions(false)); err == nil {
+		t.Fatal("install accepted an invalid stock marker")
+	}
+}
+
+func TestUninstallTemplateRestoresConfigAfterCleanupFailure(t *testing.T) {
+	xdg := templateEnv(t)
+	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(xdg, "git-byline", "templates")
+	hook := filepath.Join(dir, "hooks", "post-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n"+blockStart+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Uninstall(t.TempDir(), templateOptions(false)); err == nil {
+		t.Fatal("uninstall accepted an incomplete managed hook")
+	}
+	current, exists, err := gitcmd.GlobalConfig(templateConfigKey)
+	if err != nil || !exists || current != dir {
+		t.Fatalf("restored config = %q, %v, %v", current, exists, err)
+	}
+}
+
+func TestUninstallTemplateRestoresConfigAfterIncludedDuplicate(t *testing.T) {
+	xdg := templateEnv(t)
+	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(xdg, "git-byline", "templates")
+	included := filepath.Join(xdg, "included")
+	templateGit(t, xdg, "config", "--file", included, templateConfigKey, dir)
+	templateGit(
+		t,
+		xdg,
+		"config",
+		"--file",
+		filepath.Join(xdg, "git", "config"),
+		"include.path",
+		included,
+	)
+
+	if _, err := Uninstall(t.TempDir(), templateOptions(false)); err == nil {
+		t.Fatal("uninstall removed an included managed value")
+	}
+	current, exists, err := gitcmd.GlobalConfig(templateConfigKey)
+	if err != nil || !exists || current != dir {
+		t.Fatalf("restored config = %q, %v, %v", current, exists, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "hooks", "post-commit")); err != nil {
+		t.Fatalf("cleanup started after config failure: %v", err)
+	}
+}
+
+func TestUninstallTemplateTracksCreatedStockIndividually(t *testing.T) {
+	for _, relative := range []string{"info/exclude", "description"} {
+		t.Run(relative, func(t *testing.T) {
+			testUninstallTemplatePreservesStock(t, []string{relative})
+		})
+	}
+}
+
+func testUninstallTemplatePreservesStock(t *testing.T, preexisting []string) {
+	t.Helper()
 	xdg := templateEnv(t)
 	dir := filepath.Join(xdg, "git-byline", "templates")
-	exclude := filepath.Join(dir, "info", "exclude")
-	description := filepath.Join(dir, "description")
-	if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(exclude, []byte(templateInfoExclude), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(description, []byte(templateDescription), 0o600); err != nil {
-		t.Fatal(err)
+	expected := make(map[string]bool, len(preexisting))
+	for _, relative := range preexisting {
+		expected[relative] = true
+		file := templateStockByRelative(t, relative)
+		path := filepath.Join(dir, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(file.content), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
 		t.Fatal(err)
@@ -340,10 +473,122 @@ func TestUninstallTemplatePreservesPreexistingStock(t *testing.T) {
 	if _, err := Uninstall(t.TempDir(), templateOptions(false)); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{exclude, description} {
-		if _, err := os.Stat(path); err != nil {
+	for _, file := range templateStockFiles {
+		path := filepath.Join(dir, filepath.FromSlash(file.relative))
+		_, err := os.Stat(path)
+		if expected[file.relative] && err != nil {
 			t.Fatalf("preexisting stock file %s was removed: %v", path, err)
 		}
+		if !expected[file.relative] && !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("created stock file %s survived: %v", path, err)
+		}
+	}
+}
+
+func templateStockByRelative(t *testing.T, relative string) templateStockFile {
+	t.Helper()
+	for _, file := range templateStockFiles {
+		if file.relative == relative {
+			return file
+		}
+	}
+	t.Fatalf("unknown stock file %s", relative)
+	return templateStockFile{}
+}
+
+func TestInstallTemplateRetriesMissingOwnedStock(t *testing.T) {
+	xdg := templateEnv(t)
+	file := templateStockByRelative(t, "description")
+	if err := writeTemplateStockMarker(file); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(xdg, "git-byline", "templates", file.relative)
+
+	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != file.content {
+		t.Fatalf("retried stock file = %q, %v", data, err)
+	}
+}
+
+func TestWriteRootFileDoesNotReplaceExisting(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	path := "existing"
+	if err := os.WriteFile(filepath.Join(dir, path), []byte("mine"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeRootFile(root, path, []byte("theirs"), 0o600); err == nil {
+		t.Fatal("writeRootFile replaced an existing file")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, path))
+	if err != nil || string(data) != "mine" {
+		t.Fatalf("existing file = %q, %v", data, err)
+	}
+}
+
+func TestUninstallTemplateSupportsLegacyStockMarker(t *testing.T) {
+	xdg := templateEnv(t)
+	dir := filepath.Join(xdg, "git-byline", "templates")
+	for _, file := range templateStockFiles {
+		path := filepath.Join(dir, filepath.FromSlash(file.relative))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(file.content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marker := filepath.Join(filepath.Dir(dir), templateStockLegacyMarker)
+	if err := os.WriteFile(marker, []byte(templateStockLegacyOwner), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := gitcmd.SetGlobalConfig(templateConfigKey, dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Uninstall(t.TempDir(), templateOptions(false)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy marker survived: %v", err)
+	}
+}
+
+func TestInstallTemplatePreservesEditedLegacyStock(t *testing.T) {
+	xdg := templateEnv(t)
+	dir := filepath.Join(xdg, "git-byline", "templates")
+	file := templateStockByRelative(t, "description")
+	path := filepath.Join(dir, file.relative)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	edited := []byte("custom description\n")
+	if err := os.WriteFile(path, edited, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(filepath.Dir(dir), templateStockLegacyMarker)
+	if err := os.WriteFile(marker, []byte(templateStockLegacyOwner), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, edited) {
+		t.Fatalf("legacy stock after install = %q, %v", data, err)
 	}
 }
 

@@ -90,20 +90,8 @@ func TestGlobalConfigReadsIncludes(t *testing.T) {
 	}
 	included := filepath.Join(xdg, "included")
 	value := filepath.Join(xdg, "included-template")
-	if err := os.WriteFile(
-		included,
-		[]byte("[init]\n\ttemplateDir = "+value+"\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(gitDir, "config"),
-		[]byte("[include]\n\tpath = "+included+"\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
+	runGit(t, xdg, "config", "--file", included, "init.templateDir", value)
+	runGit(t, xdg, "config", "--file", filepath.Join(gitDir, "config"), "include.path", included)
 
 	if current, exists, err := GlobalConfig("init.templateDir"); err != nil || !exists || current != value {
 		t.Fatalf("included value = %q, %v, %v", current, exists, err)
