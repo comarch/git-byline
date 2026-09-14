@@ -9,15 +9,7 @@ import (
 // TestGlobalConfigRoundTrip exercises the user-level configuration helpers
 // against an isolated global configuration file.
 func TestGlobalConfigRoundTrip(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	xdg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", xdg)
-	if err := os.MkdirAll(filepath.Join(xdg, "git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(xdg, "git", "config"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	xdg := setupGlobalConfig(t)
 
 	if value, exists, err := GlobalConfig("init.templateDir"); err != nil || exists || value != "" {
 		t.Fatalf("missing key = %q, %v, %v", value, exists, err)
@@ -34,6 +26,13 @@ func TestGlobalConfigRoundTrip(t *testing.T) {
 	}
 	if value, _, err := GlobalConfig("init.templateDir"); err != nil || value != filepath.Join(xdg, "other") {
 		t.Fatalf("replaced key = %q, %v", value, err)
+	}
+}
+
+func TestUnsetGlobalConfigDuplicate(t *testing.T) {
+	xdg := setupGlobalConfig(t)
+	if err := SetGlobalConfig("init.templateDir", filepath.Join(xdg, "other")); err != nil {
+		t.Fatal(err)
 	}
 	managed := filepath.Join(xdg, "managed")
 	if _, err := runGitOutsideRepo(
@@ -65,6 +64,20 @@ func TestGlobalConfigRoundTrip(t *testing.T) {
 	if _, exists, err := GlobalConfig("init.templateDir"); err != nil || exists {
 		t.Fatalf("removed key = %v, %v", exists, err)
 	}
+}
+
+func setupGlobalConfig(t *testing.T) string {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	if err := os.MkdirAll(filepath.Join(xdg, "git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(xdg, "git", "config"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return xdg
 }
 
 func TestGlobalConfigReadsIncludes(t *testing.T) {

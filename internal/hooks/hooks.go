@@ -38,6 +38,16 @@ const (
 	templateStockOwner  = "git-byline template stock v1\n"
 )
 
+type templateStockFile struct {
+	relative string
+	content  string
+}
+
+var templateStockFiles = [...]templateStockFile{
+	{relative: "info/exclude", content: templateInfoExclude},
+	{relative: "description", content: templateDescription},
+}
+
 // Options selects hook systems and scope.
 type Options struct {
 	Agent      string
@@ -336,14 +346,7 @@ func writeTemplateStock(dir string, changed *[]string) error {
 		return err
 	}
 	claimOwnership := !markerExists
-	stock := []struct {
-		relative string
-		content  string
-	}{
-		{"info/exclude", templateInfoExclude},
-		{"description", templateDescription},
-	}
-	for _, file := range stock {
+	for _, file := range templateStockFiles {
 		path := filepath.Join(dir, filepath.FromSlash(file.relative))
 		if err := rejectSymlinkPath(dir, filepath.Dir(path)); err != nil {
 			return err
@@ -390,49 +393,10 @@ func pruneTemplate(dir string, changed *[]string) error {
 		root.Close()
 		return err
 	}
-	stock := []struct {
-		relative string
-		content  string
-	}{
-		{"info/exclude", templateInfoExclude},
-		{"description", templateDescription},
-	}
 	if owned {
-		for _, file := range stock {
-			path := filepath.Join(dir, filepath.FromSlash(file.relative))
-			if err := rejectSymlinkPath(dir, filepath.Dir(path)); err != nil {
-				root.Close()
-				return err
-			}
-			relative := filepath.FromSlash(file.relative)
-			info, err := root.Lstat(relative)
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			if err != nil {
-				root.Close()
-				return fmt.Errorf("stat %s: %w", path, err)
-			}
-			if info.Mode()&os.ModeSymlink != 0 {
-				root.Close()
-				return fmt.Errorf("refuse symlinked template file %s", path)
-			}
-			if !info.Mode().IsRegular() || info.Size() != int64(len(file.content)) {
-				continue
-			}
-			data, err := readRootFile(root, relative, len(file.content)+1)
-			if err != nil {
-				root.Close()
-				return fmt.Errorf("read %s: %w", path, err)
-			}
-			if string(data) != file.content {
-				continue
-			}
-			if err := root.Remove(relative); err != nil {
-				root.Close()
-				return fmt.Errorf("remove %s: %w", path, err)
-			}
-			*changed = append(*changed, path)
+		if err := pruneTemplateStock(root, dir, changed); err != nil {
+			root.Close()
+			return err
 		}
 	}
 	for _, relative := range []string{"hooks", "info"} {
@@ -452,6 +416,53 @@ func pruneTemplate(dir string, changed *[]string) error {
 		*changed = append(*changed, path)
 	}
 	return removeEmptyTemplateRoot()
+}
+
+func pruneTemplateStock(root *os.Root, dir string, changed *[]string) error {
+	for _, file := range templateStockFiles {
+		if err := pruneTemplateStockFile(root, dir, file, changed); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func pruneTemplateStockFile(
+	root *os.Root,
+	dir string,
+	file templateStockFile,
+	changed *[]string,
+) error {
+	path := filepath.Join(dir, filepath.FromSlash(file.relative))
+	if err := rejectSymlinkPath(dir, filepath.Dir(path)); err != nil {
+		return err
+	}
+	relative := filepath.FromSlash(file.relative)
+	info, err := root.Lstat(relative)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refuse symlinked template file %s", path)
+	}
+	if !info.Mode().IsRegular() || info.Size() != int64(len(file.content)) {
+		return nil
+	}
+	data, err := readRootFile(root, relative, len(file.content)+1)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if string(data) != file.content {
+		return nil
+	}
+	if err := root.Remove(relative); err != nil {
+		return fmt.Errorf("remove %s: %w", path, err)
+	}
+	*changed = append(*changed, path)
+	return nil
 }
 
 // writeTemplateConfig writes or removes the user-level init.templateDir
