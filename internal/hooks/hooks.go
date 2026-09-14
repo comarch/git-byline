@@ -56,6 +56,12 @@ type templateStockOwnership struct {
 	validMarker bool
 }
 
+type gitHookChange struct {
+	name    string
+	command string
+	install bool
+}
+
 var templateStockFiles = [...]templateStockFile{
 	{relative: "info/exclude", marker: "info-exclude", content: templateInfoExclude},
 	{relative: "description", marker: "description", content: templateDescription},
@@ -134,110 +140,27 @@ func changeTemplateLocked(dir string, options Options, install bool) (result Res
 
 func changeUnlocked(dir string, options Options, install bool) (Result, error) {
 	agents := selectedAgents(options.Agent)
-	if options.Template && len(agents) > 0 && !options.User {
-		return Result{}, errors.New("template mode cannot manage project agent hooks")
+	if err := validateTemplateAgentScope(options, agents); err != nil {
+		return Result{}, err
 	}
-	var repo *gitcmd.Repo
-	// Template-scope Git hooks live in the user-level template directory,
-	// so only repository-scoped work discovers a worktree.
-	needRepo := (options.Git && !options.Template) || (len(agents) > 0 && !options.User && !options.Template)
-	if needRepo {
-		discovered, err := gitcmd.Discover(dir)
-		if err != nil {
-			return Result{}, err
-		}
-		repo = discovered
+	repo, err := discoverHookRepo(dir, options, agents)
+	if err != nil {
+		return Result{}, err
 	}
-	executable := "git-byline"
-	if install {
-		var err error
-		executable, err = os.Executable()
-		if err != nil {
-			return Result{}, fmt.Errorf("resolve git-byline executable: %w", err)
-		}
-		executable, err = filepath.Abs(executable)
-		if err != nil {
-			return Result{}, fmt.Errorf("resolve absolute executable path: %w", err)
-		}
+	executable, err := hookExecutable(install)
+	if err != nil {
+		return Result{}, err
 	}
-	var changed []string
-	agentExecutable := executable
-	if install && !options.User {
-		agentExecutable = "git-byline"
-	}
-	for _, agent := range agents {
-		root := ""
-		if repo != nil {
-			root = repo.Root
-		}
-		path, err := agentConfigPath(root, agent, options.User)
-		if err != nil {
-			return Result{}, err
-		}
-		didChange, err := changeAgentConfig(path, agent, agentExecutable, install)
-		if err != nil {
-			return Result{}, err
-		}
-		if didChange {
-			changed = append(changed, path)
-		}
+	changed, err := changeSelectedAgentConfigs(repo, options, agents, executable, install)
+	if err != nil {
+		return Result{}, err
 	}
 	if options.Git {
-		specs := []struct {
-			name    string
-			command string
-			install bool
-		}{
-			{
-				name:    "post-commit",
-				command: postCommitCommand(executable),
-				install: install,
-			},
-			{
-				name:    "pre-push",
-				command: notesPushCommand(),
-				install: install && !options.LocalNotes,
-			},
-			{
-				name:    "post-rewrite",
-				command: rewriteHookCommand(executable, "post-rewrite", true),
-				install: install,
-			},
-			{
-				name:    "post-merge",
-				command: postMergeCommand(executable),
-				install: install,
-			},
-			{
-				name:    "post-checkout",
-				command: rewriteHookCommand(executable, "post-checkout", false),
-				install: install,
-			},
-			{
-				name:    "reference-transaction",
-				command: referenceTransactionHookCommand(executable),
-				install: install,
-			},
+		gitChanged, err := changeSelectedGitHooks(repo, options, executable, install)
+		if err != nil {
+			return Result{}, err
 		}
-		for _, spec := range specs {
-			var path string
-			var err error
-			if options.Template {
-				path, err = templateHookPath(spec.name)
-			} else {
-				path, err = gitHookPath(repo, spec.name)
-			}
-			if err != nil {
-				return Result{}, err
-			}
-			didChange, err := changeGitHook(path, spec.command, spec.install)
-			if err != nil {
-				return Result{}, err
-			}
-			if didChange {
-				changed = append(changed, path)
-			}
-		}
+		changed = append(changed, gitChanged...)
 	}
 	if options.Template {
 		if err := finalizeTemplate(install, &changed); err != nil {
@@ -246,6 +169,112 @@ func changeUnlocked(dir string, options Options, install bool) (Result, error) {
 	}
 	sort.Strings(changed)
 	return Result{Changed: changed}, nil
+}
+
+func validateTemplateAgentScope(options Options, agents []string) error {
+	if options.Template && len(agents) > 0 && !options.User {
+		return errors.New("template mode cannot manage project agent hooks")
+	}
+	return nil
+}
+
+func discoverHookRepo(dir string, options Options, agents []string) (*gitcmd.Repo, error) {
+	// Template-scope Git hooks live in the user-level template directory,
+	// so only repository-scoped work discovers a worktree.
+	needRepo := (options.Git && !options.Template) || (len(agents) > 0 && !options.User && !options.Template)
+	if !needRepo {
+		return nil, nil
+	}
+	return gitcmd.Discover(dir)
+}
+
+func hookExecutable(install bool) (string, error) {
+	if !install {
+		return "git-byline", nil
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve git-byline executable: %w", err)
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute executable path: %w", err)
+	}
+	return executable, nil
+}
+
+func changeSelectedAgentConfigs(
+	repo *gitcmd.Repo,
+	options Options,
+	agents []string,
+	executable string,
+	install bool,
+) ([]string, error) {
+	agentExecutable := executable
+	if install && !options.User {
+		agentExecutable = "git-byline"
+	}
+	root := ""
+	if repo != nil {
+		root = repo.Root
+	}
+	var changed []string
+	for _, agent := range agents {
+		path, err := agentConfigPath(root, agent, options.User)
+		if err != nil {
+			return nil, err
+		}
+		didChange, err := changeAgentConfig(path, agent, agentExecutable, install)
+		if err != nil {
+			return nil, err
+		}
+		if didChange {
+			changed = append(changed, path)
+		}
+	}
+	return changed, nil
+}
+
+func changeSelectedGitHooks(
+	repo *gitcmd.Repo,
+	options Options,
+	executable string,
+	install bool,
+) ([]string, error) {
+	specs := []gitHookChange{
+		{name: "post-commit", command: postCommitCommand(executable), install: install},
+		{name: "pre-push", command: notesPushCommand(), install: install && !options.LocalNotes},
+		{name: "post-rewrite", command: rewriteHookCommand(executable, "post-rewrite", true), install: install},
+		{name: "post-merge", command: postMergeCommand(executable), install: install},
+		{name: "post-checkout", command: rewriteHookCommand(executable, "post-checkout", false), install: install},
+		{
+			name:    "reference-transaction",
+			command: referenceTransactionHookCommand(executable),
+			install: install,
+		},
+	}
+	var changed []string
+	for _, spec := range specs {
+		path, err := selectedGitHookPath(repo, options.Template, spec.name)
+		if err != nil {
+			return nil, err
+		}
+		didChange, err := changeGitHook(path, spec.command, spec.install)
+		if err != nil {
+			return nil, err
+		}
+		if didChange {
+			changed = append(changed, path)
+		}
+	}
+	return changed, nil
+}
+
+func selectedGitHookPath(repo *gitcmd.Repo, template bool, name string) (string, error) {
+	if template {
+		return templateHookPath(name)
+	}
+	return gitHookPath(repo, name)
 }
 
 func acquireTemplateLock() (*lock.File, error) {
