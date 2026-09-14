@@ -141,6 +141,9 @@ manual stash apply, stdin is `<full-stash-commit> 1`; use `0` when the note
 should be removed after a manual pop.
 Rewritten content with no exact or whitespace-only line match is `untracked`.
 Dropped commits do not contribute attribution to later content.
+When a rewritten commit cannot receive a reprojected note, the attribution
+boundary clears and the next commit re-initializes attribution from live
+checkpoint evidence.
 
 Restored stash ranges merge with existing pending state. Existing entries win
 for a path already present; restored entries fill paths not already pending.

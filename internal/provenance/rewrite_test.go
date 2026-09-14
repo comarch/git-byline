@@ -194,6 +194,66 @@ func TestPostRewriteDoesNotProjectChangedUnchangedPath(t *testing.T) {
 	}
 }
 
+func TestPostRewriteConflictResolvedHeadClearsBoundary(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "alpha\nbeta\ngamma\n")
+	base := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "file.txt", "alpha\nbeta-ai\ngamma\n")
+	feature := commit(t, root, "feature")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+
+	// The feature commit replays onto a conflicting base and the conflict
+	// is resolved with content that matches neither side, so no source
+	// blob from the feature note survives on the rewritten commit.
+	git(t, root, "checkout", "-q", "-b", "other", base)
+	write(t, root, "file.txt", "alpha\nbeta-other\ngamma\n")
+	commit(t, root, "other")
+	write(t, root, "file.txt", "alpha\nbeta-resolved\ngamma\n")
+	resolved := commit(t, root, "resolved")
+
+	result, err := HandlePostRewrite(repo, strings.NewReader(feature+" "+resolved+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := repo.ReadNote(resolved); err != nil || found {
+		t.Fatalf("conflict resolution created a note: %t, %v", found, err)
+	}
+	state, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastAnnotatedCommit != "" || state.Pending.BaseCommit != "" {
+		t.Fatalf("boundary after unprojectable rewrite = %+v, want cleared", state)
+	}
+	cleared := false
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "cleared attribution boundary") {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatalf("missing boundary clear warning: %v", result.Warnings)
+	}
+
+	// Attribution resumes on the next commit instead of failing the
+	// boundary note check forever.
+	write(t, root, "file.txt", "alpha\nbeta-resolved\ngamma-2\n")
+	next := commit(t, root, "next")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatalf("annotate after recovery: %v", err)
+	}
+	if _, found, err := repo.ReadNote(next); err != nil || !found {
+		t.Fatalf("recovery note missing: %t, %v", found, err)
+	}
+}
+
 func TestReferenceTransactionRejectsInvalidTargetNote(t *testing.T) {
 	t.Parallel()
 	root := testRepo(t)

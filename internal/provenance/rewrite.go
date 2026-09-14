@@ -290,8 +290,10 @@ func applyRewriteMapping(repo *gitcmd.Repo, mapping rewrite.Mapping) (RewriteRes
 		if incomplete[commit] {
 			continue
 		}
+		// No mapped path survived onto the rewritten commit, so no note was
+		// written for it. completed must mean the target carries a note,
+		// because the boundary and pending remaps below trust that invariant.
 		if len(note.Files) == 0 {
-			completed[commit] = true
 			continue
 		}
 		data, err := notes.Encode(note)
@@ -357,6 +359,14 @@ func applyRewriteMapping(repo *gitcmd.Repo, mapping rewrite.Mapping) (RewriteRes
 	if err != nil {
 		return RewriteResult{}, err
 	}
+	boundaryCleared := false
+	headRewritten := false
+	for _, pair := range mapping.Pairs {
+		if pair.New == head && !isZero(pair.New) {
+			headRewritten = true
+			break
+		}
+	}
 	if head != "" && state.LastAnnotatedCommit != head {
 		// A remapped head carries a freshly written note, so it is the
 		// annotated boundary even when several replayed commits separate
@@ -367,9 +377,25 @@ func applyRewriteMapping(repo *gitcmd.Repo, mapping rewrite.Mapping) (RewriteRes
 			if len(state.Pending.Files) == 0 {
 				state.Pending.BaseCommit = head
 			}
+		} else if headRewritten {
+			if _, found, noteErr := repo.ReadNote(head); noteErr != nil {
+				return RewriteResult{}, fmt.Errorf("read rewritten head note %s: %w", head, noteErr)
+			} else if !found {
+				// The rewritten head has no note, for example after a
+				// conflict resolution changed file content beyond what the
+				// source notes can reproject. Leaving any boundary in place
+				// would fail the boundary note check on every later
+				// annotate, so clear it and let the next commit
+				// re-initialize attribution from live checkpoint evidence.
+				state.LastAnnotatedCommit = ""
+				state.Pending.BaseCommit = ""
+				boundaryCleared = true
+				result.Warnings = append(result.Warnings, fmt.Sprintf(
+					"cleared attribution boundary at rewritten commit %s: no note could be reprojected", head))
+			}
 		}
 	}
-	if originalPendingBase != "" && originalPendingBase != originalBoundary {
+	if !boundaryCleared && originalPendingBase != "" && originalPendingBase != originalBoundary {
 		if target, ok := mapping.Remap(originalPendingBase); ok {
 			switch {
 			case isZero(target):
