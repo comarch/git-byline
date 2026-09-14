@@ -527,6 +527,9 @@ func parseHookOptions(command *command, args []string) (hooks.Options, error) {
 	if *template && !*gitHook {
 		return hooks.Options{}, errors.New("--template requires --git")
 	}
+	if *template && *agent != "none" && !*user {
+		return hooks.Options{}, errors.New("--template requires --agent none for project scope")
+	}
 	return hooks.Options{Agent: *agent, Git: *gitHook, User: *user, LocalNotes: *localNotes, Template: *template}, nil
 }
 

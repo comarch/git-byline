@@ -9,6 +9,12 @@ install_git_hook="${GIT_BYLINE_INSTALL_GIT_HOOK:-1}"
 install_agent_hooks="${GIT_BYLINE_INSTALL_AGENT_HOOKS:-1}"
 install_git_template="${GIT_BYLINE_INSTALL_GIT_TEMPLATE:-0}"
 
+install_template_hooks() {
+	if [ "$install_git_template" != "0" ]; then
+		"$target" install-hooks --agent none --git --template
+	fi
+}
+
 usage() {
 	cat <<'EOF'
 Usage: install.sh [--version VERSION] [--bin-dir DIR] [--no-git-hook]
@@ -103,6 +109,7 @@ if [ -f "$target" ]; then
 	*) ;;
 	esac
 	if [ "$current" = "git-byline $version" ]; then
+		install_template_hooks
 		printf 'git-byline %s is already installed at %s\n' "$version" "$target"
 		exit 0
 	fi
@@ -202,9 +209,7 @@ fi
 
 # --git-template manages Git hooks in the git-byline Git template
 # directory, so every new git init and git clone is attributed.
-if [ "$install_git_template" != "0" ]; then
-	"$target" install-hooks --agent none --git --template
-fi
+install_template_hooks
 
 if [ -n "$previous" ]; then
 	printf 'Updated git-byline %s to %s at %s\n' "$previous" "$version" "$target"

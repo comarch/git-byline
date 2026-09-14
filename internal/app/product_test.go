@@ -406,7 +406,9 @@ func TestProductCommandUsageAndFailures(t *testing.T) {
 		{"install conflicting scope", "", []string{"install-hooks", "--user", "--project"}, ExitUsage},
 		{"install unknown agent", "", []string{"install-hooks", "--agent", "other"}, ExitUsage},
 		{"template without git", "", []string{"install-hooks", "--agent", "none", "--template"}, ExitUsage},
+		{"template with project agents", "", []string{"install-hooks", "--git", "--template"}, ExitUsage},
 		{"uninstall template without git", "", []string{"uninstall", "--agent", "none", "--template"}, ExitUsage},
+		{"uninstall template with project agents", "", []string{"uninstall", "--git", "--template"}, ExitUsage},
 	}
 	for _, test := range tests {
 		test := test

@@ -102,6 +102,32 @@ func TestShellInstallerVerifiesLocalRelease(t *testing.T) {
 		t.Fatalf("installed version = %q, %v", out, err)
 	}
 
+	hookLog := filepath.Join(t.TempDir(), "hooks.log")
+	command = exec.Command(
+		"sh",
+		filepath.Join(root, "install.sh"),
+		"--version", "v1.2.3",
+		"--bin-dir", installDir,
+		"--no-git-hook",
+		"--no-agent-hooks",
+		"--git-template",
+	)
+	command.Env = append(os.Environ(),
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"INSTALLER_FIXTURE="+fixture,
+		"INSTALLER_HOOK_LOG="+hookLog,
+	)
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("repeat install.sh: %v\n%s", err, out)
+	}
+	log, err := os.ReadFile(hookLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(log) != "install-hooks --agent none --git --template\n" {
+		t.Fatalf("template hook invocation = %q", log)
+	}
+
 	if err := os.WriteFile(
 		filepath.Join(fixture, "checksums.txt"),
 		[]byte(fmt.Sprintf("%064d  %s\n", 0, archiveName)),
@@ -137,7 +163,15 @@ func writeInstallerArchive(t *testing.T, path string) {
 	}
 	compressed := gzip.NewWriter(file)
 	archive := tar.NewWriter(compressed)
-	content := []byte("#!/bin/sh\nprintf '%s\\n' 'git-byline v1.2.3'\n")
+	content := []byte(`#!/bin/sh
+if [ "${1:-}" = "version" ]; then
+	printf '%s\n' 'git-byline v1.2.3'
+	exit 0
+fi
+if [ "${1:-}" = "install-hooks" ] && [ -n "${INSTALLER_HOOK_LOG:-}" ]; then
+	printf '%s\n' "$*" >>"$INSTALLER_HOOK_LOG"
+fi
+`)
 	files := map[string][]byte{
 		"LICENSE":     []byte("license\n"),
 		"README.md":   []byte("readme\n"),

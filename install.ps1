@@ -12,6 +12,17 @@ Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $repository = "https://github.com/comarch/git-byline"
+function Install-GitTemplateHooks {
+    param([string]$Target)
+    if (-not $GitTemplate) {
+        return
+    }
+    & $Target install-hooks --agent none --git --template
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not install Git template hooks"
+    }
+}
+
 if ($Version -eq "latest") {
     $release = Invoke-RestMethod `
         -Uri "https://api.github.com/repos/comarch/git-byline/releases/latest" `
@@ -29,6 +40,7 @@ $previous = $null
 if (Test-Path -LiteralPath $target -PathType Leaf) {
     $current = try { & $target version 2>$null } catch { $null }
     if ($current -eq "git-byline $Version") {
+        Install-GitTemplateHooks -Target $target
         Write-Output "git-byline $Version is already installed at $target"
         return
     }
@@ -127,9 +139,7 @@ try {
 
     # -GitTemplate manages Git hooks in the git-byline Git template
     # directory, so every new git init and git clone is attributed.
-    if ($GitTemplate) {
-        & $target install-hooks --agent none --git --template
-    }
+    Install-GitTemplateHooks -Target $target
 
     if ($previous) {
         Write-Output "Updated git-byline $previous to $Version at $target"

@@ -34,6 +34,8 @@ const (
 # *~
 `
 	templateDescription = "Unnamed repository; edit this file 'description' to name the repository.\n"
+	templateStockMarker = ".git-byline-template-stock-v1"
+	templateStockOwner  = "git-byline template stock v1\n"
 )
 
 // Options selects hook systems and scope.
@@ -65,6 +67,9 @@ func Uninstall(dir string, options Options) (Result, error) {
 
 func change(dir string, options Options, install bool) (Result, error) {
 	agents := selectedAgents(options.Agent)
+	if options.Template && len(agents) > 0 && !options.User {
+		return Result{}, errors.New("template mode cannot manage project agent hooks")
+	}
 	var repo *gitcmd.Repo
 	// Template-scope Git hooks live in the user-level template directory,
 	// so only repository-scoped work discovers a worktree.
@@ -88,6 +93,19 @@ func change(dir string, options Options, install bool) (Result, error) {
 			return Result{}, fmt.Errorf("resolve absolute executable path: %w", err)
 		}
 	}
+	configChanged := false
+	if options.Template {
+		setConfig, err := prepareTemplate(install)
+		if err != nil {
+			return Result{}, err
+		}
+		configChanged = setConfig
+		if !install && configChanged {
+			if err := writeTemplateConfig(false); err != nil {
+				return Result{}, err
+			}
+		}
+	}
 	var changed []string
 	agentExecutable := executable
 	if install && !options.User {
@@ -109,14 +127,6 @@ func change(dir string, options Options, install bool) (Result, error) {
 		if didChange {
 			changed = append(changed, path)
 		}
-	}
-	configChanged := false
-	if options.Template {
-		setConfig, err := prepareTemplate(install)
-		if err != nil {
-			return Result{}, err
-		}
-		configChanged = setConfig
 	}
 	if options.Git {
 		specs := []struct {
@@ -179,8 +189,8 @@ func change(dir string, options Options, install bool) (Result, error) {
 		if err := finalizeTemplate(install, &changed); err != nil {
 			return Result{}, err
 		}
-		if configChanged {
-			if err := writeTemplateConfig(install); err != nil {
+		if install && configChanged {
+			if err := writeTemplateConfig(true); err != nil {
 				return Result{}, err
 			}
 		}
@@ -275,20 +285,27 @@ func prepareTemplate(install bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	current, exists, err := gitcmd.GlobalConfig(templateConfigKey)
+	values, err := gitcmd.GlobalConfigValues(templateConfigKey)
 	if err != nil {
 		return false, err
 	}
-	if !exists {
+	if len(values) == 0 {
 		return install, nil
 	}
-	if filepath.Clean(current) != filepath.Clean(dir) {
-		if !install {
-			return false, nil
+	if install {
+		for _, value := range values {
+			if value != dir {
+				return false, fmt.Errorf("refuse to replace existing %s %s", templateConfigKey, value)
+			}
 		}
-		return false, fmt.Errorf("refuse to replace existing %s %s", templateConfigKey, current)
+		return false, nil
 	}
-	return !install, nil
+	for _, value := range values {
+		if value == dir {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // finalizeTemplate runs the file work that follows the hook loop: an
@@ -306,6 +323,19 @@ func finalizeTemplate(install bool, changed *[]string) error {
 }
 
 func writeTemplateStock(dir string, changed *[]string) error {
+	root, exists, err := openTemplateRoot(true)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("managed template directory was not created")
+	}
+	defer root.Close()
+	owned, markerExists, err := templateStockOwnership()
+	if err != nil {
+		return err
+	}
+	claimOwnership := !markerExists
 	stock := []struct {
 		relative string
 		content  string
@@ -315,12 +345,29 @@ func writeTemplateStock(dir string, changed *[]string) error {
 	}
 	for _, file := range stock {
 		path := filepath.Join(dir, filepath.FromSlash(file.relative))
-		if _, err := os.Lstat(path); err == nil {
+		if err := rejectSymlinkPath(dir, filepath.Dir(path)); err != nil {
+			return err
+		}
+		info, err := root.Lstat(filepath.FromSlash(file.relative))
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("refuse symlinked template file %s", path)
+			}
+			if !owned {
+				claimOwnership = false
+			}
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("stat %s: %w", path, err)
 		}
-		if err := atomicWrite(path, []byte(file.content), 0o644); err != nil {
+		if err := writeRootFile(root, filepath.FromSlash(file.relative), []byte(file.content), 0o644); err != nil {
+			return err
+		}
+		*changed = append(*changed, path)
+	}
+	if claimOwnership {
+		path, err := writeTemplateStockMarker()
+		if err != nil {
 			return err
 		}
 		*changed = append(*changed, path)
@@ -331,6 +378,18 @@ func writeTemplateStock(dir string, changed *[]string) error {
 // pruneTemplate removes the stock files git-byline wrote and any
 // directory that became empty. Foreign files and edits keep their place.
 func pruneTemplate(dir string, changed *[]string) error {
+	root, exists, err := openTemplateRoot(false)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	owned, _, err := templateStockOwnership()
+	if err != nil {
+		root.Close()
+		return err
+	}
 	stock := []struct {
 		relative string
 		content  string
@@ -338,40 +397,61 @@ func pruneTemplate(dir string, changed *[]string) error {
 		{"info/exclude", templateInfoExclude},
 		{"description", templateDescription},
 	}
-	for _, file := range stock {
-		path := filepath.Join(dir, filepath.FromSlash(file.relative))
-		data, err := os.ReadFile(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
+	if owned {
+		for _, file := range stock {
+			path := filepath.Join(dir, filepath.FromSlash(file.relative))
+			if err := rejectSymlinkPath(dir, filepath.Dir(path)); err != nil {
+				root.Close()
+				return err
+			}
+			relative := filepath.FromSlash(file.relative)
+			info, err := root.Lstat(relative)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				root.Close()
+				return fmt.Errorf("stat %s: %w", path, err)
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				root.Close()
+				return fmt.Errorf("refuse symlinked template file %s", path)
+			}
+			if !info.Mode().IsRegular() || info.Size() != int64(len(file.content)) {
+				continue
+			}
+			data, err := readRootFile(root, relative, len(file.content)+1)
+			if err != nil {
+				root.Close()
+				return fmt.Errorf("read %s: %w", path, err)
+			}
+			if string(data) != file.content {
+				continue
+			}
+			if err := root.Remove(relative); err != nil {
+				root.Close()
+				return fmt.Errorf("remove %s: %w", path, err)
+			}
+			*changed = append(*changed, path)
 		}
+	}
+	for _, relative := range []string{"hooks", "info"} {
+		if err := removeEmptyRootDir(root, relative); err != nil {
+			root.Close()
+			return fmt.Errorf("remove empty template directory %s: %w", filepath.Join(dir, relative), err)
+		}
+	}
+	if err := root.Close(); err != nil {
+		return fmt.Errorf("close managed template directory: %w", err)
+	}
+	if owned {
+		path, err := removeTemplateStockMarker()
 		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-		if string(data) != file.content {
-			continue
-		}
-		if err := os.Remove(path); err != nil {
-			return fmt.Errorf("remove %s: %w", path, err)
+			return err
 		}
 		*changed = append(*changed, path)
 	}
-	for _, relative := range []string{"hooks", "info", "."} {
-		path := filepath.Join(dir, relative)
-		entries, err := os.ReadDir(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("read directory %s: %w", path, err)
-		}
-		if len(entries) > 0 {
-			continue
-		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove %s: %w", path, err)
-		}
-	}
-	return nil
+	return removeEmptyTemplateRoot()
 }
 
 // writeTemplateConfig writes or removes the user-level init.templateDir
@@ -382,9 +462,292 @@ func writeTemplateConfig(install bool) error {
 		return err
 	}
 	if install {
-		return gitcmd.SetGlobalConfig(templateConfigKey, dir)
+		if err := gitcmd.AddGlobalConfig(templateConfigKey, dir); err != nil {
+			return err
+		}
+		values, err := gitcmd.GlobalConfigValues(templateConfigKey)
+		if err != nil {
+			if _, removeErr := gitcmd.UnsetGlobalConfig(templateConfigKey, dir); removeErr != nil {
+				return fmt.Errorf("verify global git config: %w; remove managed value: %v", err, removeErr)
+			}
+			return err
+		}
+		for _, value := range values {
+			if value == dir {
+				continue
+			}
+			if _, removeErr := gitcmd.UnsetGlobalConfig(templateConfigKey, dir); removeErr != nil {
+				return fmt.Errorf(
+					"refuse to replace existing %s %s; remove managed value: %w",
+					templateConfigKey,
+					value,
+					removeErr,
+				)
+			}
+			return fmt.Errorf("refuse to replace existing %s %s", templateConfigKey, value)
+		}
+		return nil
 	}
-	if _, err := gitcmd.UnsetGlobalConfig(templateConfigKey); err != nil {
+	if _, err := gitcmd.UnsetGlobalConfig(templateConfigKey, dir); err != nil {
+		return err
+	}
+	return nil
+}
+
+func openTemplateRoot(create bool) (*os.Root, bool, error) {
+	base, dir, err := templateDir()
+	if err != nil {
+		return nil, false, err
+	}
+	if create {
+		if err := os.MkdirAll(base, 0o700); err != nil {
+			return nil, false, fmt.Errorf("create template base %s: %w", base, err)
+		}
+	}
+	baseRoot, err := os.OpenRoot(base)
+	if errors.Is(err, os.ErrNotExist) && !create {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("open template base %s: %w", base, err)
+	}
+	defer baseRoot.Close()
+	relative, err := filepath.Rel(base, dir)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve managed template directory: %w", err)
+	}
+	if err := rejectSymlinkPath(base, dir); err != nil {
+		return nil, false, err
+	}
+	if create {
+		if err := mkdirAllRoot(baseRoot, relative, 0o700); err != nil {
+			return nil, false, fmt.Errorf("create managed template directory %s: %w", dir, err)
+		}
+		if err := rejectSymlinkPath(base, dir); err != nil {
+			return nil, false, err
+		}
+	}
+	root, err := baseRoot.OpenRoot(relative)
+	if errors.Is(err, os.ErrNotExist) && !create {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("open managed template directory %s: %w", dir, err)
+	}
+	return root, true, nil
+}
+
+func templateStockMarkerPath() (string, string, error) {
+	base, dir, err := templateDir()
+	if err != nil {
+		return "", "", err
+	}
+	path := filepath.Join(filepath.Dir(dir), templateStockMarker)
+	relative, err := filepath.Rel(base, path)
+	if err != nil {
+		return "", "", err
+	}
+	return path, relative, nil
+}
+
+func templateStockOwnership() (bool, bool, error) {
+	path, relative, err := templateStockMarkerPath()
+	if err != nil {
+		return false, false, err
+	}
+	base, _, err := templateDir()
+	if err != nil {
+		return false, false, err
+	}
+	root, err := os.OpenRoot(base)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("open template base %s: %w", base, err)
+	}
+	defer root.Close()
+	info, err := root.Lstat(relative)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("stat template stock marker %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() || info.Size() != int64(len(templateStockOwner)) {
+		return false, true, nil
+	}
+	data, err := readRootFile(root, relative, len(templateStockOwner)+1)
+	if err != nil {
+		return false, true, fmt.Errorf("read template stock marker %s: %w", path, err)
+	}
+	return string(data) == templateStockOwner, true, nil
+}
+
+func writeTemplateStockMarker() (string, error) {
+	path, relative, err := templateStockMarkerPath()
+	if err != nil {
+		return "", err
+	}
+	base, _, err := templateDir()
+	if err != nil {
+		return "", err
+	}
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		return "", fmt.Errorf("open template base %s: %w", base, err)
+	}
+	defer root.Close()
+	if err := writeRootFile(root, relative, []byte(templateStockOwner), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func removeTemplateStockMarker() (string, error) {
+	path, relative, err := templateStockMarkerPath()
+	if err != nil {
+		return "", err
+	}
+	base, _, err := templateDir()
+	if err != nil {
+		return "", err
+	}
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		return "", fmt.Errorf("open template base %s: %w", base, err)
+	}
+	defer root.Close()
+	if err := root.Remove(relative); err != nil {
+		return "", fmt.Errorf("remove template stock marker %s: %w", path, err)
+	}
+	return path, nil
+}
+
+func writeRootFile(root *os.Root, path string, data []byte, mode os.FileMode) error {
+	if err := mkdirAllRoot(root, filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create template directory for %s: %w", path, err)
+	}
+	file, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return fmt.Errorf("create template file %s: %w", path, err)
+	}
+	remove := true
+	defer func() {
+		if remove {
+			root.Remove(path)
+		}
+	}()
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return fmt.Errorf("write template file %s: %w", path, err)
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return fmt.Errorf("sync template file %s: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close template file %s: %w", path, err)
+	}
+	remove = false
+	return nil
+}
+
+func mkdirAllRoot(root *os.Root, path string, mode os.FileMode) error {
+	current := ""
+	for _, part := range strings.Split(filepath.Clean(path), string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		err := root.Mkdir(current, mode)
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		info, err := root.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("%s is not a trusted directory", path)
+		}
+	}
+	return nil
+}
+
+func readRootFile(root *os.Root, path string, limit int) ([]byte, error) {
+	file, err := root.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, int64(limit)))
+}
+
+func removeEmptyRootDir(root *os.Root, path string) error {
+	dir, err := root.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	entries, readErr := dir.ReadDir(1)
+	closeErr := dir.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return readErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if len(entries) != 0 {
+		return nil
+	}
+	if err := root.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func removeEmptyTemplateRoot() error {
+	base, dir, err := templateDir()
+	if err != nil {
+		return err
+	}
+	baseRoot, err := os.OpenRoot(base)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer baseRoot.Close()
+	relative, err := filepath.Rel(base, dir)
+	if err != nil {
+		return err
+	}
+	template, err := baseRoot.Open(relative)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	entries, readErr := template.ReadDir(1)
+	closeErr := template.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return readErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if len(entries) != 0 {
+		return nil
+	}
+	if err := baseRoot.Remove(relative); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil

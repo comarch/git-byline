@@ -26,6 +26,7 @@ const (
 	maxOutputBytes = maxFileBytes
 	maxNoteBytes   = 16 << 20
 	bylineNotesRef = "refs/notes/byline"
+	globalConfig   = "--global"
 )
 
 // ErrOutputLimit reports Git output larger than the supported file bound.
@@ -1144,44 +1145,127 @@ func (repo *Repo) ConfigPath(key string) (string, bool, error) {
 	return "", false, err
 }
 
-// GlobalConfig reads one user-level Git configuration value. It runs
-// outside any repository, so callers must pass an explicit --global key.
+// GlobalConfig reads the effective user-level Git configuration value.
 func GlobalConfig(key string) (string, bool, error) {
-	out, err := runGitOutsideRepo("read global git config", "config", "--global", "--get", key)
+	values, err := GlobalConfigValues(key)
+	if err != nil {
+		return "", false, err
+	}
+	if len(values) == 0 {
+		return "", false, nil
+	}
+	return values[len(values)-1], true, nil
+}
+
+// GlobalConfigValues reads every effective user-level value, including
+// values from include files.
+func GlobalConfigValues(key string) ([]string, error) {
+	if err := validateGlobalConfigKey(key); err != nil {
+		return nil, err
+	}
+	out, err := runGitOutsideRepo(
+		"read global git config",
+		"config", globalConfig, "--includes", "--null", "--get-all", key,
+	)
 	if err == nil {
-		return strings.TrimSpace(string(out)), true, nil
+		if len(out) == 0 || out[len(out)-1] != 0 {
+			return nil, errors.New("global git config returned malformed values")
+		}
+		parts := bytes.Split(out[:len(out)-1], []byte{0})
+		values := make([]string, len(parts))
+		for index, part := range parts {
+			values[index] = string(part)
+		}
+		return values, nil
 	}
 	var commandErr *CommandError
 	if errors.As(err, &commandErr) && commandErr.ExitCode == 1 {
-		return "", false, nil
+		return nil, nil
 	}
-	return "", false, err
+	return nil, err
 }
 
 // SetGlobalConfig writes one user-level Git configuration value.
 func SetGlobalConfig(key, value string) error {
-	if key == "" || strings.ContainsRune(key, 0) {
-		return errors.New("global git config key is empty or contains NUL")
+	if err := validateGlobalConfigKey(key); err != nil {
+		return err
 	}
 	if strings.ContainsRune(value, 0) {
 		return errors.New("global git config value contains NUL")
 	}
-	_, err := runGitOutsideRepo("write global git config", "config", "--global", key, value)
+	_, err := runGitOutsideRepo("write global git config", "config", globalConfig, key, value)
 	return err
 }
 
-// UnsetGlobalConfig removes one user-level Git configuration value and
-// reports whether the value existed.
-func UnsetGlobalConfig(key string) (bool, error) {
-	_, err := runGitOutsideRepo("unset global git config", "config", "--global", "--unset", key)
+// AddGlobalConfig appends one user-level Git configuration value.
+func AddGlobalConfig(key, value string) error {
+	if err := validateGlobalConfigKey(key); err != nil {
+		return err
+	}
+	if strings.ContainsRune(value, 0) {
+		return errors.New("global git config value contains NUL")
+	}
+	_, err := runGitOutsideRepo(
+		"add global git config",
+		"config", globalConfig, "--add", key, value,
+	)
+	return err
+}
+
+// UnsetGlobalConfig removes all matching values from the writable global
+// file and reports whether a value was removed.
+func UnsetGlobalConfig(key, value string) (bool, error) {
+	if err := validateGlobalConfigKey(key); err != nil {
+		return false, err
+	}
+	if strings.ContainsRune(value, 0) {
+		return false, errors.New("global git config value contains NUL")
+	}
+	_, err := runGitOutsideRepo(
+		"unset global git config",
+		"config", globalConfig, "--fixed-value", "--unset-all", key, value,
+	)
 	if err == nil {
+		values, readErr := GlobalConfigValues(key)
+		if readErr != nil {
+			return true, fmt.Errorf("check remaining global git config: %w", readErr)
+		}
+		for _, current := range values {
+			if current == value {
+				return true, fmt.Errorf(
+					"global git config %s value %q is also defined in an included file",
+					key,
+					value,
+				)
+			}
+		}
 		return true, nil
 	}
 	var commandErr *CommandError
 	if errors.As(err, &commandErr) && commandErr.ExitCode == 5 {
+		values, readErr := GlobalConfigValues(key)
+		if readErr != nil {
+			return false, fmt.Errorf("check remaining global git config: %w", readErr)
+		}
+		for _, current := range values {
+			if current == value {
+				return false, fmt.Errorf(
+					"global git config %s value %q is defined in an included file",
+					key,
+					value,
+				)
+			}
+		}
 		return false, nil
 	}
 	return false, err
+}
+
+func validateGlobalConfigKey(key string) error {
+	if key == "" || strings.ContainsRune(key, 0) {
+		return errors.New("global git config key is empty or contains NUL")
+	}
+	return nil
 }
 
 // runGitOutsideRepo runs one Git command that needs no repository, such as
