@@ -91,7 +91,7 @@ warning and writes no notes.
 | Path escapes worktree | Normalize path, reject `.git`, traversal, symlink escape | Path tests and warnings | Skip snapshot, preserve prior state |
 | Secret file enters Git ODB | Skip Git-ignored and non-regular files | Repository scans and review | Remove local object after retention ends |
 | Malicious hook payload | Bounded input, strict event and metadata validation, path validation | Parser tests and explicit errors | No checkpoint written |
-| Malicious transcript path | Absolute regular-file check, symlink skip, bounded transcript and sidecar reads, model revalidated before use | Transcript resolver tests | Model stays `unknown` |
+| Malicious transcript path | Absolute regular-file check, symlink skip, no-follow open where available, bounded reads, model revalidated before use | Transcript resolver tests | Model stays `unknown` |
 | Git command injection | Argument slices, no shell, bounded output | Fake and integration command tests | Fail operation without state advance |
 | Checkpoint loss during Git GC | Retention ref written before JSONL append | Aggressive GC integration test | Reuse protected blob |
 | Oversized local state exhausts memory | Stream checkpoint reads, cap logs at 64 MiB and 100,000 records, cap state at 64 MiB | Limit regression tests | Preserve and inspect local state before repair |

@@ -159,3 +159,26 @@ func TestResolveModelRejectsSymlink(t *testing.T) {
 		t.Fatalf("ResolveModel(symlink) = %q, want empty", got)
 	}
 }
+
+func TestResolveModelRejectsSidecarSymlink(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte("{\"message\":{\"role\":\"user\"}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "settings-target.json")
+	if err := os.WriteFile(target, []byte(`{"model":"sidecar-model"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "session.settings.json")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveModel(path)
+	if err != nil {
+		t.Fatalf("ResolveModel(sidecar symlink) error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("ResolveModel(sidecar symlink) = %q, want empty", got)
+	}
+}

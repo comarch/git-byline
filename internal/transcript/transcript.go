@@ -46,9 +46,10 @@ func ResolveModel(transcriptPath string) (string, error) {
 // fromTranscript returns the newest model recorded in a session JSONL file.
 // Only the trailing window is scanned because the event's message is always
 // near the end of an active session. Lines that fail to decode are skipped,
-// including a line truncated by the window start. The opened descriptor is
-// revalidated as a regular file so the path cannot be swapped for another
-// file type between the precheck and the read.
+// including a line truncated by the window start. The file is opened without
+// following a final symlink and the opened descriptor is revalidated as a
+// regular file, so the path cannot be swapped between the precheck and the
+// read.
 func fromTranscript(path string) (string, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -57,7 +58,7 @@ func fromTranscript(path string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("transcript %s is not a regular file", path)
 	}
-	file, err := os.Open(path)
+	file, err := openSessionFile(path)
 	if err != nil {
 		return "", fmt.Errorf("open transcript %s: %w", path, err)
 	}
@@ -122,7 +123,7 @@ func fromSidecar(transcriptPath string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("session settings %s is not a regular file", sidecar)
 	}
-	file, err := os.Open(sidecar)
+	file, err := openSessionFile(sidecar)
 	if err != nil {
 		return "", fmt.Errorf("open session settings %s: %w", sidecar, err)
 	}
