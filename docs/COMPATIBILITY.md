@@ -28,7 +28,7 @@ file, but interactive file switching requires JavaScript.
 
 | Product or interface | Preset | Events | Paths |
 | --- | --- | --- | --- |
-| Factory | `droid`, `portable-factory` | `Edit`, `Create`, `ApplyPatch` and generated pre/post hooks | Common file and patch fields |
+| Factory | `droid`, `portable-factory` | `Edit`, `Create`, `ApplyPatch` and generated pre/post hooks | Common file and patch fields; `ApplyPatch` body in `patch` or `input` |
 | Claude Code | `claude`, `portable-claude` | `Write`, `Edit`, `MultiEdit` and generated pre/post hooks | Common file fields |
 | GitHub Copilot | `portable-copilot` | Generated pre/post tool hooks | Common file and patch fields |
 | VS Code Agent | `portable-vscode` | Generated pre/post tool hooks | Common file and patch fields |

@@ -117,6 +117,7 @@ func parseToolHook(agent string, explicit model.Author, data []byte, allowed []s
 	var toolInput struct {
 		FilePath string `json:"file_path"`
 		Patch    string `json:"patch"`
+		Input    string `json:"input"`
 	}
 	if err := json.Unmarshal(rawToolInput, &toolInput); err != nil {
 		return Event{}, false, fmt.Errorf("decode tool_input: %w", err)
@@ -124,7 +125,8 @@ func parseToolHook(agent string, explicit model.Author, data []byte, allowed []s
 	var paths []string
 	if tool == "ApplyPatch" {
 		var err error
-		paths, err = patchPaths(toolInput.Patch)
+		// Factory sends the ApplyPatch body in input; patch covers other surfaces.
+		paths, err = patchPaths(firstValue(toolInput.Patch, toolInput.Input))
 		if err != nil {
 			return Event{}, false, err
 		}
@@ -351,6 +353,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 			File                 string   `json:"file"`
 			Path                 string   `json:"path"`
 			Patch                string   `json:"patch"`
+			Input                string   `json:"input"`
 			FilePaths            []string `json:"file_paths"`
 			FilePathsCamel       []string `json:"filePaths"`
 			EditedFilepaths      []string `json:"edited_filepaths"`
@@ -366,8 +369,9 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		paths = append(paths, input.EditedFilepaths...)
 		paths = append(paths, input.EditedFilepathsCamel...)
 		paths = append(paths, input.Files...)
-		if input.Patch != "" {
-			patchFiles, err := patchPaths(input.Patch)
+		// Factory puts the ApplyPatch body in input; patch covers other surfaces.
+		if patch := firstValue(input.Patch, input.Input); patch != "" {
+			patchFiles, err := patchPaths(patch)
 			if err != nil && len(uniquePaths(paths)) == 0 {
 				return Event{}, false, err
 			}

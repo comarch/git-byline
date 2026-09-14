@@ -40,6 +40,14 @@ func TestParseToolHooks(t *testing.T) {
 			payload: `{"tool_name":"ApplyPatch","tool_input":{"patch":"*** Begin Patch\n*** Update File: a.go\n*** Move to: b.go\n*** End Patch\n"}}`,
 		},
 		{
+			name: "droid patch in input field", preset: "droid", author: model.AuthorAI, handled: true, paths: 1,
+			payload: `{"tool_name":"ApplyPatch","tool_input":{"input":"*** Begin Patch\n*** Update File: a.go\n*** End Patch\n"}}`,
+		},
+		{
+			name: "droid patch without body", preset: "droid", author: model.AuthorAI,
+			payload: `{"tool_name":"ApplyPatch","tool_input":{"content":"x"}}`, wantErr: true,
+		},
+		{
 			name: "unified patch", preset: "portable-copilot", author: model.AuthorAI, handled: true, paths: 1,
 			payload: `{"toolName":"apply_patch","toolArgs":{"patch":"--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-old\n+new\n"}}`,
 		},
@@ -159,6 +167,7 @@ func TestParsePortableHooks(t *testing.T) {
 		{"grok", `{"file_paths":["g.go","h.go"]}`, []string{"g.go", "h.go"}},
 		{"copilot", `{"sessionId":"s","toolName":"apply_patch","toolArgs":"{\"filePath\":\"i.go\"}"}`, []string{"i.go"}},
 		{"claude", `{"conversation_id":"c","edited_filepaths":["j.go"]}`, []string{"j.go"}},
+		{"factory", `{"tool_name":"ApplyPatch","model":"m","tool_input":{"input":"*** Begin Patch\n*** Update File: k.go\n*** End Patch\n"}}`, []string{"k.go"}},
 	}
 	for _, test := range tests {
 		test := test
