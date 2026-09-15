@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -46,30 +45,16 @@ func ResolveModel(transcriptPath string) (string, error) {
 // fromTranscript returns the newest model recorded in a session JSONL file.
 // Only the trailing window is scanned because the event's message is always
 // near the end of an active session. Lines that fail to decode are skipped,
-// including a line truncated by the window start. The file is opened without
-// following a final symlink and the opened descriptor is revalidated as a
-// regular file, so the path cannot be swapped between the precheck and the
-// read.
+// including a line truncated by the window start. The file is opened
+// without following a final symlink and either the whole check and read
+// share one handle or the opened identity must match the prechecked file,
+// so the file cannot be swapped between the check and the read.
 func fromTranscript(path string) (string, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return "", fmt.Errorf("stat transcript %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("transcript %s is not a regular file", path)
-	}
-	file, err := openSessionFile(path)
+	file, info, err := openVerifiedSessionFile(path)
 	if err != nil {
 		return "", fmt.Errorf("open transcript %s: %w", path, err)
 	}
 	defer file.Close()
-	info, err = file.Stat()
-	if err != nil {
-		return "", fmt.Errorf("stat transcript %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("transcript %s is not a regular file", path)
-	}
 	var reader io.Reader = io.LimitReader(file, maxTranscriptBytes+1)
 	if size := info.Size(); size > tailWindowBytes {
 		if _, err := file.Seek(size-tailWindowBytes, io.SeekStart); err != nil {
@@ -116,25 +101,11 @@ func lineModel(line []byte) string {
 // callers treat it as an unresolved model.
 func fromSidecar(transcriptPath string) (string, error) {
 	sidecar := strings.TrimSuffix(transcriptPath, filepath.Ext(transcriptPath)) + ".settings.json"
-	info, err := os.Lstat(sidecar)
-	if err != nil {
-		return "", fmt.Errorf("stat session settings %s: %w", sidecar, err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("session settings %s is not a regular file", sidecar)
-	}
-	file, err := openSessionFile(sidecar)
+	file, _, err := openVerifiedSessionFile(sidecar)
 	if err != nil {
 		return "", fmt.Errorf("open session settings %s: %w", sidecar, err)
 	}
 	defer file.Close()
-	info, err = file.Stat()
-	if err != nil {
-		return "", fmt.Errorf("stat session settings %s: %w", sidecar, err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("session settings %s is not a regular file", sidecar)
-	}
 	var settings struct {
 		Model string `json:"model"`
 	}

@@ -3,6 +3,7 @@
 package transcript
 
 import (
+	"fmt"
 	"os"
 	"syscall"
 )
@@ -11,14 +12,12 @@ import (
 // instead of following it. It is a no-op on regular files.
 const fileFlagOpenReparsePoint = 0x00200000
 
-// openSessionFile opens a session file without following a final symlink or
-// other reparse point, so a path swapped after the precheck cannot redirect
-// the read. The opened handle still needs the caller's regular-file
-// revalidation, which rejects the reparse point itself.
-func openSessionFile(path string) (*os.File, error) {
+// openSessionHandle opens a path without following a final symlink or other
+// reparse point.
+func openSessionHandle(path string) (syscall.Handle, error) {
 	pointer, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	handle, err := syscall.CreateFile(
 		pointer,
@@ -30,7 +29,29 @@ func openSessionFile(path string) (*os.File, error) {
 		0,
 	)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	return os.NewFile(uintptr(handle), path), nil
+	return handle, nil
+}
+
+// openVerifiedSessionFile opens the session file without following a final
+// symlink or other reparse point and returns the opened handle with its
+// stat, always a regular file. The regular check and the read share one
+// handle, so no path resolution can slip between the check and the read.
+func openVerifiedSessionFile(path string) (*os.File, os.FileInfo, error) {
+	handle, err := openSessionHandle(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	file := os.NewFile(uintptr(handle), path)
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("session file %s is not a regular file", path)
+	}
+	return file, info, nil
 }
