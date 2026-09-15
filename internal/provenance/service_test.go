@@ -1319,6 +1319,11 @@ func TestSelectRecordsDropsUnreachableUnrelatedBases(t *testing.T) {
 			errText:   "unrelated base commit",
 		},
 		{
+			name:    "strict mode fails closed",
+			records: []model.Checkpoint{record(1, "other")},
+			errText: "unrelated base commit",
+		},
+		{
 			name:      "reachability error propagates",
 			records:   []model.Checkpoint{record(1, "other")},
 			reachable: func(string) (bool, error) { return false, errors.New("probe failed") },
@@ -1367,14 +1372,17 @@ func TestAnnotateHandlesStrandedBranchEvidence(t *testing.T) {
 	t.Parallel()
 	t.Run("drops evidence after branch deletion", testAnnotateDropsStrandedBranchEvidence)
 	t.Run("fails closed while branch reaches base", testAnnotateFailsClosedWithReachableBase)
-	t.Run("fails when branch appears before persistence", testBranchReachabilityRecheck)
 }
 
 func testAnnotateDropsStrandedBranchEvidence(t *testing.T) {
-	repo, root, _ := setupStrandedBranchEvidence(t, true)
+	repo, root := setupStrandedBranchEvidence(t, true)
 	write(t, root, "file.txt", "base\nmainline\n")
 	commit(t, root, "mainline")
-	result, err := Annotate(repo)
+	if _, err := Annotate(repo); err == nil || !strings.Contains(err.Error(), "unrelated base commit") {
+		t.Fatalf("strict Annotate error = %v, want unrelated base commit failure", err)
+	}
+	assertLastCheckpointSeq(t, repo, 0)
+	result, err := AnnotateWithOptions(repo, AnnotateOptions{DropStranded: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1391,36 +1399,17 @@ func testAnnotateDropsStrandedBranchEvidence(t *testing.T) {
 }
 
 func testAnnotateFailsClosedWithReachableBase(t *testing.T) {
-	repo, root, _ := setupStrandedBranchEvidence(t, false)
+	repo, root := setupStrandedBranchEvidence(t, false)
 	write(t, root, "file.txt", "base\nmainline\n")
 	commit(t, root, "mainline")
-	_, err := Annotate(repo)
+	_, err := AnnotateWithOptions(repo, AnnotateOptions{DropStranded: true})
 	if err == nil || !strings.Contains(err.Error(), "unrelated base commit") {
 		t.Fatalf("Annotate error = %v, want unrelated base commit failure", err)
 	}
 	assertLastCheckpointSeq(t, repo, 0)
 }
 
-func testBranchReachabilityRecheck(t *testing.T) {
-	repo, root, feature := setupStrandedBranchEvidence(t, true)
-	checker := newBranchReachability(repo)
-	reachable, err := checker.cached(feature)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reachable {
-		t.Fatal("feature base is reachable after branch deletion")
-	}
-	if err := checker.recheckDropped(); err != nil {
-		t.Fatalf("recheckDropped before ref change: %v", err)
-	}
-	git(t, root, "branch", "restored", feature)
-	if err := checker.recheckDropped(); err == nil || !strings.Contains(err.Error(), "became reachable") {
-		t.Fatalf("recheckDropped after ref change = %v, want reachable error", err)
-	}
-}
-
-func setupStrandedBranchEvidence(t *testing.T, deleteBranch bool) (*gitcmd.Repo, string, string) {
+func setupStrandedBranchEvidence(t *testing.T, deleteBranch bool) (*gitcmd.Repo, string) {
 	t.Helper()
 	root := testRepo(t)
 	write(t, root, "file.txt", "base\n")
@@ -1434,7 +1423,7 @@ func setupStrandedBranchEvidence(t *testing.T, deleteBranch bool) (*gitcmd.Repo,
 	}
 	git(t, root, "checkout", "-b", "feature")
 	write(t, root, "file.txt", "base\nfeature\n")
-	feature := commit(t, root, "feature")
+	commit(t, root, "feature")
 	human := preset.Event{Type: model.AuthorHuman, Paths: []string{"file.txt"}}
 	if _, err := Capture(repo, human, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)); err != nil {
 		t.Fatal(err)
@@ -1443,7 +1432,7 @@ func setupStrandedBranchEvidence(t *testing.T, deleteBranch bool) (*gitcmd.Repo,
 	if deleteBranch {
 		git(t, root, "branch", "-D", "feature")
 	}
-	return repo, root, feature
+	return repo, root
 }
 
 func assertLastCheckpointSeq(t *testing.T, repo *gitcmd.Repo, want uint64) {

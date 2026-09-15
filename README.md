@@ -462,7 +462,7 @@ Eighteen commands, one binary:
 | Command | Purpose |
 | --- | --- |
 | `checkpoint <preset>` | Record a human or AI edit snapshot from hook input |
-| `annotate` | Replay pending snapshots and annotate `HEAD` |
+| `annotate [--drop-stranded]` | Replay pending snapshots and annotate `HEAD`; explicitly discard unreachable unrelated checkpoints when recovering |
 | `blame [--json] [--color=auto\|always\|never] <file>` | Show line attribution for a file at `HEAD` (file resolves from the working directory first, like `git blame`) |
 | `status [--json]` | Show checkpoint, pending, and annotation state |
 | `dashboard [--range <rev-range>] [--repo] [--output FILE] [file]` | Generate a self-contained local HTML report |

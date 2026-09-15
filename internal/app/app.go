@@ -63,8 +63,10 @@ func commands() []*command {
 		{
 			name:  "annotate",
 			short: "write attribution for HEAD to git notes",
-			usage: "Usage: git-byline annotate\n\n" +
-				"Replay pending checkpoints and annotate the current commit.",
+			usage: "Usage: git-byline annotate [--drop-stranded]\n\n" +
+				"Replay pending checkpoints and annotate the current commit.\n" +
+				"Use --drop-stranded to discard unrelated checkpoints whose\n" +
+				"base no local or remote-tracking branch can reach.",
 			run: runAnnotate,
 		},
 		{

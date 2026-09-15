@@ -267,14 +267,23 @@ func createDashboardOutput(env *Env, requested string) (*os.File, string, error)
 }
 
 func runAnnotate(env *Env, command *command, args []string) (int, error) {
-	if len(args) != 0 {
-		return commandUsageError(env, command, errors.New("annotate takes no arguments"))
+	flags := flag.NewFlagSet(command.name, flag.ContinueOnError)
+	var output strings.Builder
+	flags.SetOutput(&output)
+	dropStranded := flags.Bool("drop-stranded", false, "discard unreachable unrelated checkpoints")
+	if err := flags.Parse(args); err != nil {
+		return flagError(env, command, output.String(), err)
+	}
+	if flags.NArg() != 0 {
+		return commandUsageError(env, command, errors.New("annotate takes no positional arguments"))
 	}
 	repo, err := discoverForEnv(env)
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
-	result, err := provenance.Annotate(repo)
+	result, err := provenance.AnnotateWithOptions(repo, provenance.AnnotateOptions{
+		DropStranded: *dropStranded,
+	})
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}

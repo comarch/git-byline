@@ -337,10 +337,20 @@ type AnnotateResult struct {
 	Warnings []string
 }
 
+// AnnotateOptions selects explicit recovery behavior.
+type AnnotateOptions struct {
+	DropStranded bool
+}
+
 type sessionMetrics map[string]*model.NoteSession
 
 // Annotate writes deterministic attribution for HEAD.
 func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
+	return AnnotateWithOptions(repo, AnnotateOptions{})
+}
+
+// AnnotateWithOptions writes deterministic attribution for HEAD.
+func AnnotateWithOptions(repo *gitcmd.Repo, options AnnotateOptions) (AnnotateResult, error) {
 	dataStore := store.New(repo.GitDir)
 	commonLock, err := lock.Acquire(filepath.Join(repo.CommonDir, "byline", "notes.lock"), lockTimeout)
 	if err != nil {
@@ -410,13 +420,16 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 		warnings = append(warnings, "initializing attribution on a repository with existing history")
 	}
 
-	branchReachability := newBranchReachability(repo)
+	var branchReachable func(string) (bool, error)
+	if options.DropStranded {
+		branchReachable = cachedReachable(repo)
+	}
 	active, carry, lastSeq, dropped, err := selectRecords(
 		records,
 		state.LastCheckpointSeq,
 		parent,
 		head,
-		branchReachability.cached,
+		branchReachable,
 	)
 	if err != nil {
 		return AnnotateResult{}, err
@@ -576,9 +589,6 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	if err := repo.ProtectBlobs(protected); err != nil {
 		return AnnotateResult{}, fmt.Errorf("protect pending snapshots: %w", err)
 	}
-	if err := branchReachability.recheckDropped(); err != nil {
-		return AnnotateResult{}, err
-	}
 	if err := repo.WriteNote(head, data); err != nil {
 		return AnnotateResult{}, err
 	}
@@ -615,9 +625,11 @@ func selectRecords(records []model.Checkpoint, consumed uint64, base, head strin
 			carryStarted = true
 			carry = append(carry, record)
 		default:
-			// A deleted branch after a squash or rebase merge strands its
-			// evidence. Nothing can ever consume it again, so drop it once
-			// no branch can still reach the base; fail closed otherwise.
+			if reachable == nil {
+				return nil, nil, consumed, 0, fmt.Errorf("checkpoint %d belongs to unrelated base commit %q", record.Seq, record.BaseCommit)
+			}
+			// Explicit recovery may drop evidence stranded after a squash or
+			// rebase merge. Fail closed while any branch can reach its base.
 			alive, err := reachable(record.BaseCommit)
 			if err != nil {
 				return nil, nil, consumed, 0, fmt.Errorf("check checkpoint %d base reachability: %w", record.Seq, err)
@@ -632,51 +644,21 @@ func selectRecords(records []model.Checkpoint, consumed uint64, base, head strin
 	return active, carry, last, dropped, nil
 }
 
-type branchReachability struct {
-	repo  *gitcmd.Repo
-	cache map[string]bool
-}
-
-func newBranchReachability(repo *gitcmd.Repo) *branchReachability {
-	return &branchReachability{
-		repo:  repo,
-		cache: map[string]bool{},
-	}
-}
-
-// cached memoizes branch containment per base commit so a large stranded log
-// costs one Git call per distinct base.
-func (checker *branchReachability) cached(commit string) (bool, error) {
-	if value, ok := checker.cache[commit]; ok {
+// cachedReachable memoizes branch containment per base commit so a large
+// stranded log costs one Git call per distinct base.
+func cachedReachable(repo *gitcmd.Repo) func(string) (bool, error) {
+	cache := map[string]bool{}
+	return func(commit string) (bool, error) {
+		if value, ok := cache[commit]; ok {
+			return value, nil
+		}
+		value, err := repo.AnyBranchContains(commit)
+		if err != nil {
+			return false, err
+		}
+		cache[commit] = value
 		return value, nil
 	}
-	value, err := checker.repo.AnyBranchContains(commit)
-	if err != nil {
-		return false, err
-	}
-	checker.cache[commit] = value
-	return value, nil
-}
-
-// recheckDropped catches branches created while annotation was replaying.
-func (checker *branchReachability) recheckDropped() error {
-	var commits []string
-	for commit, reachable := range checker.cache {
-		if !reachable {
-			commits = append(commits, commit)
-		}
-	}
-	sort.Strings(commits)
-	for _, commit := range commits {
-		reachable, err := checker.repo.AnyBranchContains(commit)
-		if err != nil {
-			return fmt.Errorf("recheck checkpoint base %q reachability: %w", commit, err)
-		}
-		if reachable {
-			return fmt.Errorf("checkpoint base %q became reachable during annotation", commit)
-		}
-	}
-	return nil
 }
 
 func collectPaths(records []model.Checkpoint, state model.State, changes map[string]gitcmd.Change) []string {

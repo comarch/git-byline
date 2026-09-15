@@ -30,6 +30,10 @@ func TestProductCommandFlow(t *testing.T) {
 	if code != ExitSuccess || err != nil || !strings.Contains(stdout, "annotated ") || stderr != "" {
 		t.Fatalf("annotate = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
+	code, stdout, stderr, err = appRun(root, now, nil, "annotate", "--drop-stranded")
+	if code != ExitSuccess || err != nil || !strings.Contains(stdout, "already annotated ") || stderr != "" {
+		t.Fatalf("annotate drop stranded = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
 	humanPayload := `{"session_id":"s","tool_name":"Edit","tool_input":{"file_path":"file.txt"}}`
 	code, stdout, stderr, err = appRun(root, now, strings.NewReader(humanPayload),
 		"checkpoint", "droid", "--type", "human", "--hook-input", "stdin")
