@@ -549,6 +549,43 @@ func (repo *Repo) MergeBase(a, b string) (string, error) {
 	return value, nil
 }
 
+// AnyBranchContains reports whether a local or remote-tracking branch can
+// still reach commit. A base commit whose object is gone counts as
+// uncontained because nothing can ever reach it again.
+func (repo *Repo) AnyBranchContains(commit string) (bool, error) {
+	if err := validateRevision(commit, "revision"); err != nil {
+		return false, err
+	}
+	out, err := repo.run("check branch containment", nil, "for-each-ref",
+		"refs/heads", "refs/remotes", "--contains="+commit, "--format=%(refname)")
+	if err != nil {
+		exists, existsErr := repo.commitExistsQuiet(commit)
+		if existsErr == nil && !exists {
+			return false, nil
+		}
+		return false, err
+	}
+	return len(strings.TrimSpace(string(out))) > 0, nil
+}
+
+// commitExistsQuiet reports whether commit resolves to an existing commit
+// object. Missing objects report false without an error.
+func (repo *Repo) commitExistsQuiet(commit string) (bool, error) {
+	if err := validateRevision(commit, "revision"); err != nil {
+		return false, err
+	}
+	_, err := repo.run("check commit exists", nil,
+		"rev-parse", "--verify", "--quiet", commit+"^{commit}")
+	if err == nil {
+		return true, nil
+	}
+	var commandErr *CommandError
+	if errors.As(err, &commandErr) && commandErr.ExitCode == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
 // NoteCommits returns commits carrying notes in ref.
 func (repo *Repo) NoteCommits(ref string) ([]string, error) {
 	if err := validateNoteRef(ref); err != nil {

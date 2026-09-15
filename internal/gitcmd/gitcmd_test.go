@@ -796,6 +796,45 @@ func TestCommitAuthorReadsNameAndEmail(t *testing.T) {
 	}
 }
 
+func TestAnyBranchContains(t *testing.T) {
+	t.Parallel()
+	root := initRepository(t)
+	writeFile(t, root, "one.txt", "one\n")
+	first := commitAll(t, root, "first")
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := repo.AnyBranchContains(first); err != nil || !ok {
+		t.Fatalf("AnyBranchContains(main commit) = %v, %v", ok, err)
+	}
+	runGit(t, root, "checkout", "-q", "-b", "feature")
+	writeFile(t, root, "two.txt", "two\n")
+	second := commitAll(t, root, "second")
+	runGit(t, root, "checkout", "-q", "main")
+	if ok, err := repo.AnyBranchContains(second); err != nil || !ok {
+		t.Fatalf("AnyBranchContains(feature commit) = %v, %v", ok, err)
+	}
+	runGit(t, root, "branch", "-q", "-D", "feature")
+	if ok, err := repo.AnyBranchContains(second); err != nil || ok {
+		t.Fatalf("AnyBranchContains(deleted branch commit) = %v, %v", ok, err)
+	}
+	runGit(t, root, "update-ref", "refs/remotes/origin/kept", second)
+	if ok, err := repo.AnyBranchContains(second); err != nil || !ok {
+		t.Fatalf("AnyBranchContains(remote-tracking commit) = %v, %v", ok, err)
+	}
+	runGit(t, root, "update-ref", "-d", "refs/remotes/origin/kept")
+	if ok, err := repo.AnyBranchContains(second); err != nil || ok {
+		t.Fatalf("AnyBranchContains(after remote delete) = %v, %v", ok, err)
+	}
+	if ok, err := repo.AnyBranchContains("0000000000000000000000000000000000000001"); err != nil || ok {
+		t.Fatalf("AnyBranchContains(missing object) = %v, %v", ok, err)
+	}
+	if _, err := repo.AnyBranchContains("-"); err == nil {
+		t.Fatal("AnyBranchContains accepted a revision that starts with '-'")
+	}
+}
+
 func initRepository(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

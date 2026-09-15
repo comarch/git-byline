@@ -410,9 +410,13 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 		warnings = append(warnings, "initializing attribution on a repository with existing history")
 	}
 
-	active, carry, lastSeq, err := selectRecords(records, state.LastCheckpointSeq, parent, head)
+	branchReachable := cachedReachable(repo)
+	active, carry, lastSeq, dropped, err := selectRecords(records, state.LastCheckpointSeq, parent, head, branchReachable)
 	if err != nil {
 		return AnnotateResult{}, err
+	}
+	if dropped > 0 {
+		warnings = append(warnings, fmt.Sprintf("dropped %d stranded checkpoints with bases no branch can reach", dropped))
 	}
 	changes, err := repo.Changes(head, parent)
 	if err != nil {
@@ -582,11 +586,12 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	}, nil
 }
 
-func selectRecords(records []model.Checkpoint, consumed uint64, base, head string) ([]model.Checkpoint, []model.Checkpoint, uint64, error) {
+func selectRecords(records []model.Checkpoint, consumed uint64, base, head string, reachable func(string) (bool, error)) ([]model.Checkpoint, []model.Checkpoint, uint64, int, error) {
 	last := consumed
 	var active []model.Checkpoint
 	var carry []model.Checkpoint
 	carryStarted := false
+	dropped := 0
 	for _, record := range records {
 		if record.Seq <= consumed {
 			continue
@@ -594,18 +599,45 @@ func selectRecords(records []model.Checkpoint, consumed uint64, base, head strin
 		switch record.BaseCommit {
 		case base:
 			if carryStarted {
-				return nil, nil, consumed, fmt.Errorf("checkpoint %d for parent appears after a HEAD checkpoint", record.Seq)
+				return nil, nil, consumed, 0, fmt.Errorf("checkpoint %d for parent appears after a HEAD checkpoint", record.Seq)
 			}
 			active = append(active, record)
 		case head:
 			carryStarted = true
 			carry = append(carry, record)
 		default:
-			return nil, nil, consumed, fmt.Errorf("checkpoint %d belongs to unrelated base commit %q", record.Seq, record.BaseCommit)
+			// A deleted branch after a squash or rebase merge strands its
+			// evidence. Nothing can ever consume it again, so drop it once
+			// no branch can still reach the base; fail closed otherwise.
+			alive, err := reachable(record.BaseCommit)
+			if err != nil {
+				return nil, nil, consumed, 0, fmt.Errorf("check checkpoint %d base reachability: %w", record.Seq, err)
+			}
+			if alive {
+				return nil, nil, consumed, 0, fmt.Errorf("checkpoint %d belongs to unrelated base commit %q", record.Seq, record.BaseCommit)
+			}
+			dropped++
 		}
 		last = record.Seq
 	}
-	return active, carry, last, nil
+	return active, carry, last, dropped, nil
+}
+
+// cachedReachable memoizes branch containment per base commit so a large
+// stranded log costs one Git call per distinct base.
+func cachedReachable(repo *gitcmd.Repo) func(string) (bool, error) {
+	cache := map[string]bool{}
+	return func(commit string) (bool, error) {
+		if value, ok := cache[commit]; ok {
+			return value, nil
+		}
+		value, err := repo.AnyBranchContains(commit)
+		if err != nil {
+			return false, err
+		}
+		cache[commit] = value
+		return value, nil
+	}
 }
 
 func collectPaths(records []model.Checkpoint, state model.State, changes map[string]gitcmd.Change) []string {
