@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/comarch/git-byline/compare/v1.1.1...v1.1.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **gitcmd:** resolve worktree path aliases ([#26](https://github.com/comarch/git-byline/issues/26)) ([9d6306f](https://github.com/comarch/git-byline/commit/9d6306f98de0637bd039bf01890b89f5a2f05eb5))
+
 ## [1.1.1](https://github.com/comarch/git-byline/compare/v1.1.0...v1.1.1) (2026-09-15)
 
 
