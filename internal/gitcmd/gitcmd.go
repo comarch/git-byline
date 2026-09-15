@@ -773,13 +773,44 @@ func (repo *Repo) NormalizeWorktreePath(path string) (string, error) {
 	}
 	native := filepath.FromSlash(path)
 	if filepath.IsAbs(native) {
-		relative, err := filepath.Rel(repo.Root, filepath.Clean(native))
+		resolved, err := resolvePathAliases(filepath.Clean(native))
+		if err != nil {
+			return "", fmt.Errorf("resolve absolute path: %w", err)
+		}
+		relative, err := filepath.Rel(repo.Root, resolved)
 		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			return "", errors.New("absolute path escapes the worktree")
 		}
 		path = filepath.ToSlash(relative)
 	}
 	return NormalizePath(path)
+}
+
+func resolvePathAliases(path string) (string, error) {
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return resolved, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if _, statErr := os.Lstat(path); statErr == nil {
+			return "", err
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return "", statErr
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(path))
+		path = parent
+	}
 }
 
 // CwdRelative rewrites a repository-relative path against the current

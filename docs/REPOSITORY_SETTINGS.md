@@ -72,7 +72,9 @@ pull request prove that exact check always reports a conclusion.
 ## Release
 
 - Create protected `release` environment.
-- Require maintainer approval for publication.
+- Restrict deployments to version tags matching `v*`.
+- Do not require reviewer approval; merging the release pull request authorizes
+  unattended publication.
 - Add repository-scoped `RELEASE_PAT`.
 - Keep `GITHUB_TOKEN` as the artifact publishing token.
 - Add a second recovery owner for release settings and private advisories.
@@ -105,4 +107,5 @@ documentation
 6. Confirm it receives no write token or release credential.
 7. Confirm every required check concludes.
 8. Test Release Please without publishing.
-9. Verify release environment blocks unapproved publication.
+9. Verify the release environment accepts only version tags and starts
+   publication without approval.

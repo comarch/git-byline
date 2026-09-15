@@ -24,8 +24,8 @@ The repository starts at checks-only automation:
 - Humans merge release pull requests.
 - Merging a release pull request authorizes Release Please to create the tag
   and GitHub release.
-- The protected `release` environment separately gates binary, checksum, and
-  SBOM upload.
+- The protected `release` environment restricts binary, checksum, and SBOM
+  upload to version tags without requiring separate approval.
 
 Enable dependency auto-merge only after a real non-major update proves all
 required checks and rollback. Enable release pull request auto-merge only after
@@ -34,7 +34,8 @@ one successful manual release.
 ## Required configuration
 
 - `RELEASE_PAT`: repository-scoped GitHub App or dedicated bot token.
-- `release` environment: artifact upload protection and required reviewer.
+- `release` environment: artifact upload restricted to version tags, without
+  required reviewers.
 - Branch rules from [REPOSITORY_SETTINGS.md](REPOSITORY_SETTINGS.md).
 
 Release Please can be disabled by removing the repository secret or disabling
@@ -48,12 +49,12 @@ to stop all release publication.
 2. Confirm all required checks pass.
 3. Review and merge the Release Please pull request.
 4. Confirm the generated tag points to the expected commit.
-5. Approve the protected release environment.
-6. Let `release.yml` build from the exact tag.
-7. Verify six archives, six SBOM files, and `checksums.txt`.
-8. Install one artifact per supported operating system.
-9. Run `git-byline version` and compare it with the tag.
-10. Review release notes and publish state.
+5. Confirm `release.yml` starts without environment approval and builds from
+   the exact tag.
+6. Verify six archives, six SBOM files, and `checksums.txt`.
+7. Install one artifact per supported operating system.
+8. Run `git-byline version` and compare it with the tag.
+9. Review release notes and publish state.
 
 If the tag event does not start publication, dispatch `release.yml` manually
 with the existing tag. The workflow validates the tag and checks out that exact

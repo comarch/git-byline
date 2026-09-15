@@ -510,6 +510,7 @@ func TestWorktreePathSafety(t *testing.T) {
 	if _, err := repo.NormalizeWorktreePath(filepath.Join(root, "file.go")); err != nil {
 		t.Fatalf("NormalizeWorktreePath absolute: %v", err)
 	}
+	testWorktreePathAliases(t, repo, root)
 	for _, path := range []string{"", "../outside", ".git/config", ".GIT/config", "dir/.git/config", "/outside", "bad\npath", "bad\x1bpath"} {
 		if _, err := repo.NormalizeWorktreePath(path); err == nil {
 			t.Fatalf("NormalizeWorktreePath accepted %q", path)
@@ -535,6 +536,62 @@ func TestWorktreePathSafety(t *testing.T) {
 	}
 	if _, err := repo.Parent("bad"); err == nil {
 		t.Fatal("Parent accepted invalid object ID")
+	}
+}
+
+func testWorktreePathAliases(t *testing.T, repo *Repo, root string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	alias := filepath.Join(t.TempDir(), "repo")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, "aliased.txt", "content\n")
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"existing file", filepath.Join(alias, "aliased.txt"), "aliased.txt"},
+		{"missing parent", filepath.Join(alias, "new", "file.txt"), "new/file.txt"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			normalized, err := repo.NormalizeWorktreePath(test.path)
+			if err != nil || normalized != test.want {
+				t.Fatalf("NormalizeWorktreePath(%q) = %q, %v; want %q", test.path, normalized, err, test.want)
+			}
+		})
+	}
+	data, exists, normalized, err := repo.WorktreeFile(filepath.Join(alias, "aliased.txt"))
+	if err != nil || !exists || normalized != "aliased.txt" || string(data) != "content\n" {
+		t.Fatalf("WorktreeFile(alias) = %q, %t, %q, %v", data, exists, normalized, err)
+	}
+	outside := t.TempDir()
+	writeFile(t, outside, "outside.txt", "outside\n")
+	if err := os.Symlink(outside, filepath.Join(root, "alias-escape")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		filepath.Join(alias, "alias-escape", "outside.txt"),
+		filepath.Join(alias, "alias-escape", "missing.txt"),
+	} {
+		if _, err := repo.NormalizeWorktreePath(path); err == nil {
+			t.Fatalf("NormalizeWorktreePath accepted escaping alias %q", path)
+		}
+	}
+	danglingEscape := filepath.Join(root, "dangling-escape")
+	if err := os.Symlink(filepath.Join(outside, "missing"), danglingEscape); err != nil {
+		t.Fatal(err)
+	}
+	danglingPath := filepath.Join(alias, "dangling-escape", "file.txt")
+	if _, err := repo.NormalizeWorktreePath(danglingPath); err == nil {
+		t.Fatalf("NormalizeWorktreePath accepted dangling escape %q", danglingPath)
+	}
+	if _, _, _, err := repo.WorktreeFile(danglingPath); err == nil {
+		t.Fatalf("WorktreeFile accepted dangling escape %q", danglingPath)
 	}
 }
 
