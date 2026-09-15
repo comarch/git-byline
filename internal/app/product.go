@@ -281,9 +281,11 @@ func runAnnotate(env *Env, command *command, args []string) (int, error) {
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
-	result, err := provenance.Annotate(repo, provenance.AnnotateOptions{
-		DropStranded: *dropStranded,
-	})
+	annotate := provenance.Annotate
+	if *dropStranded {
+		annotate = provenance.AnnotateDroppingStranded
+	}
+	result, err := annotate(repo)
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}

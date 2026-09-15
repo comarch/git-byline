@@ -2,7 +2,6 @@ package provenance
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1290,67 +1289,48 @@ func TestAnnotateKeepsMergedContentUntrackedAcrossCommits(t *testing.T) {
 	}
 }
 
-func TestSelectRecordsDropsUnreachableUnrelatedBases(t *testing.T) {
+func TestSelectRecords(t *testing.T) {
 	t.Parallel()
 	record := func(seq uint64, base string) model.Checkpoint {
 		return model.Checkpoint{Seq: seq, BaseCommit: base, Files: []model.Snapshot{}}
 	}
 	tests := []struct {
-		name      string
-		records   []model.Checkpoint
-		reachable func(string) (bool, error)
-		errText   string
-		active    int
-		carry     int
-		dropped   int
-		last      uint64
+		name     string
+		records  []model.Checkpoint
+		consumed uint64
+		errText  string
+		active   int
+		carry    int
+		last     uint64
 	}{
 		{
-			name:      "drops unreachable base",
-			records:   []model.Checkpoint{record(1, "dead")},
-			reachable: func(string) (bool, error) { return false, nil },
-			dropped:   1,
-			last:      1,
+			name:     "skips consumed records",
+			records:  []model.Checkpoint{record(1, "other")},
+			consumed: 1,
+			last:     1,
 		},
 		{
-			name:      "live unrelated base fails closed",
-			records:   []model.Checkpoint{record(1, "other")},
-			reachable: func(string) (bool, error) { return true, nil },
-			errText:   "unrelated base commit",
+			name:    "selects parent and head records",
+			records: []model.Checkpoint{record(1, "parent"), record(2, "head")},
+			active:  1,
+			carry:   1,
+			last:    2,
 		},
 		{
-			name:    "strict mode fails closed",
+			name:    "unrelated base fails closed",
 			records: []model.Checkpoint{record(1, "other")},
 			errText: "unrelated base commit",
 		},
 		{
-			name:      "reachability error propagates",
-			records:   []model.Checkpoint{record(1, "other")},
-			reachable: func(string) (bool, error) { return false, errors.New("probe failed") },
-			errText:   "probe failed",
-		},
-		{
-			name:    "mixes active carry and dropped",
-			records: []model.Checkpoint{record(1, "parent"), record(2, "dead"), record(3, "head")},
-			reachable: func(string) (bool, error) {
-				return false, nil
-			},
-			active:  1,
-			carry:   1,
-			dropped: 1,
-			last:    3,
-		},
-		{
-			name:      "parent after carry fails closed",
-			records:   []model.Checkpoint{record(1, "head"), record(2, "parent")},
-			reachable: func(string) (bool, error) { return true, nil },
-			errText:   "appears after a HEAD checkpoint",
+			name:    "parent after carry fails closed",
+			records: []model.Checkpoint{record(1, "head"), record(2, "parent")},
+			errText: "appears after a HEAD checkpoint",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			active, carry, last, dropped, err := selectRecords(test.records, 0, "parent", "head", test.reachable)
+			active, carry, last, err := selectRecords(test.records, test.consumed, "parent", "head")
 			if test.errText != "" {
 				if err == nil || !strings.Contains(err.Error(), test.errText) {
 					t.Fatalf("selectRecords error = %v, want %q", err, test.errText)
@@ -1360,9 +1340,9 @@ func TestSelectRecordsDropsUnreachableUnrelatedBases(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(active) != test.active || len(carry) != test.carry || dropped != test.dropped || last != test.last {
-				t.Fatalf("selectRecords = %d active, %d carry, %d dropped, last %d; want %d, %d, %d, %d",
-					len(active), len(carry), dropped, last, test.active, test.carry, test.dropped, test.last)
+			if len(active) != test.active || len(carry) != test.carry || last != test.last {
+				t.Fatalf("selectRecords = %d active, %d carry, last %d; want %d, %d, %d",
+					len(active), len(carry), last, test.active, test.carry, test.last)
 			}
 		})
 	}
@@ -1382,7 +1362,7 @@ func testAnnotateDropsStrandedBranchEvidence(t *testing.T) {
 		t.Fatalf("strict Annotate error = %v, want unrelated base commit failure", err)
 	}
 	assertLastCheckpointSeq(t, repo, 0)
-	result, err := Annotate(repo, AnnotateOptions{DropStranded: true})
+	result, err := AnnotateDroppingStranded(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1391,7 +1371,14 @@ func testAnnotateDropsStrandedBranchEvidence(t *testing.T) {
 	}
 	for _, warning := range result.Warnings {
 		if strings.Contains(warning, "dropped 1 stranded checkpoints") {
-			assertLastCheckpointSeq(t, repo, 1)
+			assertLastCheckpointSeq(t, repo, 0)
+			records, _, err := store.New(repo.GitDir).ReadCheckpoints()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(records) != 0 {
+				t.Fatalf("checkpoint records = %d, want 0", len(records))
+			}
 			return
 		}
 	}
@@ -1402,7 +1389,7 @@ func testAnnotateFailsClosedWithReachableBase(t *testing.T) {
 	repo, root := setupStrandedBranchEvidence(t, false)
 	write(t, root, "file.txt", "base\nmainline\n")
 	commit(t, root, "mainline")
-	_, err := Annotate(repo, AnnotateOptions{DropStranded: true})
+	_, err := AnnotateDroppingStranded(repo)
 	if err == nil || !strings.Contains(err.Error(), "unrelated base commit") {
 		t.Fatalf("Annotate error = %v, want unrelated base commit failure", err)
 	}

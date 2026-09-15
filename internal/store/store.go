@@ -42,6 +42,54 @@ func (store Store) CheckpointPath() string {
 	return filepath.Join(store.Dir, "checkpoints.jsonl")
 }
 
+// DropCheckpointRecords atomically removes current-version records by
+// sequence while preserving unknown versions and a truncated final line.
+func (store Store) DropCheckpointRecords(sequences map[uint64]bool) (int, error) {
+	if len(sequences) == 0 {
+		return 0, nil
+	}
+	if _, _, err := store.ReadCheckpoints(); err != nil {
+		return 0, err
+	}
+	data, err := os.ReadFile(store.CheckpointPath())
+	if err != nil {
+		return 0, fmt.Errorf("read checkpoint log for rewrite: %w", err)
+	}
+	reader := bufio.NewReaderSize(bytes.NewReader(data), checkpointBufferBytes)
+	var kept bytes.Buffer
+	dropped := 0
+	for {
+		raw, readErr := readCheckpointLine(reader)
+		if len(raw) == 0 && errors.Is(readErr, io.EOF) {
+			break
+		}
+		var header struct {
+			Version int    `json:"version"`
+			Seq     uint64 `json:"seq"`
+		}
+		if err := json.Unmarshal(bytes.TrimSuffix(raw, []byte{'\n'}), &header); err != nil {
+			kept.Write(raw)
+		} else if header.Version == model.CheckpointVersion && sequences[header.Seq] {
+			dropped++
+		} else {
+			kept.Write(raw)
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return 0, fmt.Errorf("read checkpoint log for rewrite: %w", readErr)
+		}
+	}
+	if dropped == 0 {
+		return 0, nil
+	}
+	if err := writeAtomicFile(store.Dir, store.CheckpointPath(), "checkpoints-*.tmp", "checkpoint log", kept.Bytes()); err != nil {
+		return 0, err
+	}
+	return dropped, nil
+}
+
 // StatePath returns the state file path.
 func (store Store) StatePath() string {
 	return filepath.Join(store.Dir, "state.json")
@@ -431,32 +479,36 @@ func (store Store) WriteState(state model.State) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(store.Dir, 0o700); err != nil {
+	return writeAtomicFile(store.Dir, store.StatePath(), "state-*.tmp", "state", data)
+}
+
+func writeAtomicFile(dir, path, pattern, kind string, data []byte) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create store directory: %w", err)
 	}
-	tmp, err := os.CreateTemp(store.Dir, "state-*.tmp")
+	tmp, err := os.CreateTemp(dir, pattern)
 	if err != nil {
-		return fmt.Errorf("create state temp file: %w", err)
+		return fmt.Errorf("create %s temp file: %w", kind, err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
-		return fmt.Errorf("chmod state temp file: %w", err)
+		return fmt.Errorf("chmod %s temp file: %w", kind, err)
 	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
-		return fmt.Errorf("write state temp file: %w", err)
+		return fmt.Errorf("write %s temp file: %w", kind, err)
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
-		return fmt.Errorf("sync state temp file: %w", err)
+		return fmt.Errorf("sync %s temp file: %w", kind, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close state temp file: %w", err)
+		return fmt.Errorf("close %s temp file: %w", kind, err)
 	}
-	if err := os.Rename(tmpName, store.StatePath()); err != nil {
-		return fmt.Errorf("replace state: %w", err)
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("replace %s: %w", kind, err)
 	}
 	return nil
 }
