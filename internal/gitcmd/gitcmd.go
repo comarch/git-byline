@@ -551,7 +551,9 @@ func (repo *Repo) MergeBase(a, b string) (string, error) {
 
 // AnyBranchContains reports whether a local or remote-tracking branch can
 // still reach commit. A base commit whose object is gone counts as
-// uncontained because nothing can ever reach it again.
+// uncontained because nothing can ever reach it again. An object that exists
+// but cannot be read reports the failure instead, so callers never treat a
+// damaged object database as proof of unreachability.
 func (repo *Repo) AnyBranchContains(commit string) (bool, error) {
 	if err := validateRevision(commit, "revision"); err != nil {
 		return false, err
@@ -569,7 +571,10 @@ func (repo *Repo) AnyBranchContains(commit string) (bool, error) {
 }
 
 // commitExistsQuiet reports whether commit resolves to an existing commit
-// object. Missing objects report false without an error.
+// object. A cleanly missing object reports false without an error, while an
+// object that exists but cannot be read reports the failure. Git exits 1 with
+// empty stderr for both cases, so fsck confirms a healthy object database
+// before the missing one is accepted.
 func (repo *Repo) commitExistsQuiet(commit string) (bool, error) {
 	if err := validateRevision(commit, "revision"); err != nil {
 		return false, err
@@ -580,7 +585,18 @@ func (repo *Repo) commitExistsQuiet(commit string) (bool, error) {
 		return true, nil
 	}
 	var commandErr *CommandError
-	if errors.As(err, &commandErr) && commandErr.ExitCode == 1 {
+	if errors.As(err, &commandErr) && commandErr.ExitCode == 1 &&
+		strings.TrimSpace(commandErr.Stderr) == "" {
+		if _, fsckErr := repo.run(
+			"check object database",
+			nil,
+			"fsck",
+			"--full",
+			"--no-reflogs",
+			"--no-dangling",
+		); fsckErr != nil {
+			return false, fmt.Errorf("verify object database: %w", fsckErr)
+		}
 		return false, nil
 	}
 	return false, err

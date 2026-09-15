@@ -892,6 +892,66 @@ func TestAnyBranchContains(t *testing.T) {
 	}
 }
 
+func TestAnyBranchContainsReportsUnreadableObject(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("unreadable objects need a non-root POSIX user")
+	}
+	for _, test := range []struct {
+		name   string
+		suffix string
+	}{
+		{name: "loose commit object"},
+		{name: "packed object", suffix: ".pack"},
+		{name: "packed index", suffix: ".idx"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := initRepository(t)
+			writeFile(t, root, "one.txt", "one\n")
+			first := commitAll(t, root, "first")
+			repo, err := Discover(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var object string
+			if test.suffix == "" {
+				object = filepath.Join(root, ".git", "objects", first[:2], first[2:])
+				if _, err := os.Stat(object); err != nil {
+					t.Skipf("loose object unavailable: %v", err)
+				}
+			} else {
+				runGit(t, root, "repack", "-ad")
+				objects, err := filepath.Glob(filepath.Join(root, ".git", "objects", "pack", "pack-*"+test.suffix))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(objects) != 1 {
+					t.Fatalf("generated %s files = %v, want one", test.suffix, objects)
+				}
+				object = objects[0]
+			}
+
+			info, err := os.Stat(object)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mode := info.Mode().Perm()
+			if err := os.Chmod(object, 0o000); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chmod(object, mode); err != nil {
+					t.Errorf("restore permissions for %s: %v", object, err)
+				}
+			})
+			if ok, err := repo.AnyBranchContains(first); err == nil || ok {
+				t.Fatalf("AnyBranchContains(%s) = %v, %v, want false and an error", test.name, ok, err)
+			}
+		})
+	}
+}
+
 func initRepository(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
