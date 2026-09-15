@@ -79,3 +79,50 @@ func TestRepoRoot(t *testing.T) {
 		t.Errorf("repository root %s has no tools/validate: %v", root, err)
 	}
 }
+
+// TestSelectStages pins the -stages filter: the pipeline order must be
+// preserved, and unknown or empty names must fail so typos cannot
+// silently skip stages.
+func TestSelectStages(t *testing.T) {
+	t.Parallel()
+	pipeline := []stage{
+		{"gofmt", func(string) error { return nil }},
+		{"vet", func(string) error { return nil }},
+		{"coverage", func(string) error { return nil }},
+	}
+	cases := []struct {
+		name    string
+		spec    string
+		want    []string
+		wantErr bool
+	}{
+		{name: "empty spec keeps all stages", spec: "", want: []string{"gofmt", "vet", "coverage"}},
+		{name: "subset keeps pipeline order", spec: "coverage,gofmt", want: []string{"gofmt", "coverage"}},
+		{name: "whitespace is trimmed", spec: " gofmt , vet ", want: []string{"gofmt", "vet"}},
+		{name: "duplicate names collapse", spec: "vet,vet", want: []string{"vet"}},
+		{name: "unknown stage", spec: "no-such-stage", wantErr: true},
+		{name: "empty stage name", spec: "gofmt,,vet", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			selected, err := selectStages(pipeline, tc.spec)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("selectStages(%q) = nil error, want failure", tc.spec)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("selectStages(%q) = %v", tc.spec, err)
+			}
+			var names []string
+			for _, s := range selected {
+				names = append(names, s.name)
+			}
+			if strings.Join(names, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("selectStages(%q) = %v, want %v", tc.spec, names, tc.want)
+			}
+		})
+	}
+}
