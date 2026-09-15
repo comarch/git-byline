@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/comarch/git-byline/compare/v1.1.0...v1.1.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* **provenance:** add explicit stranded checkpoint recovery ([#24](https://github.com/comarch/git-byline/issues/24)) ([caa1b5e](https://github.com/comarch/git-byline/commit/caa1b5edc00326e5405048dabe8407076c7de241))
+
 ## [1.1.0](https://github.com/comarch/git-byline/compare/v1.0.1...v1.1.0) (2026-09-15)
 
 
