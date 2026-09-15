@@ -1208,52 +1208,56 @@ func TestReferenceTransactionKeepsPendingAcrossOrdinaryCommit(t *testing.T) {
 	for _, shape := range shapes {
 		t.Run(shape.name, func(t *testing.T) {
 			t.Parallel()
-			root := testRepo(t)
-			write(t, root, "base.txt", "base\n")
-			first := commit(t, root, "base")
-			repo, err := gitcmd.Discover(root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := Annotate(repo); err != nil {
-				t.Fatal(err)
-			}
-			// Partial commit: p1 is committed, p2 stays excluded with AI evidence.
-			write(t, root, "p1.txt", "p1\n")
-			write(t, root, "p2.txt", "p2\n")
-			now := time.Now()
-			if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p1.txt"}}, now); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p2.txt"}}, now.Add(time.Second)); err != nil {
-				t.Fatal(err)
-			}
-			git(t, root, "add", "p1.txt")
-			git(t, root, "commit", "-m", "only p1")
-			second := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
-			if _, err := HandleReferenceTransaction(repo, strings.NewReader(shape.input(first, second)), "committed"); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := Annotate(repo); err != nil {
-				t.Fatal(err)
-			}
-			git(t, root, "add", "p2.txt")
-			git(t, root, "commit", "-m", "p2 now")
-			third := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
-			if _, err := HandleReferenceTransaction(repo, strings.NewReader(shape.input(second, third)), "committed"); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := Annotate(repo); err != nil {
-				t.Fatal(err)
-			}
-			after, err := Blame(repo, "p2.txt")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(after.Lines) != 1 || after.Lines[0].Attribution.Author != model.AuthorAI {
-				t.Fatalf("p2 attribution after second commit = %+v, want ai", after.Lines)
-			}
+			checkPendingKeptAcrossCommit(t, shape.input)
 		})
+	}
+}
+
+func checkPendingKeptAcrossCommit(t *testing.T, input func(old, new string) string) {
+	root := testRepo(t)
+	write(t, root, "base.txt", "base\n")
+	first := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	// Partial commit: p1 is committed, p2 stays excluded with AI evidence.
+	write(t, root, "p1.txt", "p1\n")
+	write(t, root, "p2.txt", "p2\n")
+	now := time.Now()
+	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p1.txt"}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Capture(repo, preset.Event{Type: model.AuthorAI, Agent: "claude", Model: "m1", Session: "s1", Paths: []string{"p2.txt"}}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "add", "p1.txt")
+	git(t, root, "commit", "-m", "only p1")
+	second := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input(first, second)), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "add", "p2.txt")
+	git(t, root, "commit", "-m", "p2 now")
+	third := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input(second, third)), "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Blame(repo, "p2.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Lines) != 1 || after.Lines[0].Attribution.Author != model.AuthorAI {
+		t.Fatalf("p2 attribution after second commit = %+v, want ai", after.Lines)
 	}
 }
 
