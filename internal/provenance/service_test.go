@@ -1363,88 +1363,105 @@ func TestSelectRecordsDropsUnreachableUnrelatedBases(t *testing.T) {
 	}
 }
 
-func TestAnnotateDropsStrandedBranchEvidence(t *testing.T) {
+func TestAnnotateHandlesStrandedBranchEvidence(t *testing.T) {
 	t.Parallel()
-	root := testRepo(t)
-	write(t, root, "file.txt", "base\n")
-	commit(t, root, "base")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name        string
+		keepBranch  bool
+		recheck     bool
+		wantErr     string
+		wantWarning bool
+		wantSeq     uint64
+	}{
+		{
+			name:        "drops evidence after branch deletion",
+			wantWarning: true,
+			wantSeq:     1,
+		},
+		{
+			name:       "fails closed while branch reaches base",
+			keepBranch: true,
+			wantErr:    "unrelated base commit",
+		},
+		{
+			name:    "fails when branch appears before persistence",
+			recheck: true,
+		},
 	}
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
-	// Branch work records evidence based on the branch tip.
-	git(t, root, "checkout", "-b", "feature")
-	write(t, root, "file.txt", "base\nfeature\n")
-	commit(t, root, "feature")
-	human := preset.Event{Type: model.AuthorHuman, Paths: []string{"file.txt"}}
-	if _, err := Capture(repo, human, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)); err != nil {
-		t.Fatal(err)
-	}
-	// A squash merge replaces the branch: delete it and land other content.
-	git(t, root, "checkout", "main")
-	git(t, root, "branch", "-D", "feature")
-	write(t, root, "file.txt", "base\nmainline\n")
-	commit(t, root, "mainline")
-	result, err := Annotate(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Files != 1 {
-		t.Fatalf("Annotate files = %d, want 1", result.Files)
-	}
-	found := false
-	for _, warning := range result.Warnings {
-		if strings.Contains(warning, "dropped 1 stranded checkpoints") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("Annotate warnings = %v, want dropped stranded checkpoint warning", result.Warnings)
-	}
-	state, err := store.New(repo.GitDir).ReadState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.LastCheckpointSeq != 1 {
-		t.Fatalf("LastCheckpointSeq = %d, want 1", state.LastCheckpointSeq)
-	}
-}
-
-func TestAnnotateFailsClosedWhileBranchReachesStrandedBase(t *testing.T) {
-	t.Parallel()
-	root := testRepo(t)
-	write(t, root, "file.txt", "base\n")
-	commit(t, root, "base")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
-	git(t, root, "checkout", "-b", "feature")
-	write(t, root, "file.txt", "base\nfeature\n")
-	commit(t, root, "feature")
-	human := preset.Event{Type: model.AuthorHuman, Paths: []string{"file.txt"}}
-	if _, err := Capture(repo, human, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)); err != nil {
-		t.Fatal(err)
-	}
-	git(t, root, "checkout", "main")
-	write(t, root, "file.txt", "base\nmainline\n")
-	commit(t, root, "mainline")
-	_, err = Annotate(repo)
-	if err == nil || !strings.Contains(err.Error(), "unrelated base commit") {
-		t.Fatalf("Annotate error = %v, want unrelated base commit failure", err)
-	}
-	state, err := store.New(repo.GitDir).ReadState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.LastCheckpointSeq != 0 {
-		t.Fatalf("LastCheckpointSeq = %d, want 0 while failing closed", state.LastCheckpointSeq)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := testRepo(t)
+			write(t, root, "file.txt", "base\n")
+			commit(t, root, "base")
+			repo, err := gitcmd.Discover(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Annotate(repo); err != nil {
+				t.Fatal(err)
+			}
+			git(t, root, "checkout", "-b", "feature")
+			write(t, root, "file.txt", "base\nfeature\n")
+			feature := commit(t, root, "feature")
+			human := preset.Event{Type: model.AuthorHuman, Paths: []string{"file.txt"}}
+			if _, err := Capture(repo, human, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)); err != nil {
+				t.Fatal(err)
+			}
+			git(t, root, "checkout", "main")
+			if !test.keepBranch {
+				git(t, root, "branch", "-D", "feature")
+			}
+			if test.recheck {
+				checker := newBranchReachability(repo)
+				reachable, err := checker.cached(feature)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if reachable {
+					t.Fatal("feature base is reachable after branch deletion")
+				}
+				if err := checker.recheckDropped(); err != nil {
+					t.Fatalf("recheckDropped before ref change: %v", err)
+				}
+				git(t, root, "branch", "restored", feature)
+				if err := checker.recheckDropped(); err == nil || !strings.Contains(err.Error(), "became reachable") {
+					t.Fatalf("recheckDropped after ref change = %v, want reachable error", err)
+				}
+				return
+			}
+			write(t, root, "file.txt", "base\nmainline\n")
+			commit(t, root, "mainline")
+			result, err := Annotate(repo)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("Annotate error = %v, want %q", err, test.wantErr)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if result.Files != 1 {
+					t.Fatalf("Annotate files = %d, want 1", result.Files)
+				}
+				found := false
+				for _, warning := range result.Warnings {
+					if strings.Contains(warning, "dropped 1 stranded checkpoints") {
+						found = true
+					}
+				}
+				if found != test.wantWarning {
+					t.Fatalf("Annotate warnings = %v, want dropped warning %v", result.Warnings, test.wantWarning)
+				}
+			}
+			state, err := store.New(repo.GitDir).ReadState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.LastCheckpointSeq != test.wantSeq {
+				t.Fatalf("LastCheckpointSeq = %d, want %d", state.LastCheckpointSeq, test.wantSeq)
+			}
+		})
 	}
 }
 
