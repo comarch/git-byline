@@ -572,8 +572,9 @@ func (repo *Repo) AnyBranchContains(commit string) (bool, error) {
 
 // commitExistsQuiet reports whether commit resolves to an existing commit
 // object. A cleanly missing object reports false without an error, while an
-// object that exists but cannot be read reports the failure. Git exits 1 for
-// both cases and only stays silent for the missing one.
+// object that exists but cannot be read reports the failure. Git exits 1 with
+// empty stderr for both cases, so fsck confirms a healthy object database
+// before the missing one is accepted.
 func (repo *Repo) commitExistsQuiet(commit string) (bool, error) {
 	if err := validateRevision(commit, "revision"); err != nil {
 		return false, err
@@ -586,6 +587,16 @@ func (repo *Repo) commitExistsQuiet(commit string) (bool, error) {
 	var commandErr *CommandError
 	if errors.As(err, &commandErr) && commandErr.ExitCode == 1 &&
 		strings.TrimSpace(commandErr.Stderr) == "" {
+		if _, fsckErr := repo.run(
+			"check object database",
+			nil,
+			"fsck",
+			"--full",
+			"--no-reflogs",
+			"--no-dangling",
+		); fsckErr != nil {
+			return false, fmt.Errorf("verify object database: %w", fsckErr)
+		}
 		return false, nil
 	}
 	return false, err
