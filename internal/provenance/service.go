@@ -345,12 +345,8 @@ type AnnotateOptions struct {
 type sessionMetrics map[string]*model.NoteSession
 
 // Annotate writes deterministic attribution for HEAD.
-func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
-	return AnnotateWithOptions(repo, AnnotateOptions{})
-}
-
-// AnnotateWithOptions writes deterministic attribution for HEAD.
-func AnnotateWithOptions(repo *gitcmd.Repo, options AnnotateOptions) (AnnotateResult, error) {
+func Annotate(repo *gitcmd.Repo, values ...AnnotateOptions) (AnnotateResult, error) {
+	options := firstAnnotateOptions(values)
 	dataStore := store.New(repo.GitDir)
 	commonLock, err := lock.Acquire(filepath.Join(repo.CommonDir, "byline", "notes.lock"), lockTimeout)
 	if err != nil {
@@ -603,6 +599,13 @@ func AnnotateWithOptions(repo *gitcmd.Repo, options AnnotateOptions) (AnnotateRe
 		Files:    len(note.Files),
 		Warnings: warnings,
 	}, nil
+}
+
+func firstAnnotateOptions(values []AnnotateOptions) AnnotateOptions {
+	if len(values) == 0 {
+		return AnnotateOptions{}
+	}
+	return values[0]
 }
 
 func selectRecords(records []model.Checkpoint, consumed uint64, base, head string, reachable func(string) (bool, error)) ([]model.Checkpoint, []model.Checkpoint, uint64, int, error) {

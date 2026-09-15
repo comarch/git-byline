@@ -1382,7 +1382,7 @@ func testAnnotateDropsStrandedBranchEvidence(t *testing.T) {
 		t.Fatalf("strict Annotate error = %v, want unrelated base commit failure", err)
 	}
 	assertLastCheckpointSeq(t, repo, 0)
-	result, err := AnnotateWithOptions(repo, AnnotateOptions{DropStranded: true})
+	result, err := Annotate(repo, AnnotateOptions{DropStranded: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1402,7 +1402,7 @@ func testAnnotateFailsClosedWithReachableBase(t *testing.T) {
 	repo, root := setupStrandedBranchEvidence(t, false)
 	write(t, root, "file.txt", "base\nmainline\n")
 	commit(t, root, "mainline")
-	_, err := AnnotateWithOptions(repo, AnnotateOptions{DropStranded: true})
+	_, err := Annotate(repo, AnnotateOptions{DropStranded: true})
 	if err == nil || !strings.Contains(err.Error(), "unrelated base commit") {
 		t.Fatalf("Annotate error = %v, want unrelated base commit failure", err)
 	}
