@@ -2,11 +2,18 @@ package preset
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/comarch/git-byline/internal/model"
 )
+
+type presetReadError struct{}
+
+func (presetReadError) Read([]byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
+}
 
 func TestParseToolHooks(t *testing.T) {
 	t.Parallel()
@@ -96,6 +103,60 @@ func TestParseToolHooks(t *testing.T) {
 				if event.Kind != wantKind || len(event.Paths) != 0 {
 					t.Fatalf("shell event = %+v, want kind %q without paths", event, wantKind)
 				}
+			}
+		})
+	}
+}
+
+func TestParseToolHookValidationBranches(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		payload string
+		handled bool
+		wantErr bool
+	}{
+		{
+			name:    "invalid JSON",
+			payload: `{`,
+			wantErr: true,
+		},
+		{
+			name:    "camel case tool input",
+			payload: `{"toolName":"Edit","toolInput":{"file_path":"camel.go"}}`,
+			handled: true,
+		},
+		{
+			name:    "missing tool input",
+			payload: `{"tool_name":"Edit"}`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid tool input JSON type",
+			payload: `{"tool_name":"Edit","tool_input":"not-an-object"}`,
+			wantErr: true,
+		},
+		{
+			name:    "empty file path",
+			payload: `{"tool_name":"Edit","tool_input":{"file_path":""}}`,
+			wantErr: true,
+		},
+		{
+			name:    "only whitespace file path",
+			payload: `{"tool_name":"Edit","tool_input":{"file_path":"   "}}`,
+			wantErr: true,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, handled, err := Parse("droid", model.AuthorAI, strings.NewReader(test.payload))
+			if (err != nil) != test.wantErr {
+				t.Fatalf("Parse() error = %v, wantErr = %t", err, test.wantErr)
+			}
+			if err == nil && handled != test.handled {
+				t.Fatalf("handled = %t, want %t", handled, test.handled)
 			}
 		})
 	}
@@ -303,6 +364,58 @@ func TestParseAgentV1(t *testing.T) {
 	}
 }
 
+func TestParseAgentV1ValidationBranches(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		payload string
+		wantErr bool
+		check   func(*testing.T, Event)
+	}{
+		{
+			name:    "invalid JSON",
+			payload: `{`,
+			wantErr: true,
+		},
+		{
+			name:    "shell post defaults model",
+			payload: `{"type":"shell_post","agent_name":"agent","conversation_id":"session"}`,
+			check: func(t *testing.T, event Event) {
+				if event.Kind != model.CheckpointKindShellPost || event.Model != FallbackModel {
+					t.Fatalf("event = %+v", event)
+				}
+			},
+		},
+		{
+			name:    "shell post rejects reserved agent separator",
+			payload: `{"type":"shell_post","agent_name":"bad::agent","conversation_id":"session"}`,
+			wantErr: true,
+		},
+		{
+			name:    "edit rejects reserved agent separator",
+			payload: `{"type":"ai_agent","agent_name":"bad::agent","edited_filepaths":["a.go"]}`,
+			wantErr: true,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			event, handled, err := Parse("agent-v1", "", strings.NewReader(test.payload))
+			if (err != nil) != test.wantErr {
+				t.Fatalf("Parse() error = %v, wantErr = %t", err, test.wantErr)
+			}
+			if test.wantErr {
+				return
+			}
+			if err != nil || !handled {
+				t.Fatalf("Parse() = %+v, %t, %v", event, handled, err)
+			}
+			test.check(t, event)
+		})
+	}
+}
+
 func TestParsePortableHooks(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -431,6 +544,72 @@ func TestParsePortableHooks(t *testing.T) {
 	}
 }
 
+func TestParsePortableValidationBranches(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		author  model.Author
+		payload string
+		wantErr bool
+	}{
+		{
+			name:    "encoded argument is malformed JSON",
+			payload: `{"toolArgs":"\""}`,
+			wantErr: true,
+		},
+		{
+			name:    "encoded argument is not an object",
+			payload: `{"toolArgs":"not-json"}`,
+			wantErr: true,
+		},
+		{
+			name:    "non-factory ApplyPatch requires body",
+			payload: `{"toolName":"apply_patch"}`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid model metadata",
+			payload: `{"model":"bad\nmodel","file_path":"a.go"}`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid explicit type",
+			author:  model.Author("other"),
+			payload: `{"file_path":"a.go"}`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid JSON",
+			payload: `{`,
+			wantErr: true,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			author := test.author
+			if author == "" {
+				author = model.AuthorAI
+			}
+			_, _, err := Parse("portable-copilot", author, strings.NewReader(test.payload))
+			if (err != nil) != test.wantErr {
+				t.Fatalf("Parse() error = %v, wantErr = %t", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestOperationHelperFallbacks(t *testing.T) {
+	t.Parallel()
+	if !isShellOperation("custom terminal runner") {
+		t.Fatal("isShellOperation missed a shell substring")
+	}
+	if readOnlyOperation("noop") {
+		t.Fatal("readOnlyOperation classified an unrelated operation as read-only")
+	}
+}
+
 func TestShellEventIdentifier(t *testing.T) {
 	t.Parallel()
 	event, handled, err := Parse("droid", model.AuthorAI,
@@ -440,6 +619,36 @@ func TestShellEventIdentifier(t *testing.T) {
 	}
 	if !handled || event.EventID != "call-1" || event.Kind != model.CheckpointKindShellPost {
 		t.Fatalf("shell event = %+v, handled = %t", event, handled)
+	}
+}
+
+func TestShellEventValidationBranches(t *testing.T) {
+	t.Parallel()
+	if _, _, err := shellEvent("agent", model.Author("other"), "", "", ""); err == nil {
+		t.Fatal("shellEvent accepted an invalid author")
+	}
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "invalid event identifier",
+			payload: `{"tool_name":"Bash","event_id":"bad\nid"}`,
+		},
+		{
+			name:    "invalid model metadata",
+			payload: `{"tool_name":"Bash","model":"bad\nmodel"}`,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := Parse("droid", model.AuthorAI, strings.NewReader(test.payload))
+			if err == nil {
+				t.Fatalf("Parse accepted %s", test.name)
+			}
+		})
 	}
 }
 
@@ -454,6 +663,56 @@ func TestParseInputErrors(t *testing.T) {
 	large := bytes.Repeat([]byte{'x'}, MaxInputBytes+1)
 	if _, _, err := Parse("droid", model.AuthorAI, bytes.NewReader(large)); err == nil {
 		t.Fatal("Parse accepted oversized input")
+	}
+}
+
+func TestPatchPathBranches(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		patch   string
+		paths   []string
+		wantErr bool
+	}{
+		{
+			name:  "add and delete operations",
+			patch: "*** Add File: add.go\n*** Delete File: remove.go",
+			paths: []string{"add.go", "remove.go"},
+		},
+		{
+			name:  "dev null and prefixed unified path",
+			patch: "--- /dev/null\n+++ b/new.go",
+			paths: []string{"new.go"},
+		},
+		{
+			name:    "empty operation path",
+			patch:   "*** Add File:    ",
+			wantErr: true,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			paths, err := patchPaths(test.patch)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("patchPaths() error = %v, wantErr = %t", err, test.wantErr)
+			}
+			if err == nil && strings.Join(paths, ",") != strings.Join(test.paths, ",") {
+				t.Fatalf("paths = %v, want %v", paths, test.paths)
+			}
+		})
+	}
+}
+
+func TestPathAndReaderHelperBranches(t *testing.T) {
+	t.Parallel()
+	paths := uniquePaths([]string{" ", ".", "./a", "a", "b"})
+	if strings.Join(paths, ",") != "a,b" {
+		t.Fatalf("uniquePaths() = %v", paths)
+	}
+	if _, err := readBounded(presetReadError{}); err == nil {
+		t.Fatal("readBounded accepted a failing reader")
 	}
 }
 

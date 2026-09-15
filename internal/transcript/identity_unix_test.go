@@ -6,7 +6,29 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+// fakeFileInfo is an os.FileInfo whose Sys() is not a *syscall.Stat_t,
+// covering the identity fallback for wrappers that do not expose the
+// raw stat.
+type fakeFileInfo struct{}
+
+func (fakeFileInfo) Name() string       { return "fake" }
+func (fakeFileInfo) Size() int64        { return 0 }
+func (fakeFileInfo) Mode() os.FileMode  { return 0 }
+func (fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (fakeFileInfo) IsDir() bool        { return false }
+func (fakeFileInfo) Sys() any           { return struct{}{} }
+
+// TestFileIdentityOfRejectsUnknownStatShape pins the fallback: an
+// FileInfo without a raw stat has no usable identity.
+func TestFileIdentityOfRejectsUnknownStatShape(t *testing.T) {
+	t.Parallel()
+	if _, ok := fileIdentityOf(fakeFileInfo{}); ok {
+		t.Fatal("fileIdentityOf accepted an unknown stat shape")
+	}
+}
 
 func TestFileIdentityOfDistinguishesFiles(t *testing.T) {
 	t.Parallel()
