@@ -643,12 +643,20 @@ func dropStrandedCheckpoints(repo *gitcmd.Repo) (int, error) {
 			record.BaseCommit == head {
 			continue
 		}
+		if record.BaseCommit == "" {
+			// Recorded before the first commit, so no branch can ever
+			// reach it once HEAD has a parent.
+			sequences[record.Seq] = true
+			continue
+		}
 		alive, err := reachable(record.BaseCommit)
 		if err != nil {
 			return 0, fmt.Errorf("check checkpoint %d base reachability: %w", record.Seq, err)
 		}
 		if alive {
-			return 0, &unrelatedCheckpointError{Seq: record.Seq, Base: record.BaseCommit}
+			return 0, fmt.Errorf("a local or remote-tracking branch still reaches the base, "+
+				"so annotate or delete that branch first: %w",
+				&unrelatedCheckpointError{Seq: record.Seq, Base: record.BaseCommit})
 		}
 		sequences[record.Seq] = true
 	}

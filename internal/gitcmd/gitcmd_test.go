@@ -892,6 +892,31 @@ func TestAnyBranchContains(t *testing.T) {
 	}
 }
 
+func TestAnyBranchContainsReportsUnreadableObject(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("unreadable objects need a non-root POSIX user")
+	}
+	root := initRepository(t)
+	writeFile(t, root, "one.txt", "one\n")
+	first := commitAll(t, root, "first")
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := filepath.Join(root, ".git", "objects", first[:2], first[2:])
+	if _, err := os.Stat(object); err != nil {
+		t.Skipf("loose object unavailable: %v", err)
+	}
+	if err := os.Chmod(object, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(object, 0o444) })
+	if ok, err := repo.AnyBranchContains(first); err == nil || ok {
+		t.Fatalf("AnyBranchContains(unreadable object) = %v, %v, want an error", ok, err)
+	}
+}
+
 func initRepository(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
