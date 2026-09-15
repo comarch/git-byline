@@ -238,24 +238,8 @@ jobs:
           go-version: stable
           cache: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-
-      - name: Install pinned PromptScript
-        run: npm install --global --ignore-scripts --no-audit --no-fund @promptscript/cli@1.18.1
-
-      - name: Generate coverage
-        env:
-          CGO_ENABLED: "0"
-          GOPROXY: "off"
-        run: go test ./... -covermode=count -coverprofile=coverage.out
-
-      - name: Require coverage floor
-        run: |
-          coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%", "", $3); print $3}')"
-          awk -v value="$coverage" 'BEGIN { exit !(value >= 80.0) }'
+      - name: Generate merged coverage with floor
+        run: go run ./tools/validate -stages coverage
 
       - name: Upload coverage
         uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0

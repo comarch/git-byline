@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -106,6 +107,155 @@ func TestCheckCoverage(t *testing.T) {
 	if err := checkCoverage(dir); err == nil {
 		t.Error("checkCoverage(uncovered fixture) = nil, want error")
 	}
+}
+
+// TestCheckCoverageWritesMergedProfile pins the merge contract: the
+// stage must leave the merged profile at <root>/coverage.out so CI can
+// upload exactly what the floor measured.
+func TestCheckCoverageWritesMergedProfile(t *testing.T) {
+	t.Parallel()
+	dir := copyFixture(t)
+	if err := checkCoverage(dir); err != nil {
+		t.Fatalf("checkCoverage(clean fixture) = %v, want nil", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "coverage.out"))
+	if err != nil {
+		t.Fatalf("read merged profile: %v", err)
+	}
+	if !strings.HasPrefix(string(data), "mode: ") {
+		t.Errorf("merged profile starts with %q, want a mode header", string(data[:16]))
+	}
+}
+
+// TestHasPackage pins the skip rule for foreign modules: command
+// packages resolve in the real repository, never in the fixture.
+func TestHasPackage(t *testing.T) {
+	t.Parallel()
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+	if !hasPackage(root, "./cmd/git-byline") {
+		t.Error("hasPackage(real repo, ./cmd/git-byline) = false, want true")
+	}
+	if hasPackage(copyFixture(t), "./cmd/git-byline") {
+		t.Error("hasPackage(fixture, ./cmd/git-byline) = true, want false")
+	}
+}
+
+// TestRunCoveredBinary pins the exit-code contract of spawned covered
+// binaries: matching codes pass, every other outcome fails the stage.
+func TestRunCoveredBinary(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX exit-code helpers unavailable on windows")
+	}
+	dir := t.TempDir()
+	falseBin := filepath.Join(dir, "false")
+	if err := os.WriteFile(falseBin, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write false helper: %v", err)
+	}
+	trueBin := filepath.Join(dir, "true")
+	if err := os.WriteFile(trueBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write true helper: %v", err)
+	}
+	cases := []struct {
+		name     string
+		bin      string
+		wantCode int
+		wantErr  bool
+	}{
+		{name: "matching failure code passes", bin: falseBin, wantCode: 1},
+		{name: "matching success code passes", bin: trueBin, wantCode: 0},
+		{name: "unexpected failure code fails", bin: falseBin, wantCode: 2, wantErr: true},
+		{name: "success where failure expected fails", bin: trueBin, wantCode: 1, wantErr: true},
+		{name: "missing binary fails", bin: filepath.Join(dir, "gone"), wantCode: 0, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := runCoveredBinary("", tc.bin, nil, nil, tc.wantCode)
+			if tc.wantErr && err == nil {
+				t.Fatalf("runCoveredBinary(%s) = nil error, want failure", tc.bin)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("runCoveredBinary(%s) = %v, want nil", tc.bin, err)
+			}
+		})
+	}
+}
+
+// TestBuildCoveredBinary pins the build contract: a covered binary
+// lands at the requested path, and a missing package fails the build.
+func TestBuildCoveredBinary(t *testing.T) {
+	t.Parallel()
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+	bin := filepath.Join(t.TempDir(), "git-byline")
+	if err := buildCoveredBinary(root, bin, "./cmd/git-byline"); err != nil {
+		t.Fatalf("buildCoveredBinary(cmd/git-byline) = %v, want nil", err)
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Fatalf("covered binary missing: %v", err)
+	}
+	if err := buildCoveredBinary(root, filepath.Join(t.TempDir(), "x"), "./no-such-package"); err == nil {
+		t.Error("buildCoveredBinary(missing package) = nil error, want failure")
+	}
+}
+
+// TestCollectBinaryCoverage runs the full spawned-binary collection
+// against the real repository and verifies the converted child profile
+// records package main statements that unit tests cannot reach.
+func TestCollectBinaryCoverage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("covered binary builds are slow")
+	}
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+	tmp := t.TempDir()
+	unitProfile := filepath.Join(tmp, "unit.out")
+	if err := os.WriteFile(unitProfile, []byte("mode: count\nmain.go:1.2,2.10 1 0\n"), 0o600); err != nil {
+		t.Fatalf("write unit profile: %v", err)
+	}
+	childProfile, err := collectBinaryCoverage(root, tmp, unitProfile)
+	if err != nil {
+		t.Fatalf("collectBinaryCoverage: %v", err)
+	}
+	data, err := os.ReadFile(childProfile)
+	if err != nil {
+		t.Fatalf("read child profile: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "cmd/git-byline/main.go") {
+		t.Error("child profile has no cmd/git-byline/main.go blocks")
+	}
+	if !strings.Contains(text, "tools/validate/main.go") {
+		t.Error("child profile has no tools/validate/main.go blocks")
+	}
+	if !strings.Contains(text, "tools/covermerge/main.go") {
+		t.Error("child profile has no tools/covermerge/main.go blocks")
+	}
+	total, err := parseCoverageTotal(coverFuncOf(t, root, childProfile))
+	if err != nil {
+		t.Fatalf("parse child coverage total: %v", err)
+	}
+	if total <= 0 {
+		t.Error("child profile has no covered statements")
+	}
+}
+
+// coverFuncOf runs go tool cover -func over a profile for assertions.
+func coverFuncOf(t *testing.T, root, profile string) string {
+	t.Helper()
+	out, err := goCmd{dir: root}.run("tool", "cover", "-func", profile)
+	if err != nil {
+		t.Fatalf("go tool cover -func: %v", err)
+	}
+	return out
 }
 
 func TestCheckBuilds(t *testing.T) {

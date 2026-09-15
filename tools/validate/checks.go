@@ -15,12 +15,18 @@ import (
 	"strings"
 
 	"github.com/comarch/git-byline/internal/ci"
+	"github.com/comarch/git-byline/internal/covermerge"
 )
 
-// coverageFloor is the minimum total statement coverage the test suite
-// must reach. It is a floor for honest behavior coverage, not a target
-// to game.
-const coverageFloor = 80.0
+// coverageFloor is the minimum total statement coverage the merged
+// profile must reach. It is a floor for honest behavior coverage, not
+// a target to game: the merge includes package main statements that
+// only spawned binaries can execute. The floor sits below the measured
+// total because roughly 196 statements are defensive-unreachable: file
+// sync and close failures on healthy files, TOCTOU rechecks, and
+// invariant guards subsumed by earlier validation. Covering them would
+// require injection seams across many packages or gaming the gate.
+const coverageFloor = 97.5
 
 // modulePathOf returns the module path of the module rooted at root.
 func modulePathOf(root string) (string, error) {
@@ -126,19 +132,42 @@ func checkTest(root string) error {
 	return err
 }
 
-// checkCoverage runs the test suite with coverage and enforces the
-// coverage floor on the module total.
+// checkCoverage runs the test suite with coverage, merges the unit
+// profile with coverage recorded from spawned command binaries, and
+// enforces the coverage floor on the merged module total.
+//
+// Unit tests alone cannot cover package main files: main only runs in
+// spawned processes. The stage therefore also builds every command
+// package with `go build -cover`, exercises each binary through
+// success and failure paths while GOCOVERDIR collects counters, and
+// merges the converted counters into the unit-test profile. The merged
+// profile is written to <root>/coverage.out so CI can upload it.
+//
+// Foreign modules without command packages (test fixtures) keep the
+// unit-only profile.
 func checkCoverage(root string) error {
 	tmp, err := os.MkdirTemp("", "byline-coverage-")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmp)
-	profile := filepath.Join(tmp, "cover.out")
-	if _, err := (goCmd{dir: root}).run("test", "./...", "-coverprofile="+profile, "-covermode=count"); err != nil {
+	unitProfile := filepath.Join(tmp, "unit.out")
+	if _, err := (goCmd{dir: root}).run("test", "./...", "-coverprofile="+unitProfile, "-covermode=count"); err != nil {
 		return err
 	}
-	out, err := goCmd{dir: root}.run("tool", "cover", "-func", profile)
+	inputs := []string{unitProfile}
+	if hasPackage(root, "./cmd/git-byline") {
+		childProfile, err := collectBinaryCoverage(root, tmp, unitProfile)
+		if err != nil {
+			return err
+		}
+		inputs = append(inputs, childProfile)
+	}
+	merged := filepath.Join(root, "coverage.out")
+	if _, _, err := covermerge.MergeFiles(inputs, merged); err != nil {
+		return fmt.Errorf("merge coverage profiles: %w", err)
+	}
+	out, err := goCmd{dir: root}.run("tool", "cover", "-func", merged)
 	if err != nil {
 		return err
 	}
@@ -150,6 +179,115 @@ func checkCoverage(root string) error {
 		return fmt.Errorf("total coverage %.1f%% is below the %.1f%% floor", total, coverageFloor)
 	}
 	return nil
+}
+
+// hasPackage reports whether a package path resolves in the module
+// rooted at root. Foreign modules without command packages skip the
+// spawned-binary coverage collection.
+func hasPackage(root, pkg string) bool {
+	_, err := goCmd{dir: root}.run("list", pkg)
+	return err == nil
+}
+
+// collectBinaryCoverage builds every command package with coverage
+// instrumentation, exercises each spawned binary through success and
+// failure paths while GOCOVERDIR collects counters, and converts the
+// counters into a `go tool covdata textfmt` profile.
+func collectBinaryCoverage(root, tmp, unitProfile string) (string, error) {
+	covDir := filepath.Join(tmp, "covbin")
+	if err := os.Mkdir(covDir, 0o755); err != nil {
+		return "", fmt.Errorf("create binary coverage dir: %w", err)
+	}
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		return "", fmt.Errorf("create bin dir: %w", err)
+	}
+	outside := filepath.Join(tmp, "outside")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		return "", fmt.Errorf("create non-module dir: %w", err)
+	}
+	coverEnv := []string{"GOCOVERDIR=" + covDir}
+
+	// git-byline: successful version and failing usage paths.
+	bylineBin := filepath.Join(binDir, "git-byline")
+	if err := buildCoveredBinary(root, bylineBin, "./cmd/git-byline"); err != nil {
+		return "", err
+	}
+	if err := runCoveredBinary("", bylineBin, []string{"version"}, coverEnv, 0); err != nil {
+		return "", err
+	}
+	if err := runCoveredBinary("", bylineBin, []string{"unknown-command"}, coverEnv, 2); err != nil {
+		return "", err
+	}
+
+	// validate: stage-subset success, stage-subset usage error, and
+	// the not-inside-a-module failure path.
+	validateBin := filepath.Join(binDir, "validate")
+	if err := buildCoveredBinary(root, validateBin, "./tools/validate"); err != nil {
+		return "", err
+	}
+	if err := runCoveredBinary(root, validateBin, []string{"-stages", "gofmt"}, coverEnv, 0); err != nil {
+		return "", err
+	}
+	if err := runCoveredBinary(root, validateBin, []string{"-stages", "no-such-stage"}, coverEnv, 2); err != nil {
+		return "", err
+	}
+	if err := runCoveredBinary(outside, validateBin, []string{"-stages", "gofmt"}, coverEnv, 1); err != nil {
+		return "", err
+	}
+
+	// covermerge: usage error and successful merge child paths.
+	covermergeBin := filepath.Join(binDir, "covermerge")
+	if err := buildCoveredBinary(root, covermergeBin, "./tools/covermerge"); err != nil {
+		return "", err
+	}
+	if err := runCoveredBinary("", covermergeBin, nil, coverEnv, 2); err != nil {
+		return "", err
+	}
+	mergeCheck := filepath.Join(tmp, "merge-check.out")
+	mergeArgs := []string{"-o", mergeCheck, unitProfile, unitProfile}
+	if err := runCoveredBinary("", covermergeBin, mergeArgs, coverEnv, 0); err != nil {
+		return "", err
+	}
+
+	childProfile := filepath.Join(tmp, "child.out")
+	if _, err := (goCmd{dir: root}).run("tool", "covdata", "textfmt", "-i="+covDir, "-o", childProfile); err != nil {
+		return "", err
+	}
+	return childProfile, nil
+}
+
+// buildCoveredBinary builds pkg with coverage instrumentation so the
+// spawned binary records counters for its package main statements.
+func buildCoveredBinary(root, bin, pkg string) error {
+	if _, err := (goCmd{dir: root}).run("build", "-cover", "-covermode=count", "-o", bin, pkg); err != nil {
+		return fmt.Errorf("build covered %s: %w", pkg, err)
+	}
+	return nil
+}
+
+// runCoveredBinary runs an instrumented binary in dir (empty means the
+// current directory) and requires the process to exit with wantCode.
+// extraEnv carries GOCOVERDIR so spawned binaries record counters.
+func runCoveredBinary(dir, bin string, args []string, extraEnv []string, wantCode int) error {
+	cmd := exec.Command(bin, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOPROXY=off")
+	cmd.Env = append(cmd.Env, extraEnv...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == wantCode {
+		return nil
+	}
+	if err == nil && wantCode == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s %s: %w\n%s", bin, strings.Join(args, " "), err, out.String())
 }
 
 // parseCoverageTotal extracts the total percentage from `go tool cover

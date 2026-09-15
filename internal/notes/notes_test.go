@@ -360,3 +360,28 @@ func notesGit(t *testing.T, root string, args ...string) string {
 	}
 	return string(out)
 }
+
+// TestDecodeRejectsTrailingData covers the strict-tail guard: a note
+// followed by a second JSON value or by malformed data is rejected.
+// The header stage already enforces single-value notes, so this pins
+// the rejection at whichever layer fires first.
+func TestDecodeRejectsTrailingData(t *testing.T) {
+	t.Parallel()
+	const validNote = `{"version":3,"files":{}}`
+	cases := []struct {
+		name string
+		data string
+	}{
+		{name: "second JSON value", data: validNote + " " + validNote},
+		{name: "malformed tail", data: validNote + " {bad"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Decode([]byte(tc.data))
+			if err == nil {
+				t.Fatalf("Decode(%s) = nil error, want rejection", tc.name)
+			}
+		})
+	}
+}

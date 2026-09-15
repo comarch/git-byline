@@ -60,3 +60,14 @@ func TestAcquireInvalidParent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestAcquireRejectsDirectoryTarget covers the open guard: a directory
+// cannot be the lock target, because the parent exists but the open of
+// the target itself fails.
+func TestAcquireRejectsDirectoryTarget(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if _, err := Acquire(dir, time.Second); err == nil {
+		t.Fatal("Acquire succeeded with a directory as the lock target")
+	}
+}
