@@ -17,11 +17,16 @@ func main() {
 		Stderr: os.Stderr,
 	}
 	code, err := app.Run(os.Args[1:], env)
+	os.Exit(exitCode(code, err))
+}
+
+// exitCode maps a Run result to the process exit code. Run reports
+// user-facing diagnostics through env streams. An error paired with a
+// success code is a programming bug; treat it as an operational failure
+// rather than exiting 0.
+func exitCode(code int, err error) int {
 	if err != nil && code == app.ExitSuccess {
-		// Run reports user-facing diagnostics through env streams. An
-		// error paired with a success code is a programming bug; treat it
-		// as an operational failure rather than exiting 0.
-		code = app.ExitFailure
+		return app.ExitFailure
 	}
-	os.Exit(code)
+	return code
 }
