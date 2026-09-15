@@ -428,6 +428,7 @@ func TestProductCommandUsageAndFailures(t *testing.T) {
 		{"checkpoint unknown flag", `{}`, []string{"checkpoint", "droid", "--bad"}, ExitUsage},
 		{"agent v1 explicit type", `{}`, []string{"checkpoint", "agent-v1", "--type", "ai", "--hook-input", "stdin"}, ExitUsage},
 		{"annotate argument", "", []string{"annotate", "extra"}, ExitUsage},
+		{"annotate unknown flag", "", []string{"annotate", "--bad"}, ExitUsage},
 		{"blame missing file", "", []string{"blame"}, ExitUsage},
 		{"blame unknown flag", "", []string{"blame", "--bad", "file"}, ExitUsage},
 		{"status argument", "", []string{"status", "extra"}, ExitUsage},

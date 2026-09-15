@@ -1370,7 +1370,7 @@ func testAnnotateDropsStrandedBranchEvidence(t *testing.T) {
 		t.Fatalf("Annotate files = %d, want 1", result.Files)
 	}
 	for _, warning := range result.Warnings {
-		if strings.Contains(warning, "dropped 1 stranded checkpoints") {
+		if strings.Contains(warning, "dropped 2 stranded checkpoints") {
 			assertLastCheckpointSeq(t, repo, 0)
 			records, _, err := store.New(repo.GitDir).ReadCheckpoints()
 			if err != nil {
@@ -1378,6 +1378,9 @@ func testAnnotateDropsStrandedBranchEvidence(t *testing.T) {
 			}
 			if len(records) != 0 {
 				t.Fatalf("checkpoint records = %d, want 0", len(records))
+			}
+			if result, err := AnnotateDroppingStranded(repo); err != nil || !result.Noop {
+				t.Fatalf("recovery noop = %+v, %v", result, err)
 			}
 			return
 		}
@@ -1412,7 +1415,11 @@ func setupStrandedBranchEvidence(t *testing.T, deleteBranch bool) (*gitcmd.Repo,
 	write(t, root, "file.txt", "base\nfeature\n")
 	commit(t, root, "feature")
 	human := preset.Event{Type: model.AuthorHuman, Paths: []string{"file.txt"}}
-	if _, err := Capture(repo, human, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)); err != nil {
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if _, err := Capture(repo, human, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Capture(repo, human, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	git(t, root, "checkout", "main")

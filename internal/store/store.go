@@ -77,9 +77,6 @@ func (store Store) DropCheckpointRecords(sequences map[uint64]bool) (int, error)
 		if errors.Is(readErr, io.EOF) {
 			break
 		}
-		if readErr != nil {
-			return 0, fmt.Errorf("read checkpoint log for rewrite: %w", readErr)
-		}
 	}
 	if dropped == 0 {
 		return 0, nil

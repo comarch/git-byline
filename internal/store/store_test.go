@@ -63,6 +63,12 @@ func TestDropCheckpointRecordsPreservesOtherLines(t *testing.T) {
 	if err := os.WriteFile(value.CheckpointPath(), []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if dropped, err := value.DropCheckpointRecords(nil); err != nil || dropped != 0 {
+		t.Fatalf("empty drop = %d, %v", dropped, err)
+	}
+	if dropped, err := value.DropCheckpointRecords(map[uint64]bool{99: true}); err != nil || dropped != 0 {
+		t.Fatalf("missing sequence drop = %d, %v", dropped, err)
+	}
 	dropped, err := value.DropCheckpointRecords(map[uint64]bool{2: true})
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +90,31 @@ func TestDropCheckpointRecordsPreservesOtherLines(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].Seq != 1 || len(warnings) != 2 {
 		t.Fatalf("ReadCheckpoints() = %+v, %v", records, warnings)
+	}
+}
+
+func TestDropCheckpointRecordsEmptyAndInvalidLogs(t *testing.T) {
+	t.Parallel()
+	empty := New(t.TempDir())
+	if err := os.MkdirAll(empty.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(empty.CheckpointPath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if dropped, err := empty.DropCheckpointRecords(map[uint64]bool{1: true}); err != nil || dropped != 0 {
+		t.Fatalf("empty log drop = %d, %v", dropped, err)
+	}
+
+	invalid := New(t.TempDir())
+	if err := os.MkdirAll(invalid.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(invalid.CheckpointPath(), []byte("{bad}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := invalid.DropCheckpointRecords(map[uint64]bool{1: true}); err == nil {
+		t.Fatal("invalid checkpoint log was rewritten")
 	}
 }
 
