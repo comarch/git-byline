@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/comarch/git-byline/compare/v1.0.1...v1.1.0) (2026-09-15)
+
+
+### Features
+
+* manage git hooks in the git template directory ([#17](https://github.com/comarch/git-byline/issues/17)) ([4905b89](https://github.com/comarch/git-byline/commit/4905b896e954ca50d9eebc54b79543bb995440de))
+
+
+### Bug Fixes
+
+* **preset:** accept ApplyPatch body in input field ([#20](https://github.com/comarch/git-byline/issues/20)) ([1283387](https://github.com/comarch/git-byline/commit/128338791dc56fb292d25585634fb46b5398148a))
+* **preset:** resolve models from transcripts and windsurf tool_info ([#18](https://github.com/comarch/git-byline/issues/18)) ([8cd95d9](https://github.com/comarch/git-byline/commit/8cd95d9ba092be43bcd4aae9cf75b954b57c0d16))
+* **provenance:** keep rewrite boundary off noteless commits ([#22](https://github.com/comarch/git-byline/issues/22)) ([371c655](https://github.com/comarch/git-byline/commit/371c655ddb96f94b3c14eff7b151552ae3c05fff))
+
 ## [1.0.1](https://github.com/comarch/git-byline/compare/v1.0.0...v1.0.1) (2026-09-13)
 
 
