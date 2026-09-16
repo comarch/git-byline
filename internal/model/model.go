@@ -14,8 +14,12 @@ import (
 const (
 	// CheckpointVersion is the supported checkpoint log format.
 	CheckpointVersion = 1
-	// StateVersion is the supported state file format.
-	StateVersion = 1
+	// StateVersionV1 is the legacy state format with one scalar watermark.
+	StateVersionV1 = 1
+	// StateVersion is the supported state file format. Version 2 adds
+	// per-base lanes so checkpoints from one branch never block
+	// annotation on another.
+	StateVersion = 2
 	// NoteVersionV1 is the legacy git note format used by persisted state.
 	NoteVersionV1 = 1
 	// NoteVersionV2 is the git note format without human identities.
@@ -122,13 +126,16 @@ type PendingState struct {
 	Files      map[string]PendingFile `json:"files"`
 }
 
-// State records the durable replay boundary.
+// State records the durable replay boundary. Lanes key each checkpoint
+// base commit to the highest sequence an annotation consumed for that base,
+// so unrelated bases park instead of blocking the active lane.
 type State struct {
-	Version             int          `json:"version"`
-	LastAnnotatedCommit string       `json:"last_annotated_commit,omitempty"`
-	LastCheckpointSeq   uint64       `json:"last_checkpoint_seq"`
-	NotesVersion        int          `json:"notes_version"`
-	Pending             PendingState `json:"pending"`
+	Version             int               `json:"version"`
+	LastAnnotatedCommit string            `json:"last_annotated_commit,omitempty"`
+	LastCheckpointSeq   uint64            `json:"last_checkpoint_seq"`
+	NotesVersion        int               `json:"notes_version"`
+	Pending             PendingState      `json:"pending"`
+	Lanes               map[string]uint64 `json:"lanes,omitempty"`
 }
 
 // NoteFile stores attribution for one committed blob.
@@ -343,5 +350,6 @@ func NewState() State {
 		Pending: PendingState{
 			Files: map[string]PendingFile{},
 		},
+		Lanes: map[string]uint64{},
 	}
 }

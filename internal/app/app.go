@@ -65,16 +65,18 @@ func commands() []*command {
 			short: "write attribution for HEAD to git notes",
 			usage: "Usage: git-byline annotate [--drop-stranded]\n\n" +
 				"Replay pending checkpoints and annotate the current commit.\n" +
-				"Use 'git-byline recover' to preview unrelated checkpoints before\n" +
-				"discarding any evidence. --drop-stranded remains available for\n" +
-				"compatibility.",
+				"Checkpoints recorded on another branch park with a warning and\n" +
+				"resume when their branch returns; annotation never deletes\n" +
+				"them. Use 'git-byline recover' to preview parked checkpoints.\n" +
+				"--drop-stranded also discards parked checkpoints whose base\n" +
+				"no branch can reach.",
 			run: runAnnotate,
 		},
 		{
 			name:  "recover",
 			short: "preview or resolve stranded checkpoints",
 			usage: "Usage: git-byline recover [--drop] [--json]\n\n" +
-				"Preview unrelated checkpoints, object availability, and branches\n" +
+				"Preview parked checkpoints, object availability, and branches\n" +
 				"that still reach each base. The default does not change state.\n" +
 				"Use --drop to discard only unreachable checkpoints and retry\n" +
 				"annotation.",
@@ -208,8 +210,9 @@ func commands() []*command {
 			short: "show the git-byline version",
 			usage: "Usage: git-byline version [--json]\n\n" +
 				"Print the git-byline version and exit. Release builds report the\n" +
-				"release tag; local builds report dev. --json prints the version\n" +
-				"and the highest supported attribution note version.",
+				"release tag; local builds report dev. --json prints the version,\n" +
+				"the highest supported attribution note version, and the state\n" +
+				"format version.",
 			run: runVersion,
 		},
 	}
@@ -318,13 +321,15 @@ func runHelp(env *Env, c *command, args []string) (int, error) {
 
 // versionJSON is the machine-readable form of the version command.
 type versionJSON struct {
-	Version     string `json:"version"`
-	NoteVersion int    `json:"note_version"`
+	Version      string `json:"version"`
+	NoteVersion  int    `json:"note_version"`
+	StateVersion int    `json:"state_version"`
 }
 
 // runVersion implements the version command. The default output is one
-// stable line; --json adds the highest supported attribution note version
-// for tooling that checks format compatibility before updating.
+// stable line; --json adds the highest supported attribution note and
+// state format versions for tooling that checks format compatibility
+// before updating.
 func runVersion(env *Env, c *command, args []string) (int, error) {
 	fs := flag.NewFlagSet("git-byline "+c.name, flag.ContinueOnError)
 	var flagOutput strings.Builder
@@ -345,7 +350,11 @@ func runVersion(env *Env, c *command, args []string) (int, error) {
 		return commandUsageError(env, c, fmt.Errorf("version takes no arguments, got %q", fs.Arg(0)))
 	}
 	if *asJSON {
-		data, err := json.Marshal(versionJSON{Version: version.Version, NoteVersion: model.NoteVersion})
+		data, err := json.Marshal(versionJSON{
+			Version:      version.Version,
+			NoteVersion:  model.NoteVersion,
+			StateVersion: model.StateVersion,
+		})
 		if err != nil {
 			return operationalError(env, c.name, fmt.Errorf("encode version JSON: %w", err))
 		}

@@ -24,7 +24,7 @@ func TestPreviewRecoveryReportsBlockedAndStrandedCheckpoints(t *testing.T) {
 		blocked.UnrelatedCheckpoints != 2 ||
 		blocked.StrandedCheckpoints != 0 ||
 		blocked.BlockedCheckpoints != 2 ||
-		blocked.RecommendedAction != "annotate or delete the listed branches, then run git-byline recover" {
+		blocked.RecommendedAction != "return to the listed branches to consume these checkpoints, or delete them and run git-byline recover" {
 		t.Fatalf("blocked preview = %+v", blocked)
 	}
 	for _, checkpoint := range blocked.Checkpoints {

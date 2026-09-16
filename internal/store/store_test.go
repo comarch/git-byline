@@ -425,6 +425,98 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStateRoundTripKeepsLanes(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	state, err := value.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.LastAnnotatedCommit = "abcd1234"
+	state.Pending.BaseCommit = state.LastAnnotatedCommit
+	state.Lanes["a000000000000000000000000000000000000000"] = 4
+	state.Lanes["b000000000000000000000000000000000000000"] = 7
+	if err := value.WriteState(state); err != nil {
+		t.Fatal(err)
+	}
+	got, err := value.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Lanes) != 2 ||
+		got.Lanes["a000000000000000000000000000000000000000"] != 4 ||
+		got.Lanes["b000000000000000000000000000000000000000"] != 7 {
+		t.Fatalf("ReadState() lanes = %+v", got.Lanes)
+	}
+	data, err := os.ReadFile(value.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.Index(string(data), `"a000`)
+	second := strings.Index(string(data), `"b000`)
+	if first < 0 || second < 0 || first > second {
+		t.Fatalf("state lanes are not serialized in sorted order: %s", data)
+	}
+}
+
+func TestStateMigratesVersionOneInMemory(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	if err := os.MkdirAll(value.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"version":1,"last_annotated_commit":"abcd1234","last_checkpoint_seq":42,` +
+		`"notes_version":3,"pending":{"base_commit":"abcd1234","files":{}}}` + "\n"
+	if err := os.WriteFile(value.StatePath(), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := value.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Version != model.StateVersion || state.LastCheckpointSeq != 42 ||
+		state.LastAnnotatedCommit != "abcd1234" || len(state.Lanes) != 0 {
+		t.Fatalf("ReadState() = %+v, want migrated version 2 with the frozen floor", state)
+	}
+	onDisk, err := os.ReadFile(value.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(onDisk, []byte(legacy)) {
+		t.Fatal("ReadState rewrote the state file; migration must stay in memory")
+	}
+	if err := value.WriteState(state); err != nil {
+		t.Fatal(err)
+	}
+	onDisk, err = os.ReadFile(value.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(onDisk), `"version":2`) {
+		t.Fatalf("WriteState persisted %q, want version 2", onDisk)
+	}
+}
+
+func TestStateRejectsInvalidLanes(t *testing.T) {
+	t.Parallel()
+	for _, state := range []model.State{
+		func() model.State {
+			value := model.NewState()
+			value.Lanes["not-an-object-id"] = 4
+			return value
+		}(),
+		func() model.State {
+			value := model.NewState()
+			value.Lanes["abcd1234"] = 0
+			return value
+		}(),
+	} {
+		if err := New(t.TempDir()).WriteState(state); err == nil {
+			t.Fatalf("WriteState accepted invalid lanes %+v", state.Lanes)
+		}
+	}
+}
+
 func TestStateErrors(t *testing.T) {
 	t.Parallel()
 	value := New(t.TempDir())

@@ -82,7 +82,7 @@ func previewRecovery(
 	cache := map[string]recoveryBaseClassification{}
 	scanner := repo.NewBranchScanner()
 	for _, record := range records {
-		if skipRecoveryRecord(record, state.LastCheckpointSeq, parent, head) {
+		if skipRecoveryRecord(record, state, parent, head) {
 			continue
 		}
 		classification, err := recoveryClassification(scanner, cache, record)
@@ -109,8 +109,8 @@ func recoveryParent(repo *gitcmd.Repo, head string) (string, error) {
 	return repo.Parent(head)
 }
 
-func skipRecoveryRecord(record model.Checkpoint, consumed uint64, parent, head string) bool {
-	return record.Seq <= consumed ||
+func skipRecoveryRecord(record model.Checkpoint, state model.State, parent, head string) bool {
+	return checkpointConsumed(record, state) ||
 		record.BaseCommit == parent ||
 		record.BaseCommit == head
 }
@@ -153,7 +153,7 @@ func addRecoveryCheckpoint(report *RecoveryReport, checkpoint RecoveryCheckpoint
 func recoveryAction(report RecoveryReport) string {
 	switch {
 	case report.BlockedCheckpoints > 0:
-		return "annotate or delete the listed branches, then run git-byline recover"
+		return "return to the listed branches to consume these checkpoints, or delete them and run git-byline recover"
 	case report.StrandedCheckpoints > 0:
 		return "git-byline recover --drop"
 	case report.AnnotationPending:

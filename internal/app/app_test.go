@@ -83,10 +83,10 @@ var runCases = []runCase{
 		stdout: "Usage: git-byline version", noStderr: true,
 	},
 	{
-		name:   "version --json prints the version and note format",
+		name:   "version --json prints the version and format versions",
 		args:   []string{"version", "--json"},
 		code:   ExitSuccess,
-		stdout: `{"version":"dev","note_version":3}` + "\n", noStderr: true,
+		stdout: `{"version":"dev","note_version":3,"state_version":2}` + "\n", noStderr: true,
 	},
 	{
 		name:   "help update prints the update usage",

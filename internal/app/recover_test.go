@@ -18,32 +18,31 @@ import (
 
 func TestRecoverPreviewAndStatusExplainBlockedAttribution(t *testing.T) {
 	t.Parallel()
-	root, feature := setupAppStrandedRecovery(t)
+	root, _ := setupAppStrandedRecovery(t)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
 	code, stdout, stderr, err := appRun(root, now, nil, "annotate")
-	if code != ExitFailure || err == nil || stdout != "" ||
-		!strings.Contains(stderr, "attribution pending for ") ||
-		!strings.Contains(stderr, "checkpoint 1 belongs to base "+feature) ||
-		!strings.Contains(stderr, "run: git-byline recover") {
-		t.Fatalf("annotate failure = %d, %q, %q, %v", code, stdout, stderr, err)
+	if code != ExitSuccess || err != nil || stdout == "" ||
+		!strings.Contains(stdout, "annotated ") ||
+		!strings.Contains(stderr, "parked 1 checkpoints on 1 unrelated bases") {
+		t.Fatalf("annotate = %d, %q, %q, %v (want parked success)", code, stdout, stderr, err)
 	}
 
 	code, stdout, stderr, err = appRun(root, now, nil, "recover")
 	if code != ExitSuccess || err != nil || stderr != "" ||
 		!strings.Contains(stdout, "Blocked checkpoints: 1") ||
 		!strings.Contains(stdout, "Branch: refs/heads/feature") ||
-		!strings.Contains(stdout, "Recommended action: annotate or delete the listed branches") ||
+		!strings.Contains(stdout, "Recommended action: return to the listed branches") ||
 		!strings.Contains(stdout, "No checkpoints changed.") {
 		t.Fatalf("recover preview = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
 
 	code, stdout, stderr, err = appRun(root, now, nil, "status")
 	if code != ExitSuccess || err != nil ||
-		!strings.Contains(stdout, "Annotation pending: true") ||
+		!strings.Contains(stdout, "Annotation pending: false") ||
 		!strings.Contains(stdout, "Unrelated checkpoints: 1") ||
 		!strings.Contains(stdout, "Blocked checkpoints: 1") ||
-		!strings.Contains(stdout, "Recommended action: git-byline recover") {
+		!strings.Contains(stdout, "Recommended action: return to the listed branches") {
 		t.Fatalf("status = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
 

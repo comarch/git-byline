@@ -414,7 +414,12 @@ func isIncompleteJSON(err error) bool {
 	return errors.As(err, &syntax) && strings.Contains(syntax.Error(), "unexpected end of JSON input")
 }
 
-// ReadState reads state or returns a new empty state.
+// ReadState reads state or returns a new empty state. Version 1 states
+// migrate deterministically in memory: the scalar watermark becomes a
+// frozen consumption floor and lanes start empty, because version 1 could
+// only ever consume an unbroken journal prefix, so the floor alone already
+// marks exactly the consumed records. The next state write persists the
+// migrated shape.
 func (store Store) ReadState() (model.State, error) {
 	data, err := readBoundedFile(store.StatePath(), maxStateBytes)
 	if errors.Is(err, os.ErrNotExist) {
@@ -427,7 +432,11 @@ func (store Store) ReadState() (model.State, error) {
 	if err := decodeStrict(data, &state); err != nil {
 		return model.State{}, fmt.Errorf("decode state: %w", err)
 	}
-	if state.Version != model.StateVersion {
+	switch state.Version {
+	case model.StateVersionV1:
+		state.Version = model.StateVersion
+	case model.StateVersion:
+	default:
 		return model.State{}, fmt.Errorf("unsupported state version %d", state.Version)
 	}
 	switch state.NotesVersion {
@@ -439,6 +448,9 @@ func (store Store) ReadState() (model.State, error) {
 	}
 	if state.Pending.Files == nil {
 		state.Pending.Files = map[string]model.PendingFile{}
+	}
+	if state.Lanes == nil {
+		state.Lanes = map[string]uint64{}
 	}
 	if err := validateState(state); err != nil {
 		return model.State{}, fmt.Errorf("validate state: %w", err)
@@ -546,6 +558,19 @@ func validateState(state model.State) error {
 	}
 	if state.Pending.BaseCommit != state.LastAnnotatedCommit {
 		return errors.New("pending base commit differs from last annotated commit")
+	}
+	laneBases := make([]string, 0, len(state.Lanes))
+	for base := range state.Lanes {
+		laneBases = append(laneBases, base)
+	}
+	sort.Strings(laneBases)
+	for _, base := range laneBases {
+		if base != "" && !model.ValidObjectID(base) {
+			return fmt.Errorf("lane base %q is not a valid object id", base)
+		}
+		if state.Lanes[base] == 0 {
+			return fmt.Errorf("lane %q has consumed sequence 0", base)
+		}
 	}
 	paths := make([]string, 0, len(state.Pending.Files))
 	for path := range state.Pending.Files {

@@ -109,7 +109,7 @@ func blockedRecoveryError(report provenance.RecoveryReport) error {
 	}
 	return fmt.Errorf(
 		"refusing to drop %d blocked checkpoints\n%s\n"+
-			"annotate or delete the listed branches, then run: git-byline recover",
+			"return to the listed branches to consume these checkpoints, or delete them and run: git-byline recover",
 		report.BlockedCheckpoints,
 		strings.Join(details, "\n"),
 	)

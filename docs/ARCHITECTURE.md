@@ -80,17 +80,17 @@ attached directly to `HEAD`, with limits of 16 MiB for the note, 500 files,
 
 If annotation starts after new edits already happened on the new `HEAD`,
 checkpoints based on that `HEAD` are carried into pending state for the next
-commit. A checkpoint from an unrelated base commit fails closed. After a
-squash merge and branch deletion strands evidence permanently, `recover`
-previews each unrelated checkpoint, object availability, and branches that
-still reach its base without changing state. `recover --drop` rechecks
-reachability, drops only unrelated checkpoints whose base no local or
-remote-tracking branch can reach, and retries annotation. Every unrelated
-checkpoint must be stranded; one blocked checkpoint refuses the whole cleanup
-without dropping records or retrying annotation. Hook-driven annotation never
-selects this destructive mode. `annotate --drop-stranded` remains as a
-compatibility path that performs the same destructive removal without a
-preview, so users should run `recover` first.
+commit. A checkpoint from an unrelated base commit parks with a warning
+instead of blocking annotation; its lane resumes when its base becomes
+current again. `recover` previews each parked checkpoint, object
+availability, and branches that still reach its base without changing
+state. `recover --drop` rechecks reachability, drops only parked
+checkpoints whose base no local or remote-tracking branch can reach, and
+retries annotation. Every unrelated checkpoint must be stranded; one
+blocked checkpoint refuses the whole cleanup without dropping records or
+retrying annotation. Hook-driven annotation never selects this destructive
+mode. `annotate --drop-stranded` performs the same destructive removal
+without a preview, so users should run `recover` first.
 
 ## Checkpoint log
 
@@ -120,7 +120,7 @@ Properties:
 Path: worktree-specific Git directory plus `byline/state.json`.
 
 ```json
-{"version":1,"last_annotated_commit":"def456","last_checkpoint_seq":42,"notes_version":3,"pending":{"base_commit":"def456","files":{}}}
+{"version":2,"last_annotated_commit":"def456","last_checkpoint_seq":42,"notes_version":3,"pending":{"base_commit":"def456","files":{}},"lanes":{"abc123":41}}
 ```
 
 State uses a temporary file, file sync, and atomic rename. It advances only
@@ -128,6 +128,27 @@ after the note write succeeds. State reads are limited to 64 MiB.
 
 Pending files preserve attribution excluded by a partial commit. Their blobs
 remain reachable through `refs/worktree/byline/checkpoints`.
+
+### Checkpoint lanes
+
+Version 2 keys each checkpoint base commit to a lane in `lanes`, holding
+the highest sequence an annotation consumed for that base. Annotation
+selects the lane matching the current HEAD or its first parent: records
+based on the parent replay into the commit, records based on HEAD carry as
+pending worktree provenance, and every other unconsumed record parks with a
+warning instead of blocking annotation. Parked lanes stay protected by the
+retention ref, are never deleted automatically, and resume when their base
+becomes current again. `annotate --drop-stranded` and `recover --drop` are
+the only paths that remove records, and both refuse while any branch still
+reaches a parked base.
+
+`last_checkpoint_seq` is the version 1 scalar watermark, kept as a frozen
+consumption floor. Version 1 could only consume an unbroken journal prefix,
+so every sequence at or below the floor is already consumed and the floor
+never advances; new consumption is recorded per lane only. Version 1 state
+files migrate deterministically in memory on read and persist as version 2
+on the next state write. Binaries older than this version reject version 2
+state instead of guessing.
 
 ## Notes
 
