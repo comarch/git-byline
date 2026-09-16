@@ -118,6 +118,9 @@ func TestCheckDriftFailures(t *testing.T) {
 
 func runDriftFailure(t *testing.T, tc driftFailureCase) {
 	var root string
+	if tc.mode == "walk-error" && runtime.GOOS != "windows" && os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
 	if tc.missingSource {
 		root = t.TempDir()
 		if err := os.WriteFile(filepath.Join(root, "promptscript.yaml"), []byte("{}"), 0o644); err != nil {

@@ -33,11 +33,11 @@ func TestApplyUpdateReportsRemovedVerifiedArchive(t *testing.T) {
 	removed := make(chan struct{})
 	watcherErrors := make(chan error, 1)
 	go func() {
+		defer close(removed)
 		if err := removeArchiveStage(dir); err != nil {
 			watcherErrors <- err
 			return
 		}
-		close(removed)
 		watcherErrors <- nil
 	}()
 	writerErrors := make(chan error, 1)

@@ -43,6 +43,9 @@ jobs:
 
       - name: Validate repository
         run: go run ./tools/validate
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
 
       - name: Check working tree
         run: git diff --exit-code
@@ -240,6 +243,9 @@ jobs:
 
       - name: Generate merged coverage with floor
         run: go run ./tools/validate -stages coverage
+        env:
+          CGO_ENABLED: "0"
+          GOPROXY: "off"
 
       - name: Upload coverage
         uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0

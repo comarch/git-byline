@@ -53,8 +53,10 @@ func coverageShellQuote(value string) string {
 }
 
 type coverageCommandRun struct {
-	name string
-	run  func(*Repo) error
+	name    string
+	output  string
+	wantErr bool
+	run     func(*Repo) error
 }
 
 // Shared command probes reused by the error-path and malformed-output
@@ -62,79 +64,77 @@ type coverageCommandRun struct {
 func coverageCommandRuns() []coverageCommandRun {
 	return []coverageCommandRun{
 		{
-			name: "head",
+			name:    "head",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.Head()
 				return err
 			},
 		},
 		{
-			name: "object format",
+			name:    "object format",
+			output:  "sha512",
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.ObjectIDLength()
 				return err
 			},
 		},
 		{
-			name: "previous head",
+			name:    "previous head",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, _, err := repo.PreviousHead()
 				return err
 			},
 		},
 		{
-			name: "current branch",
+			name:    "current branch",
+			output:  "refs/tags/v1",
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, _, err := repo.CurrentBranchRef()
 				return err
 			},
 		},
 		{
-			name: "parents",
+			name:    "parents",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.Parents(coverageOID)
 				return err
 			},
 		},
 		{
-			name: "changes",
+			name:    "changes",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.Changes(coverageOID, "")
 				return err
 			},
 		},
 		{
-			name: "rev-list",
+			name:    "rev-list",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.RevList("", "", 0)
 				return err
 			},
 		},
 		{
-			name: "patch",
+			name:    "patch",
+			output:  "diff text",
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.PatchID(coverageOID)
 				return err
 			},
 		},
-	}
-}
-
-// coverageCommandRunOutputs aligns index by index with
-// coverageCommandRuns and feeds the malformed-output table. The extra
-// trailing entry feeds the "patch ID" case, which overrides its fake
-// body, so the value is only a placeholder.
-func coverageCommandRunOutputs() []string {
-	return []string{
-		coverageBad,
-		"sha512",
-		coverageBad,
-		"refs/tags/v1",
-		coverageBad,
-		coverageBad,
-		coverageBad,
-		"diff text",
-		"",
 	}
 }
 
@@ -377,121 +377,133 @@ func TestGitcmdEarlyErrorPaths(t *testing.T) {
 func TestGitcmdMalformedOutputs(t *testing.T) {
 	tests := append(coverageCommandRuns(),
 		coverageCommandRun{
-			name: "patch ID",
+			name:    "patch ID",
+			output:  "",
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.PatchID(coverageOID)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "commit time",
+			name:    "commit time",
+			output:  "author only",
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.CommitTime(coverageOID)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "commit author",
+			name:    "commit author",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, _, err := repo.CommitAuthor(coverageOID)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "merge base",
+			name:    "merge base",
+			output:  "one\n",
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.MergeBase(coverageOID, coverageOID2)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "note list length",
+			name:    "note list length",
+			output:  coverageOID + " " + coverageOID + " " + coverageOID,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.NoteCommits(coverageNotesName)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "note list object",
+			name:    "note list object",
+			output:  "100644 blob " + coverageOID + "\tother",
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.NoteCommits(coverageNotesName)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "tree entry",
+			name:    "tree entry",
+			output:  "100644 tree " + coverageOID + "\tfile",
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, _, err := repo.BlobID(coverageOID, coverageFileName)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "tree metadata",
+			name:    "tree metadata",
+			output:  "-1",
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, _, err := repo.BlobID(coverageOID, coverageFileName)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "blob size",
+			name:    "blob size",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.BlobSize(coverageOID)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "hash object",
+			name:    "hash object",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.HashBytes([]byte("content"))
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "retention tree",
+			name:    "retention tree",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				return repo.ProtectBlobs([]string{coverageOID})
 			},
 		},
 		coverageCommandRun{
-			name: "ref value",
+			name:    "ref value",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, _, err := repo.RefValue(coverageBranch)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "history object",
+			name:    "history object",
+			output:  coverageBad,
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.FirstParentHistory(coverageOID)
 				return err
 			},
 		},
 		coverageCommandRun{
-			name: "Git path",
+			name:    "Git path",
+			output:  "relative/path",
+			wantErr: true,
 			run: func(repo *Repo) error {
 				_, err := repo.GitPath("hooks")
 				return err
 			},
 		},
 	)
-	outputs := append(coverageCommandRunOutputs(),
-		"author only",
-		coverageBad,
-		"one\n",
-		coverageOID+" "+coverageOID+" "+coverageOID,
-		"100644 blob "+coverageOID+"\tother",
-		"100644 tree "+coverageOID+"\tfile",
-		"-1",
-		coverageBad,
-		coverageBad,
-		coverageBad,
-		coverageBad,
-		coverageBad,
-		"relative/path",
-	)
-	for index, test := range tests {
+	for _, test := range tests {
 		test := test
-		output := outputs[index]
 		t.Run(test.name, func(t *testing.T) {
 			var body string
 			switch test.name {
@@ -500,11 +512,11 @@ func TestGitcmdMalformedOutputs(t *testing.T) {
 			case "note list object":
 				body = "printf '" + coverageOID + " " + coverageOID + " bad " + coverageOID + "'\n"
 			default:
-				body = "printf '%b' " + coverageShellQuote(output) + "\n"
+				body = "printf '%b' " + coverageShellQuote(test.output) + "\n"
 			}
 			repo := coverageRepo(t, body)
-			if err := test.run(repo); err == nil {
-				t.Fatal("operation accepted malformed Git output")
+			if err := test.run(repo); (err != nil) != test.wantErr {
+				t.Fatalf("operation error = %v, want error: %t", err, test.wantErr)
 			}
 		})
 	}

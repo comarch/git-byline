@@ -620,12 +620,28 @@ func runLayeredMatcherFuzzCase(t *testing.T, oldText, newText string) {
 func TestNewSnapshotRejectsInvalidContentAndRanges(t *testing.T) {
 	t.Parallel()
 	human := model.Attribution{Author: model.AuthorHuman}
-	if _, err := NewSnapshot([]byte{0xff, 'a'}, nil); err == nil {
-		t.Fatal("NewSnapshot accepted invalid UTF-8 content")
+	tests := []struct {
+		name    string
+		content []byte
+		ranges  []model.Range
+	}{
+		{
+			name:    "invalid UTF-8 content",
+			content: []byte{0xff, 'a'},
+		},
+		{
+			name:    "ranges do not cover content",
+			content: []byte("a\nb\n"),
+			ranges:  []model.Range{{Start: 1, End: 1, Attribution: human}},
+		},
 	}
-	shortRanges := []model.Range{{Start: 1, End: 1, Attribution: human}}
-	if _, err := NewSnapshot([]byte("a\nb\n"), shortRanges); err == nil {
-		t.Fatal("NewSnapshot accepted ranges that do not cover the content")
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := NewSnapshot(test.content, test.ranges); err == nil {
+				t.Fatalf("NewSnapshot accepted %s", test.name)
+			}
+		})
 	}
 }
 
@@ -634,12 +650,34 @@ func TestNewSnapshotRejectsInvalidContentAndRanges(t *testing.T) {
 func TestUniformRangesRejectsInvalidContentAndEmptyContent(t *testing.T) {
 	t.Parallel()
 	human := model.Attribution{Author: model.AuthorHuman}
-	if _, err := UniformRanges([]byte{0xff}, human); err == nil {
-		t.Fatal("UniformRanges accepted invalid UTF-8 content")
+	tests := []struct {
+		name    string
+		content []byte
+		wantErr bool
+		wantNil bool
+	}{
+		{
+			name:    "invalid UTF-8 content",
+			content: []byte{0xff},
+			wantErr: true,
+		},
+		{
+			name:    "empty content",
+			content: nil,
+			wantNil: true,
+		},
 	}
-	ranges, err := UniformRanges(nil, human)
-	if err != nil || ranges != nil {
-		t.Fatalf("UniformRanges(nil) = %v, %v; want nil, nil", ranges, err)
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			ranges, err := UniformRanges(test.content, human)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("UniformRanges(%q) error = %v, want error: %t", test.content, err, test.wantErr)
+			}
+			if test.wantNil && ranges != nil {
+				t.Fatalf("UniformRanges(%q) = %v, want nil", test.content, ranges)
+			}
+		})
 	}
 }
 
@@ -660,26 +698,47 @@ func TestReplayWithStatsTransitionContentError(t *testing.T) {
 func TestReplayWithStatsOverrideSelection(t *testing.T) {
 	t.Parallel()
 	ai := model.Attribution{Author: model.AuthorAI, Agent: "droid", Session: "session-1"}
-	other := model.Attribution{Author: model.AuthorAI, Agent: "claude", Session: "session-2"}
-	initial, err := NewSnapshot([]byte("human\nsame\nother\n"), []model.Range{
-		{Start: 1, End: 1, Attribution: model.Attribution{Author: model.AuthorHuman}},
-		{Start: 2, End: 2, Attribution: ai},
-		{Start: 3, End: 3, Attribution: other},
-	})
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name          string
+		initialAuthor model.Attribution
+		wantOverrides []model.Attribution
+	}{
+		{
+			name:          "human line",
+			initialAuthor: model.Attribution{Author: model.AuthorHuman},
+		},
+		{
+			name:          "same-agent same-session AI line",
+			initialAuthor: ai,
+		},
+		{
+			name: "other-session AI line",
+			initialAuthor: model.Attribution{
+				Author: model.AuthorAI, Agent: "claude", Session: "session-2",
+			},
+			wantOverrides: []model.Attribution{{
+				Author: model.AuthorAI, Agent: "claude", Session: "session-2",
+			}},
+		},
 	}
-	_, stats, err := ReplayWithStats(initial, []Transition{
-		{Content: []byte("replacement\n"), Attribution: ai},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(stats) != 1 || len(stats[0].Overridden) != 1 {
-		t.Fatalf("ReplayWithStats() = %+v", stats)
-	}
-	if got := stats[0].Overridden[0]; got.Agent != "claude" || got.Session != "session-2" {
-		t.Fatalf("overridden attribution = %+v, want the other-session AI line", got)
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			initial := Snapshot{
+				Lines:        []string{"line\n"},
+				Attributions: []model.Attribution{test.initialAuthor},
+			}
+			_, stats, err := ReplayWithStats(initial, []Transition{{
+				Content:     []byte("replacement\n"),
+				Attribution: ai,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(stats) != 1 || !reflect.DeepEqual(stats[0].Overridden, test.wantOverrides) {
+				t.Fatalf("ReplayWithStats() = %+v, want overrides %+v", stats, test.wantOverrides)
+			}
+		})
 	}
 }
 
@@ -689,18 +748,57 @@ func TestProjectGuards(t *testing.T) {
 	t.Parallel()
 	human := model.Attribution{Author: model.AuthorHuman}
 	source := Snapshot{Lines: []string{"a"}, Attributions: []model.Attribution{human}}
-	if _, err := ProjectWithBudget(source, []byte{0xff}, human, nil); err == nil {
-		t.Fatal("Project accepted invalid UTF-8 target content")
+	tests := []struct {
+		name       string
+		target     []byte
+		fallback   model.Attribution
+		budget     *MatcherBudget
+		layered    bool
+		wantBudget bool
+	}{
+		{
+			name:     "invalid UTF-8 target content",
+			target:   []byte{0xff},
+			fallback: human,
+		},
+		{
+			name:     "invalid fallback attribution",
+			target:   []byte("a\n"),
+			fallback: model.Attribution{Author: model.AuthorAI},
+		},
+		{
+			name:       "exhausted matcher budget",
+			target:     []byte("b\n"),
+			fallback:   human,
+			budget:     NewMatcherBudget(0),
+			wantBudget: true,
+		},
+		{
+			name:     "layered invalid UTF-8 target content",
+			target:   []byte{0xff},
+			fallback: human,
+			layered:  true,
+		},
 	}
-	if _, err := ProjectWithBudget(source, []byte("a\n"), model.Attribution{Author: model.AuthorAI}, nil); err == nil {
-		t.Fatal("Project accepted an invalid fallback attribution")
-	}
-	_, err := ProjectWithBudget(source, []byte("b\n"), human, NewMatcherBudget(0))
-	if !errors.Is(err, ErrMatcherBudget) {
-		t.Fatalf("Project budget error = %v, want %v", err, ErrMatcherBudget)
-	}
-	if _, err := ProjectLayered(nil, []byte{0xff}, human); err == nil {
-		t.Fatal("ProjectLayered accepted invalid UTF-8 target content")
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			var err error
+			if test.layered {
+				_, err = ProjectLayered(nil, test.target, test.fallback)
+			} else {
+				_, err = ProjectWithBudget(source, test.target, test.fallback, test.budget)
+			}
+			if test.wantBudget {
+				if !errors.Is(err, ErrMatcherBudget) {
+					t.Fatalf("Project budget error = %v, want %v", err, ErrMatcherBudget)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("project accepted %s", test.name)
+			}
+		})
 	}
 }
 
@@ -709,12 +807,25 @@ func TestProjectGuards(t *testing.T) {
 // than emit invalid ranges.
 func TestRangesRejectsInvalidAttribution(t *testing.T) {
 	t.Parallel()
-	invalid := Snapshot{
-		Lines:        []string{"a"},
-		Attributions: []model.Attribution{{Author: model.AuthorAI}},
+	tests := []struct {
+		name     string
+		snapshot Snapshot
+	}{
+		{
+			name: "AI attribution without agent",
+			snapshot: Snapshot{
+				Lines:        []string{"a"},
+				Attributions: []model.Attribution{{Author: model.AuthorAI}},
+			},
+		},
 	}
-	if _, err := invalid.Ranges(); err == nil {
-		t.Fatal("Ranges accepted an invalid attribution")
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := test.snapshot.Ranges(); err == nil {
+				t.Fatal("Ranges accepted an invalid attribution")
+			}
+		})
 	}
 }
 

@@ -41,9 +41,6 @@ func TestExportHeadReadFailure(t *testing.T) {
 }
 
 func TestCheckpointDiscoverNonRepositoryFailure(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX fake Git is not executable on Windows")
-	}
 	root := t.TempDir()
 	configureFakeCommandGit(t, root, fakeCheckpointGitScript, map[string]string{
 		"FAKE_CHECKPOINT_ROOT": root,
@@ -58,6 +55,9 @@ func TestCheckpointDiscoverNonRepositoryFailure(t *testing.T) {
 
 func configureFakeCommandGit(t *testing.T, root, script string, values map[string]string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake Git is not executable on Windows")
+	}
 	path := filepath.Join(root, "git")
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)

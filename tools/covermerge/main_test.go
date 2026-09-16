@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func TestRunMergesProfiles(t *testing.T) {
 	child := writeProfileFile(t, dir, "child.out", "mode: count\nmain.go:1.2,2.10 1 3\n")
 	out := filepath.Join(dir, "merged.out")
 
-	if code, err := run(out, []string{unit, child}); err != nil || code != 0 {
+	if code, err := run(out, []string{unit, child}, os.Stdout); err != nil || code != 0 {
 		t.Fatalf("run() = %d, %v; want 0, nil", code, err)
 	}
 	if got := readProfileFile(t, out); !strings.Contains(got, "main.go:1.2,2.10 1 3\n") {
@@ -54,11 +55,27 @@ func TestRunUsageErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if code, err := run(tc.out, tc.inputs); err == nil || code != 2 {
+			if code, err := run(tc.out, tc.inputs, os.Stdout); err == nil || code != 2 {
 				t.Fatalf("run() = %d, %v; want 2, error", code, err)
 			}
 		})
 	}
+}
+
+func TestRunSummaryWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	profile := writeProfileFile(t, dir, "unit.out", "mode: count\nmain.go:1.2,2.10 1 1\n")
+	out := filepath.Join(dir, "merged.out")
+	if code, err := run(out, []string{profile}, failingWriter{}); err == nil || code != 1 ||
+		!strings.Contains(err.Error(), "write summary") {
+		t.Fatalf("run(failing stdout) = %d, %v; want 1, write summary error", code, err)
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("stdout unavailable")
 }
 
 func TestRunOperationalFailures(t *testing.T) {
@@ -66,16 +83,16 @@ func TestRunOperationalFailures(t *testing.T) {
 	out := filepath.Join(dir, "merged.out")
 	missing := writeProfileFile(t, t.TempDir(), "missing.out", "")
 	missingInputs := []string{filepath.Join(dir, "gone.out")}
-	if code, err := run(out, missingInputs); err == nil || code != 1 {
+	if code, err := run(out, missingInputs, os.Stdout); err == nil || code != 1 {
 		t.Fatalf("run(missing input) = %d, %v; want 1, error", code, err)
 	}
 	empty := []string{missing}
-	if code, err := run(out, empty); err == nil || code != 1 {
+	if code, err := run(out, empty, os.Stdout); err == nil || code != 1 {
 		t.Fatalf("run(empty profile) = %d, %v; want 1, error", code, err)
 	}
 	unwritable := filepath.Join(dir, "no-such-dir", "merged.out")
 	profile := writeProfileFile(t, dir, "unit.out", "mode: count\nmain.go:1.2,2.10 1 1\n")
-	if code, err := run(unwritable, []string{profile}); err == nil || code != 1 {
+	if code, err := run(unwritable, []string{profile}, os.Stdout); err == nil || code != 1 {
 		t.Fatalf("run(unwritable output) = %d, %v; want 1, error", code, err)
 	}
 }

@@ -256,6 +256,9 @@ func TestCheckOperationalFailures(t *testing.T) {
 	}
 
 	blob, err := appGitObject(t, root, []byte("broken notes ref"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := writeGitObjectRef(t, root, bylineNotesRef, blob); err != nil {
 		t.Fatal(err)
 	}

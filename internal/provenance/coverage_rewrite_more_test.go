@@ -167,6 +167,7 @@ func coverageProjectNoteHelper(t *testing.T) {
 		t.Fatal("projectNoteFile accepted an invalid blob")
 	}
 	invalid := file
+	invalid.Ranges = append([]model.Range(nil), file.Ranges...)
 	invalid.Ranges[0].End = 3
 	if _, err := projectNoteFileWithBudgetAndCache(repo, invalid, []byte("one\ntwo\n"), nil, cache); err == nil {
 		t.Fatal("projectNoteFile accepted invalid ranges")

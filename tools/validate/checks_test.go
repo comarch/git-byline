@@ -123,7 +123,7 @@ func TestCheckCoverageWritesMergedProfile(t *testing.T) {
 		t.Fatalf("read merged profile: %v", err)
 	}
 	if !strings.HasPrefix(string(data), "mode: ") {
-		t.Errorf("merged profile starts with %q, want a mode header", string(data[:16]))
+		t.Errorf("merged profile starts with %q, want a mode header", string(data[:min(len(data), 16)]))
 	}
 }
 

@@ -13,7 +13,8 @@ It runs with `CGO_ENABLED=0` and `GOPROXY=off`.
 1. `gofmt` drift check.
 2. `go vet ./...`.
 3. Full unit, contract, and integration tests.
-4. Statement coverage with an 80 percent floor.
+4. Statement coverage of the merged profile (unit tests plus spawned
+   binaries) with a 97.4 percent floor, compared at full precision.
 5. CGO-free builds for Linux, macOS, and Windows on amd64 and arm64.
 6. Standard-library-only dependency policy.
 7. Forbidden production import policy.
@@ -63,8 +64,15 @@ because they do not conclude on every pull request.
 
 ## Coverage policy
 
-- Total statement coverage must remain at least 80 percent.
-- Codecov patch coverage target is 80 percent.
+- Total merged statement coverage must remain at least 97.4 percent.
+  The merge combines the unit-test profile with profiles from binaries
+  built with `-cover`, so statements only spawned binaries execute
+  still count. The floor compares the exact merged percentage, not the
+  rounded `go tool cover -func` output. The floor is calibrated against
+  the Go 1.24 toolchain, which splits more coverage blocks than newer
+  toolchains, and stays below the measured total because more than 200
+  statements are defensive-unreachable.
+- Codecov patch coverage target is 100 percent.
 - Project coverage may drop by at most 1 percent.
 - Parsing, path validation, storage recovery, hooks, and attribution
   invariants need direct review even when aggregate coverage passes.

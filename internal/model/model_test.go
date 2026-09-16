@@ -26,11 +26,20 @@ func TestSessionKeyAndEventID(t *testing.T) {
 // oversized id and an id with invalid UTF-8 sequences must be rejected.
 func TestValidateEventIDBounds(t *testing.T) {
 	t.Parallel()
-	if err := ValidateEventID(strings.Repeat("a", maxAttributionValueBytes+1)); err == nil {
-		t.Fatal("ValidateEventID accepted an oversized id")
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{name: "oversized", id: strings.Repeat("a", maxAttributionValueBytes+1)},
+		{name: "invalid UTF-8", id: "\xff\xfe"},
 	}
-	if err := ValidateEventID("\xff\xfe"); err == nil {
-		t.Fatal("ValidateEventID accepted invalid UTF-8")
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidateEventID(test.id); err == nil {
+				t.Fatalf("ValidateEventID(%q) accepted invalid input", test.id)
+			}
+		})
 	}
 }
 

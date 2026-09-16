@@ -34,6 +34,7 @@ func TestInstallAdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("unknown provider", func(t *testing.T) {
+		skipIfUnsupportedPermissions(t)
 		_, err := Install(t.TempDir(), Provider("unknown"))
 		assertErrorContains(t, err, "unsupported CI provider")
 	})

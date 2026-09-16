@@ -98,6 +98,13 @@ func TestCoverageTemplateRootPermissionFailures(t *testing.T) {
 	t.Cleanup(func() {
 		_ = os.Chmod(productDir, 0o700)
 	})
+	probe := filepath.Join(productDir, "permission-probe")
+	file, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err == nil {
+		_ = file.Close()
+		_ = os.Remove(probe)
+		t.Skip("privileged process can write to a mode-0500 directory")
+	}
 	if _, _, err := openTemplateRoot(true); err == nil {
 		t.Fatal("read-only template parent was accepted")
 	}

@@ -196,17 +196,14 @@ func TestVerifyReadNoteFailure(t *testing.T) {
 	if err := os.Remove(objectPath); err != nil {
 		t.Skipf("note object was not loose: %v", err)
 	}
-	if _, _, err := appRunVerifyJSON(root); err == nil {
-		t.Fatal("verify accepted a missing note object")
+	code, _, _, err := appRunVerifyJSON(root)
+	if code != ExitFailure || err == nil {
+		t.Fatalf("verify missing note object = %d, %v", code, err)
 	}
 }
 
-func appRunVerifyJSON(root string) (string, string, error) {
-	code, stdout, stderr, err := appRun(root, zeroTime(), nil, "verify", "--json")
-	if code != ExitFailure {
-		return stdout, stderr, err
-	}
-	return stdout, stderr, err
+func appRunVerifyJSON(root string) (int, string, string, error) {
+	return appRun(root, zeroTime(), nil, "verify", "--json")
 }
 
 func TestVerifyListedMissingNoteAndNoteListFailure(t *testing.T) {
@@ -240,6 +237,18 @@ func TestVerifyListedMissingNoteAndNoteListFailure(t *testing.T) {
 	}
 	if err := repo.WriteNote(commit, []byte("garbage")); err != nil {
 		t.Fatal(err)
+	}
+	code, stdout, stderr, err := appRun(root, zeroTime(), nil, "verify", "--json")
+	if code != ExitFailure || err == nil || stderr != "" {
+		t.Fatalf("verify garbage note = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	var result verifyResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Issues) != 1 || result.Issues[0].Commit != commit ||
+		!strings.Contains(result.Issues[0].Message, "decode note") {
+		t.Fatalf("garbage note issues = %+v", result.Issues)
 	}
 	if err := os.Remove(filepath.Join(repo.GitDir, "refs", "notes", "byline")); err != nil &&
 		!os.IsNotExist(err) {

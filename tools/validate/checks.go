@@ -19,14 +19,18 @@ import (
 )
 
 // coverageFloor is the minimum total statement coverage the merged
-// profile must reach. It is a floor for honest behavior coverage, not
-// a target to game: the merge includes package main statements that
-// only spawned binaries can execute. The floor sits below the measured
-// total because roughly 196 statements are defensive-unreachable: file
-// sync and close failures on healthy files, TOCTOU rechecks, and
-// invariant guards subsumed by earlier validation. Covering them would
-// require injection seams across many packages or gaming the gate.
-const coverageFloor = 97.5
+// profile must reach, compared at full precision. It is a floor for
+// honest behavior coverage, not a target to game: the merge includes
+// package main statements that only spawned binaries can execute.
+// The floor sits below the measured total because more than 200
+// statements are defensive-unreachable: file sync and close failures
+// on healthy files, TOCTOU rechecks, and invariant guards subsumed by
+// earlier validation. Covering them would require injection seams
+// across many packages or gaming the gate. The value is calibrated
+// against the Go 1.24 toolchain CI uses, which splits more coverage
+// blocks than newer toolchains, and leaves room for the few
+// statements that differ between platforms.
+const coverageFloor = 97.4
 
 // Environment pins and arguments shared by the go, gofmt, and covered
 // binary invocations: CGO disabled, the module proxy off, and the
@@ -173,7 +177,8 @@ func checkCoverage(root string) error {
 		inputs = append(inputs, childProfile)
 	}
 	merged := filepath.Join(root, "coverage.out")
-	if _, _, err := covermerge.MergeFiles(inputs, merged); err != nil {
+	covered, _, err := covermerge.MergeFiles(inputs, merged)
+	if err != nil {
 		return fmt.Errorf("merge coverage profiles: %w", err)
 	}
 	out, err := goCmd{dir: root}.run("tool", "cover", "-func", merged)
@@ -184,8 +189,11 @@ func checkCoverage(root string) error {
 	if err != nil {
 		return fmt.Errorf("parse coverage output: %w", err)
 	}
-	if total < coverageFloor {
-		return fmt.Errorf("total coverage %.1f%% is below the %.1f%% floor", total, coverageFloor)
+	// The tool output rounds to one decimal place, which can lift a
+	// total of 97.46 to 97.5. The merged profile carries the exact
+	// percentage, so the floor compares that value.
+	if covered < coverageFloor {
+		return fmt.Errorf("total coverage %.2f%% is below the %.1f%% floor (tool reports %.1f%%)", covered, coverageFloor, total)
 	}
 	return nil
 }

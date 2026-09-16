@@ -114,24 +114,26 @@ func TestGitcmdWorktreeFailures(t *testing.T) {
 		t.Fatal("WorktreeFile accepted a path through an escaping directory symlink")
 	}
 
-	// Root reads through mode 0, and Windows maps it to a read-only
-	// attribute that does not block reads either.
-	if runtime.GOOS != "windows" && os.Geteuid() == 0 {
-		t.Skip("root ignores file permissions")
-	}
-	protected := filepath.Join(repo.Root, "protected")
-	if err := os.WriteFile(protected, []byte("secret\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(protected, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chmod(protected, 0o600)
+	t.Run("protected file", func(t *testing.T) {
+		// Root reads through mode 0, and Windows maps it to a read-only
+		// attribute that does not block reads either.
+		if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+			t.Skip("root ignores file permissions")
+		}
+		protected := filepath.Join(repo.Root, "protected")
+		if err := os.WriteFile(protected, []byte("secret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(protected, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_ = os.Chmod(protected, 0o600)
+		})
+		if _, _, _, err := repo.WorktreeFile("protected"); err == nil {
+			t.Fatal("WorktreeFile opened a protected file")
+		}
 	})
-	if _, _, _, err := repo.WorktreeFile("protected"); err == nil {
-		t.Fatal("WorktreeFile opened a protected file")
-	}
 
 	if _, err := NormalizePath(""); err == nil {
 		t.Fatal("NormalizePath accepted an empty path")

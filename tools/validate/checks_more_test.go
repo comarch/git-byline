@@ -69,8 +69,9 @@ func TestValidateCoverageFailures(t *testing.T) {
 			t.Skip("TMPDIR does not control temporary paths on Windows")
 		}
 		t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
-		if err := checkCoverage(copyFixture(t)); err == nil {
-			t.Fatal("checkCoverage() = nil error, want temp directory failure")
+		err := checkCoverage(copyFixture(t))
+		if err == nil || !strings.Contains(err.Error(), "create temp dir") {
+			t.Fatalf("checkCoverage() = %v, want temp directory setup failure", err)
 		}
 	})
 
@@ -241,9 +242,13 @@ func TestValidateCITemplateFailures(t *testing.T) {
 	})
 
 	t.Run("temporary directory creation", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("TMPDIR does not control temporary paths on Windows")
+		}
 		t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
-		if err := checkCITemplates("root"); err == nil {
-			t.Fatal("checkCITemplates() = nil error, want temp directory failure")
+		err := checkCITemplates("root")
+		if err == nil || !strings.Contains(err.Error(), "create CI template fixture") {
+			t.Fatalf("checkCITemplates() = %v, want temp directory setup failure", err)
 		}
 	})
 
@@ -297,6 +302,14 @@ func useFakeGo(t *testing.T, mode string) {
 		"    cover-parse-error) printf '%s\\n' 'total: (statements) not-a-number%'; exit 0;;\n" +
 		"    cover-low) printf '%s\\n' 'total: (statements) 95.0%'; exit 0;;\n" +
 		"  esac\n" +
+		"fi\n" +
+		"if [ \"$1\" = \"test\" ] && [ \"$VALIDATE_FAKE_GO_MODE\" = \"cover-low\" ]; then\n" +
+		"  for arg in \"$@\"; do\n" +
+		"    case \"$arg\" in\n" +
+		"      -coverprofile=*) printf 'mode: count\\nfixture.go:1.2,2.10 2 0\\n' > \"${arg#-coverprofile=}\";;\n" +
+		"    esac\n" +
+		"  done\n" +
+		"  exit 0\n" +
 		"fi\n" +
 		"exec " + shellQuote(realGo) + " \"$@\"\n"
 	useFakeCommand(t, "go", script)

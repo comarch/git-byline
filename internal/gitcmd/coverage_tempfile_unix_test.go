@@ -4,30 +4,23 @@ package gitcmd
 
 import (
 	"os"
-	"os/signal"
-	"syscall"
 	"testing"
 )
 
 func TestTempFileWriteFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
 	dir := t.TempDir()
-	var previous syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &previous); err != nil {
+	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	limited := previous
-	limited.Cur = 1
-	signal.Ignore(syscall.SIGXFSZ)
-	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limited); err != nil {
-		signal.Reset(syscall.SIGXFSZ)
-		t.Fatal(err)
-	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
 	path, writeErr := tempFile(dir, "limited-", []byte("payload"))
-	restoreErr := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &previous)
-	signal.Reset(syscall.SIGXFSZ)
-	if restoreErr != nil {
-		t.Fatal(restoreErr)
-	}
 	if writeErr == nil || path != "" {
 		t.Fatalf("tempFile() = %q, %v, want a write error", path, writeErr)
 	}
