@@ -853,15 +853,17 @@ func TestCommitAuthorReadsNameAndEmail(t *testing.T) {
 	}
 }
 
+type branchContainmentCase struct {
+	name         string
+	prepare      func(*testing.T, *Repo, string) string
+	wantBranches []string
+	wantExists   bool
+	wantErr      bool
+}
+
 func TestBranchContainment(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name         string
-		prepare      func(*testing.T, *Repo, string) string
-		wantBranches []string
-		wantExists   bool
-		wantErr      bool
-	}{
+	tests := []branchContainmentCase{
 		{
 			name:         "main branch contains commit",
 			wantBranches: []string{"refs/heads/main"},
@@ -919,38 +921,43 @@ func TestBranchContainment(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			root := initRepository(t)
-			writeFile(t, root, "one.txt", "one\n")
-			commit := commitAll(t, root, "first")
-			repo, err := Discover(root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if test.prepare != nil {
-				commit = test.prepare(t, repo, root)
-			}
-			branches, exists, err := repo.BranchesContaining(commit)
-			if test.wantErr {
-				if err == nil {
-					t.Fatalf("BranchesContaining() = %v, %v, nil, want error", branches, exists)
-				}
-				if ok, containsErr := repo.AnyBranchContains(commit); containsErr == nil || ok {
-					t.Fatalf("AnyBranchContains() = %v, %v, want false and error", ok, containsErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if exists != test.wantExists || !reflect.DeepEqual(branches, test.wantBranches) {
-				t.Fatalf("BranchesContaining() = %v, %v, want %v, %v",
-					branches, exists, test.wantBranches, test.wantExists)
-			}
-			wantContains := len(test.wantBranches) > 0
-			if contains, err := repo.AnyBranchContains(commit); err != nil || contains != wantContains {
-				t.Fatalf("AnyBranchContains() = %v, %v, want %v", contains, err, wantContains)
-			}
+			runBranchContainmentCase(t, test)
 		})
+	}
+}
+
+func runBranchContainmentCase(t *testing.T, test branchContainmentCase) {
+	t.Helper()
+	root := initRepository(t)
+	writeFile(t, root, "one.txt", "one\n")
+	commit := commitAll(t, root, "first")
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if test.prepare != nil {
+		commit = test.prepare(t, repo, root)
+	}
+	branches, exists, err := repo.BranchesContaining(commit)
+	if test.wantErr {
+		if err == nil {
+			t.Fatalf("BranchesContaining() = %v, %v, nil, want error", branches, exists)
+		}
+		if ok, containsErr := repo.AnyBranchContains(commit); containsErr == nil || ok {
+			t.Fatalf("AnyBranchContains() = %v, %v, want false and error", ok, containsErr)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists != test.wantExists || !reflect.DeepEqual(branches, test.wantBranches) {
+		t.Fatalf("BranchesContaining() = %v, %v, want %v, %v",
+			branches, exists, test.wantBranches, test.wantExists)
+	}
+	wantContains := len(test.wantBranches) > 0
+	if contains, err := repo.AnyBranchContains(commit); err != nil || contains != wantContains {
+		t.Fatalf("AnyBranchContains() = %v, %v, want %v", contains, err, wantContains)
 	}
 }
 
@@ -978,48 +985,64 @@ func TestValidateRefNameRejectsUnicodeWhitespace(t *testing.T) {
 	}
 }
 
+type branchScannerVerificationCase struct {
+	name      string
+	verifyErr error
+}
+
 func TestBranchScannerBoundsObjectVerification(t *testing.T) {
 	t.Parallel()
-	verifyFailure := errors.New("object database unavailable")
-	tests := []struct {
-		name      string
-		verifyErr error
-	}{
+	tests := []branchScannerVerificationCase{
 		{name: "healthy object database"},
-		{name: "verification failure stays fail closed", verifyErr: verifyFailure},
+		{name: "verification failure stays fail closed", verifyErr: errors.New("object database unavailable")},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			root := initRepository(t)
-			repo, err := Discover(root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			verifyCalls := 0
-			scanner := repo.newBranchScanner(func() error {
-				verifyCalls++
-				return test.verifyErr
-			})
-			for _, commit := range []string{
-				"0000000000000000000000000000000000000001",
-				"0000000000000000000000000000000000000002",
-			} {
-				branches, exists, err := scanner.BranchesContaining(commit)
-				if test.verifyErr != nil {
-					if !errors.Is(err, test.verifyErr) || exists || len(branches) != 0 {
-						t.Fatalf("BranchesContaining(%s) = %v, %v, %v", commit, branches, exists, err)
-					}
-					continue
-				}
-				if err != nil || exists || len(branches) != 0 {
-					t.Fatalf("BranchesContaining(%s) = %v, %v, %v", commit, branches, exists, err)
-				}
-			}
-			if verifyCalls != 1 {
-				t.Fatalf("object database verification calls = %d, want 1", verifyCalls)
-			}
+			runBranchScannerVerificationCase(t, test)
 		})
+	}
+}
+
+func runBranchScannerVerificationCase(t *testing.T, test branchScannerVerificationCase) {
+	t.Helper()
+	root := initRepository(t)
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyCalls := 0
+	scanner := repo.newBranchScanner(func() error {
+		verifyCalls++
+		return test.verifyErr
+	})
+	for _, commit := range []string{
+		"0000000000000000000000000000000000000001",
+		"0000000000000000000000000000000000000002",
+	} {
+		assertMissingBranchContainment(t, scanner, commit, test.verifyErr)
+	}
+	if verifyCalls != 1 {
+		t.Fatalf("object database verification calls = %d, want 1", verifyCalls)
+	}
+}
+
+func assertMissingBranchContainment(
+	t *testing.T,
+	scanner *BranchScanner,
+	commit string,
+	verifyErr error,
+) {
+	t.Helper()
+	branches, exists, err := scanner.BranchesContaining(commit)
+	if verifyErr != nil {
+		if !errors.Is(err, verifyErr) || exists || len(branches) != 0 {
+			t.Fatalf("BranchesContaining(%s) = %v, %v, %v", commit, branches, exists, err)
+		}
+		return
+	}
+	if err != nil || exists || len(branches) != 0 {
+		t.Fatalf("BranchesContaining(%s) = %v, %v, %v", commit, branches, exists, err)
 	}
 }
 

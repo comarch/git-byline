@@ -31,6 +31,12 @@ type RecoveryReport struct {
 	Warnings             []string             `json:"warnings,omitempty"`
 }
 
+type recoveryBaseClassification struct {
+	objectPresent bool
+	branches      []string
+	droppable     bool
+}
+
 // PreviewRecovery classifies unrelated checkpoints without changing state.
 func PreviewRecovery(repo *gitcmd.Repo) (RecoveryReport, error) {
 	dataStore := store.New(repo.GitDir)
@@ -64,71 +70,95 @@ func previewRecovery(
 	head string,
 	warnings []string,
 ) (RecoveryReport, error) {
-	parent := ""
-	if head != "" {
-		var err error
-		parent, err = repo.Parent(head)
-		if err != nil {
-			return RecoveryReport{}, err
-		}
+	parent, err := recoveryParent(repo, head)
+	if err != nil {
+		return RecoveryReport{}, err
 	}
 	report := RecoveryReport{
 		Version:  model.StateVersion,
 		Head:     head,
 		Warnings: warnings,
 	}
-	type baseClassification struct {
-		objectPresent bool
-		branches      []string
-		droppable     bool
-	}
-	cache := map[string]baseClassification{}
+	cache := map[string]recoveryBaseClassification{}
 	scanner := repo.NewBranchScanner()
 	for _, record := range records {
-		if record.Seq <= state.LastCheckpointSeq ||
-			record.BaseCommit == parent ||
-			record.BaseCommit == head {
+		if skipRecoveryRecord(record, state.LastCheckpointSeq, parent, head) {
 			continue
 		}
-		classification, ok := cache[record.BaseCommit]
-		if !ok {
-			if record.BaseCommit == "" {
-				classification.droppable = true
-			} else {
-				branches, exists, err := scanner.BranchesContaining(record.BaseCommit)
-				if err != nil {
-					return RecoveryReport{}, fmt.Errorf(
-						"check checkpoint %d base reachability: %w", record.Seq, err)
-				}
-				classification.objectPresent = exists
-				classification.branches = branches
-				classification.droppable = len(branches) == 0
-			}
-			cache[record.BaseCommit] = classification
+		classification, err := recoveryClassification(scanner, cache, record)
+		if err != nil {
+			return RecoveryReport{}, err
 		}
-		checkpoint := RecoveryCheckpoint{
+		addRecoveryCheckpoint(&report, RecoveryCheckpoint{
 			Seq:           record.Seq,
 			BaseCommit:    record.BaseCommit,
 			ObjectPresent: classification.objectPresent,
 			Branches:      classification.branches,
 			Droppable:     classification.droppable,
-		}
-		report.Checkpoints = append(report.Checkpoints, checkpoint)
-		report.UnrelatedCheckpoints++
-		if checkpoint.Droppable {
-			report.StrandedCheckpoints++
-		} else {
-			report.BlockedCheckpoints++
-		}
+		})
 	}
 	report.AnnotationPending = head != "" && head != state.LastAnnotatedCommit
+	report.RecommendedAction = recoveryAction(report)
+	return report, nil
+}
+
+func recoveryParent(repo *gitcmd.Repo, head string) (string, error) {
+	if head == "" {
+		return "", nil
+	}
+	return repo.Parent(head)
+}
+
+func skipRecoveryRecord(record model.Checkpoint, consumed uint64, parent, head string) bool {
+	return record.Seq <= consumed ||
+		record.BaseCommit == parent ||
+		record.BaseCommit == head
+}
+
+func recoveryClassification(
+	scanner *gitcmd.BranchScanner,
+	cache map[string]recoveryBaseClassification,
+	record model.Checkpoint,
+) (recoveryBaseClassification, error) {
+	if classification, ok := cache[record.BaseCommit]; ok {
+		return classification, nil
+	}
+	classification := recoveryBaseClassification{}
+	if record.BaseCommit == "" {
+		classification.droppable = true
+	} else {
+		branches, exists, err := scanner.BranchesContaining(record.BaseCommit)
+		if err != nil {
+			return recoveryBaseClassification{}, fmt.Errorf(
+				"check checkpoint %d base reachability: %w", record.Seq, err)
+		}
+		classification.objectPresent = exists
+		classification.branches = branches
+		classification.droppable = len(branches) == 0
+	}
+	cache[record.BaseCommit] = classification
+	return classification, nil
+}
+
+func addRecoveryCheckpoint(report *RecoveryReport, checkpoint RecoveryCheckpoint) {
+	report.Checkpoints = append(report.Checkpoints, checkpoint)
+	report.UnrelatedCheckpoints++
+	if checkpoint.Droppable {
+		report.StrandedCheckpoints++
+	} else {
+		report.BlockedCheckpoints++
+	}
+}
+
+func recoveryAction(report RecoveryReport) string {
 	switch {
 	case report.BlockedCheckpoints > 0:
-		report.RecommendedAction = "annotate or delete the listed branches, then run git-byline recover"
+		return "annotate or delete the listed branches, then run git-byline recover"
 	case report.StrandedCheckpoints > 0:
-		report.RecommendedAction = "git-byline recover --drop"
+		return "git-byline recover --drop"
 	case report.AnnotationPending:
-		report.RecommendedAction = "git-byline annotate"
+		return "git-byline annotate"
+	default:
+		return ""
 	}
-	return report, nil
 }
