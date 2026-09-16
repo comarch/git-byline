@@ -853,71 +853,183 @@ func TestCommitAuthorReadsNameAndEmail(t *testing.T) {
 	}
 }
 
-func TestAnyBranchContains(t *testing.T) {
+func TestBranchContainment(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		prepare      func(*testing.T, *Repo, string) string
+		wantBranches []string
+		wantExists   bool
+		wantErr      bool
+	}{
+		{
+			name:         "main branch contains commit",
+			wantBranches: []string{"refs/heads/main"},
+			wantExists:   true,
+		},
+		{
+			name: "local feature branch contains commit",
+			prepare: func(t *testing.T, _ *Repo, root string) string {
+				return commitOnFeatureBranch(t, root)
+			},
+			wantBranches: []string{"refs/heads/feature"},
+			wantExists:   true,
+		},
+		{
+			name: "deleted branch leaves uncontained object",
+			prepare: func(t *testing.T, _ *Repo, root string) string {
+				commit := commitOnFeatureBranch(t, root)
+				runGit(t, root, "branch", "-q", "-D", "feature")
+				return commit
+			},
+			wantExists: true,
+		},
+		{
+			name: "remote-tracking branch contains commit",
+			prepare: func(t *testing.T, _ *Repo, root string) string {
+				commit := commitOnFeatureBranch(t, root)
+				runGit(t, root, "branch", "-q", "-D", "feature")
+				runGit(t, root, "update-ref", "refs/remotes/origin/kept", commit)
+				return commit
+			},
+			wantBranches: []string{"refs/remotes/origin/kept"},
+			wantExists:   true,
+		},
+		{
+			name: "broken branch reference fails closed",
+			prepare: func(t *testing.T, repo *Repo, root string) string {
+				commit := commitOnFeatureBranch(t, root)
+				runGit(t, root, "branch", "-q", "-D", "feature")
+				broken := filepath.Join(repo.GitDir, "refs", "heads", "broken")
+				if err := os.WriteFile(broken, []byte("broken\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return commit
+			},
+			wantExists: true,
+			wantErr:    true,
+		},
+		{
+			name: "missing object is uncontained",
+			prepare: func(_ *testing.T, _ *Repo, _ string) string {
+				return "0000000000000000000000000000000000000001"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := initRepository(t)
+			writeFile(t, root, "one.txt", "one\n")
+			commit := commitAll(t, root, "first")
+			repo, err := Discover(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.prepare != nil {
+				commit = test.prepare(t, repo, root)
+			}
+			branches, exists, err := repo.BranchesContaining(commit)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("BranchesContaining() = %v, %v, nil, want error", branches, exists)
+				}
+				if ok, containsErr := repo.AnyBranchContains(commit); containsErr == nil || ok {
+					t.Fatalf("AnyBranchContains() = %v, %v, want false and error", ok, containsErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if exists != test.wantExists || !reflect.DeepEqual(branches, test.wantBranches) {
+				t.Fatalf("BranchesContaining() = %v, %v, want %v, %v",
+					branches, exists, test.wantBranches, test.wantExists)
+			}
+			wantContains := len(test.wantBranches) > 0
+			if contains, err := repo.AnyBranchContains(commit); err != nil || contains != wantContains {
+				t.Fatalf("AnyBranchContains() = %v, %v, want %v", contains, err, wantContains)
+			}
+		})
+	}
+}
+
+func TestBranchContainmentRejectsInvalidRevision(t *testing.T) {
 	t.Parallel()
 	root := initRepository(t)
-	writeFile(t, root, "one.txt", "one\n")
-	first := commitAll(t, root, "first")
 	repo, err := Discover(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := repo.AnyBranchContains(first); err != nil || !ok {
-		t.Fatalf("AnyBranchContains(main commit) = %v, %v", ok, err)
+	for _, revision := range []string{"", "-"} {
+		if _, err := repo.AnyBranchContains(revision); err == nil {
+			t.Fatalf("AnyBranchContains(%q) returned no error", revision)
+		}
+		if _, _, err := repo.BranchesContaining(revision); err == nil {
+			t.Fatalf("BranchesContaining(%q) returned no error", revision)
+		}
 	}
-	if branches, exists, err := repo.BranchesContaining(first); err != nil || !exists ||
-		strings.Join(branches, ",") != "refs/heads/main" {
-		t.Fatalf("BranchesContaining(main commit) = %v, %v, %v", branches, exists, err)
-	}
-	runGit(t, root, "checkout", "-q", "-b", "feature")
-	writeFile(t, root, "two.txt", "two\n")
-	second := commitAll(t, root, "second")
-	runGit(t, root, "checkout", "-q", "main")
-	if ok, err := repo.AnyBranchContains(second); err != nil || !ok {
-		t.Fatalf("AnyBranchContains(feature commit) = %v, %v", ok, err)
-	}
-	runGit(t, root, "branch", "-q", "-D", "feature")
-	if ok, err := repo.AnyBranchContains(second); err != nil || ok {
-		t.Fatalf("AnyBranchContains(deleted branch commit) = %v, %v", ok, err)
-	}
-	runGit(t, root, "update-ref", "refs/remotes/origin/kept", second)
-	if ok, err := repo.AnyBranchContains(second); err != nil || !ok {
-		t.Fatalf("AnyBranchContains(remote-tracking commit) = %v, %v", ok, err)
-	}
-	if branches, exists, err := repo.BranchesContaining(second); err != nil || !exists ||
-		strings.Join(branches, ",") != "refs/remotes/origin/kept" {
-		t.Fatalf("BranchesContaining(remote commit) = %v, %v, %v", branches, exists, err)
-	}
-	runGit(t, root, "update-ref", "-d", "refs/remotes/origin/kept")
-	if ok, err := repo.AnyBranchContains(second); err != nil || ok {
-		t.Fatalf("AnyBranchContains(after remote delete) = %v, %v", ok, err)
-	}
-	brokenRef := filepath.Join(repo.GitDir, "refs", "heads", "broken")
-	if err := os.WriteFile(brokenRef, []byte("broken\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := repo.BranchesContaining(second); err == nil {
-		t.Fatal("BranchesContaining accepted an ignored broken branch reference")
-	}
-	if err := os.Remove(brokenRef); err != nil {
-		t.Fatal(err)
-	}
-	missing := "0000000000000000000000000000000000000001"
-	if ok, err := repo.AnyBranchContains(missing); err != nil || ok {
-		t.Fatalf("AnyBranchContains(missing object) = %v, %v", ok, err)
-	}
-	if branches, exists, err := repo.BranchesContaining(missing); err != nil || exists || len(branches) != 0 {
-		t.Fatalf("BranchesContaining(missing object) = %v, %v, %v", branches, exists, err)
-	}
-	if _, err := repo.AnyBranchContains("-"); err == nil {
-		t.Fatal("AnyBranchContains accepted a revision that starts with '-'")
-	}
-	if _, _, err := repo.BranchesContaining("-"); err == nil {
-		t.Fatal("BranchesContaining accepted a revision that starts with '-'")
-	}
+}
+
+func TestValidateRefNameRejectsUnicodeWhitespace(t *testing.T) {
+	t.Parallel()
 	if err := validateRefName("refs/heads/bad\u00a0name"); err == nil {
 		t.Fatal("validateRefName accepted Unicode whitespace")
 	}
+}
+
+func TestBranchScannerBoundsObjectVerification(t *testing.T) {
+	t.Parallel()
+	verifyFailure := errors.New("object database unavailable")
+	tests := []struct {
+		name      string
+		verifyErr error
+	}{
+		{name: "healthy object database"},
+		{name: "verification failure stays fail closed", verifyErr: verifyFailure},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := initRepository(t)
+			repo, err := Discover(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			verifyCalls := 0
+			scanner := repo.newBranchScanner(func() error {
+				verifyCalls++
+				return test.verifyErr
+			})
+			for _, commit := range []string{
+				"0000000000000000000000000000000000000001",
+				"0000000000000000000000000000000000000002",
+			} {
+				branches, exists, err := scanner.BranchesContaining(commit)
+				if test.verifyErr != nil {
+					if !errors.Is(err, test.verifyErr) || exists || len(branches) != 0 {
+						t.Fatalf("BranchesContaining(%s) = %v, %v, %v", commit, branches, exists, err)
+					}
+					continue
+				}
+				if err != nil || exists || len(branches) != 0 {
+					t.Fatalf("BranchesContaining(%s) = %v, %v, %v", commit, branches, exists, err)
+				}
+			}
+			if verifyCalls != 1 {
+				t.Fatalf("object database verification calls = %d, want 1", verifyCalls)
+			}
+		})
+	}
+}
+
+func commitOnFeatureBranch(t *testing.T, root string) string {
+	t.Helper()
+	runGit(t, root, "checkout", "-q", "-b", "feature")
+	writeFile(t, root, "two.txt", "two\n")
+	commit := commitAll(t, root, "second")
+	runGit(t, root, "checkout", "-q", "main")
+	return commit
 }
 
 func TestAnyBranchContainsReportsUnreadableObject(t *testing.T) {

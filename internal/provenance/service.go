@@ -716,11 +716,12 @@ func selectRecords(records []model.Checkpoint, consumed uint64, base, head strin
 // stranded log costs one Git call per distinct base.
 func cachedReachable(repo *gitcmd.Repo) func(string) (bool, error) {
 	cache := map[string]bool{}
+	scanner := repo.NewBranchScanner()
 	return func(commit string) (bool, error) {
 		if value, ok := cache[commit]; ok {
 			return value, nil
 		}
-		value, err := repo.AnyBranchContains(commit)
+		value, err := scanner.AnyBranchContains(commit)
 		if err != nil {
 			return false, err
 		}

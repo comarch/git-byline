@@ -462,7 +462,7 @@ Nineteen commands, one binary:
 | Command | Purpose |
 | --- | --- |
 | `checkpoint <preset>` | Record a human or AI edit snapshot from hook input |
-| `annotate [--drop-stranded]` | Replay pending snapshots and annotate `HEAD`; compatibility recovery flag remains available |
+| `annotate [--drop-stranded]` | Replay pending snapshots and annotate `HEAD`; `--drop-stranded` destructively removes unreachable unrelated checkpoint records before retrying, so preview with `recover` first |
 | `recover [--drop] [--json]` | Preview unrelated checkpoints and blocking branches; explicitly drop unreachable records and retry annotation |
 | `blame [--json] [--color=auto\|always\|never] <file>` | Show line attribution for a file at `HEAD` (file resolves from the working directory first, like `git blame`) |
 | `status [--json]` | Show checkpoint, pending, and annotation state |
@@ -486,9 +486,11 @@ Nineteen commands, one binary:
 `git byline recover` is read-only by default. It reports each unrelated
 checkpoint, whether its base object still exists, and every local or
 remote-tracking branch that reaches that base. Use `recover --drop` only after
-the preview marks records as stranded. The command rechecks reachability,
-drops only unreachable records, and retries annotation. Hook-driven annotation
-never drops evidence automatically.
+the preview marks every unrelated record as stranded. Any blocked checkpoint
+refuses the whole cleanup; annotate its listed branch or delete that branch,
+then preview again. The command rechecks reachability, drops only unreachable
+records, and retries annotation. Hook-driven annotation never drops evidence
+automatically.
 
 `git byline stats` abbreviates commit identifiers in its text report and
 prints the full identifiers in `--json` output, so tooling never depends on

@@ -83,6 +83,7 @@ func previewRecovery(
 		droppable     bool
 	}
 	cache := map[string]baseClassification{}
+	scanner := repo.NewBranchScanner()
 	for _, record := range records {
 		if record.Seq <= state.LastCheckpointSeq ||
 			record.BaseCommit == parent ||
@@ -94,7 +95,7 @@ func previewRecovery(
 			if record.BaseCommit == "" {
 				classification.droppable = true
 			} else {
-				branches, exists, err := repo.BranchesContaining(record.BaseCommit)
+				branches, exists, err := scanner.BranchesContaining(record.BaseCommit)
 				if err != nil {
 					return RecoveryReport{}, fmt.Errorf(
 						"check checkpoint %d base reachability: %w", record.Seq, err)

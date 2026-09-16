@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -555,7 +556,34 @@ func (repo *Repo) MergeBase(a, b string) (string, error) {
 // but cannot be read reports the failure instead, so callers never treat a
 // damaged object database as proof of unreachability.
 func (repo *Repo) AnyBranchContains(commit string) (bool, error) {
-	branches, _, err := repo.BranchesContaining(commit)
+	return repo.NewBranchScanner().AnyBranchContains(commit)
+}
+
+// BranchScanner shares expensive object database verification across one
+// bounded reachability scan.
+type BranchScanner struct {
+	repo       *Repo
+	verify     func() error
+	verifyOnce sync.Once
+	verifyErr  error
+}
+
+// NewBranchScanner starts one bounded branch reachability scan.
+func (repo *Repo) NewBranchScanner() *BranchScanner {
+	return repo.newBranchScanner(repo.verifyObjectDatabase)
+}
+
+func (repo *Repo) newBranchScanner(verify func() error) *BranchScanner {
+	return &BranchScanner{
+		repo:   repo,
+		verify: verify,
+	}
+}
+
+// AnyBranchContains reports whether a local or remote-tracking branch can
+// still reach commit.
+func (scanner *BranchScanner) AnyBranchContains(commit string) (bool, error) {
+	branches, _, err := scanner.BranchesContaining(commit)
 	if err != nil {
 		return false, err
 	}
@@ -565,13 +593,18 @@ func (repo *Repo) AnyBranchContains(commit string) (bool, error) {
 // BranchesContaining returns local and remote-tracking branches that can
 // reach commit, plus whether the commit object exists.
 func (repo *Repo) BranchesContaining(commit string) ([]string, bool, error) {
+	return repo.NewBranchScanner().BranchesContaining(commit)
+}
+
+// BranchesContaining returns branches that can reach commit within this scan.
+func (scanner *BranchScanner) BranchesContaining(commit string) ([]string, bool, error) {
 	if err := validateRevision(commit, "revision"); err != nil {
 		return nil, false, err
 	}
-	out, stderr, err := repo.runWithStderr("check branch containment", nil, "for-each-ref",
+	out, stderr, err := scanner.repo.runWithStderr("check branch containment", nil, "for-each-ref",
 		"refs/heads", "refs/remotes", "--contains="+commit, "--format=%(refname)")
 	if err != nil {
-		exists, existsErr := repo.commitExistsQuiet(commit)
+		exists, existsErr := scanner.commitExistsQuiet(commit)
 		if existsErr != nil {
 			return nil, false, existsErr
 		}
@@ -602,11 +635,11 @@ func (repo *Repo) BranchesContaining(commit string) ([]string, bool, error) {
 // object that exists but cannot be read reports the failure. Git exits 1 with
 // empty stderr for both cases, so fsck confirms a healthy object database
 // before the missing one is accepted.
-func (repo *Repo) commitExistsQuiet(commit string) (bool, error) {
+func (scanner *BranchScanner) commitExistsQuiet(commit string) (bool, error) {
 	if err := validateRevision(commit, "revision"); err != nil {
 		return false, err
 	}
-	_, err := repo.run("check commit exists", nil,
+	_, err := scanner.repo.run("check commit exists", nil,
 		"rev-parse", "--verify", "--quiet", commit+"^{commit}")
 	if err == nil {
 		return true, nil
@@ -614,12 +647,19 @@ func (repo *Repo) commitExistsQuiet(commit string) (bool, error) {
 	var commandErr *CommandError
 	if errors.As(err, &commandErr) && commandErr.ExitCode == 1 &&
 		strings.TrimSpace(commandErr.Stderr) == "" {
-		if err := repo.verifyObjectDatabase(); err != nil {
+		if err := scanner.verifyObjectDatabase(); err != nil {
 			return false, err
 		}
 		return false, nil
 	}
 	return false, err
+}
+
+func (scanner *BranchScanner) verifyObjectDatabase() error {
+	scanner.verifyOnce.Do(func() {
+		scanner.verifyErr = scanner.verify()
+	})
+	return scanner.verifyErr
 }
 
 func (repo *Repo) verifyObjectDatabase() error {

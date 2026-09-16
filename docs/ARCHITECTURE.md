@@ -85,9 +85,12 @@ squash merge and branch deletion strands evidence permanently, `recover`
 previews each unrelated checkpoint, object availability, and branches that
 still reach its base without changing state. `recover --drop` rechecks
 reachability, drops only unrelated checkpoints whose base no local or
-remote-tracking branch can reach, and retries annotation. Hook-driven
-annotation never selects this destructive mode. `annotate --drop-stranded`
-remains as a compatibility path.
+remote-tracking branch can reach, and retries annotation. Every unrelated
+checkpoint must be stranded; one blocked checkpoint refuses the whole cleanup
+without dropping records or retrying annotation. Hook-driven annotation never
+selects this destructive mode. `annotate --drop-stranded` remains as a
+compatibility path that performs the same destructive removal without a
+preview, so users should run `recover` first.
 
 ## Checkpoint log
 
