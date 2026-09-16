@@ -865,6 +865,10 @@ func TestAnyBranchContains(t *testing.T) {
 	if ok, err := repo.AnyBranchContains(first); err != nil || !ok {
 		t.Fatalf("AnyBranchContains(main commit) = %v, %v", ok, err)
 	}
+	if branches, exists, err := repo.BranchesContaining(first); err != nil || !exists ||
+		strings.Join(branches, ",") != "refs/heads/main" {
+		t.Fatalf("BranchesContaining(main commit) = %v, %v, %v", branches, exists, err)
+	}
 	runGit(t, root, "checkout", "-q", "-b", "feature")
 	writeFile(t, root, "two.txt", "two\n")
 	second := commitAll(t, root, "second")
@@ -880,15 +884,39 @@ func TestAnyBranchContains(t *testing.T) {
 	if ok, err := repo.AnyBranchContains(second); err != nil || !ok {
 		t.Fatalf("AnyBranchContains(remote-tracking commit) = %v, %v", ok, err)
 	}
+	if branches, exists, err := repo.BranchesContaining(second); err != nil || !exists ||
+		strings.Join(branches, ",") != "refs/remotes/origin/kept" {
+		t.Fatalf("BranchesContaining(remote commit) = %v, %v, %v", branches, exists, err)
+	}
 	runGit(t, root, "update-ref", "-d", "refs/remotes/origin/kept")
 	if ok, err := repo.AnyBranchContains(second); err != nil || ok {
 		t.Fatalf("AnyBranchContains(after remote delete) = %v, %v", ok, err)
 	}
-	if ok, err := repo.AnyBranchContains("0000000000000000000000000000000000000001"); err != nil || ok {
+	brokenRef := filepath.Join(repo.GitDir, "refs", "heads", "broken")
+	if err := os.WriteFile(brokenRef, []byte("broken\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repo.BranchesContaining(second); err == nil {
+		t.Fatal("BranchesContaining accepted an ignored broken branch reference")
+	}
+	if err := os.Remove(brokenRef); err != nil {
+		t.Fatal(err)
+	}
+	missing := "0000000000000000000000000000000000000001"
+	if ok, err := repo.AnyBranchContains(missing); err != nil || ok {
 		t.Fatalf("AnyBranchContains(missing object) = %v, %v", ok, err)
+	}
+	if branches, exists, err := repo.BranchesContaining(missing); err != nil || exists || len(branches) != 0 {
+		t.Fatalf("BranchesContaining(missing object) = %v, %v, %v", branches, exists, err)
 	}
 	if _, err := repo.AnyBranchContains("-"); err == nil {
 		t.Fatal("AnyBranchContains accepted a revision that starts with '-'")
+	}
+	if _, _, err := repo.BranchesContaining("-"); err == nil {
+		t.Fatal("BranchesContaining accepted a revision that starts with '-'")
+	}
+	if err := validateRefName("refs/heads/bad\u00a0name"); err == nil {
+		t.Fatal("validateRefName accepted Unicode whitespace")
 	}
 }
 

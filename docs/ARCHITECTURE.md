@@ -81,10 +81,13 @@ attached directly to `HEAD`, with limits of 16 MiB for the note, 500 files,
 If annotation starts after new edits already happened on the new `HEAD`,
 checkpoints based on that `HEAD` are carried into pending state for the next
 commit. A checkpoint from an unrelated base commit fails closed. After a
-squash merge and branch deletion strands evidence permanently, the user may
-run `annotate --drop-stranded` to recover. This explicit mode drops only
-unrelated checkpoints whose base no local or remote-tracking branch can
-reach, and reports the discarded count.
+squash merge and branch deletion strands evidence permanently, `recover`
+previews each unrelated checkpoint, object availability, and branches that
+still reach its base without changing state. `recover --drop` rechecks
+reachability, drops only unrelated checkpoints whose base no local or
+remote-tracking branch can reach, and retries annotation. Hook-driven
+annotation never selects this destructive mode. `annotate --drop-stranded`
+remains as a compatibility path.
 
 ## Checkpoint log
 

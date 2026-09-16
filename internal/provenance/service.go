@@ -330,11 +330,12 @@ func retainedBlobs(records []model.Checkpoint, state model.State, extra model.Ch
 
 // AnnotateResult reports a completed commit annotation.
 type AnnotateResult struct {
-	Commit   string
-	Files    int
-	Noop     bool
-	Skipped  bool
-	Warnings []string
+	Commit             string   `json:"commit,omitempty"`
+	Files              int      `json:"files"`
+	Noop               bool     `json:"noop,omitempty"`
+	Skipped            bool     `json:"skipped,omitempty"`
+	DroppedCheckpoints int      `json:"dropped_checkpoints,omitempty"`
+	Warnings           []string `json:"warnings,omitempty"`
 }
 
 type sessionMetrics map[string]*model.NoteSession
@@ -589,8 +590,7 @@ func AnnotateDroppingStranded(repo *gitcmd.Repo) (AnnotateResult, error) {
 	if err == nil {
 		return result, nil
 	}
-	var unrelated *unrelatedCheckpointError
-	if !errors.As(err, &unrelated) {
+	if _, _, ok := UnrelatedCheckpoint(err); !ok {
 		return AnnotateResult{}, err
 	}
 	dropped, err := dropStrandedCheckpoints(repo)
@@ -605,6 +605,7 @@ func AnnotateDroppingStranded(repo *gitcmd.Repo) (AnnotateResult, error) {
 		warning := fmt.Sprintf("dropped %d stranded checkpoints with bases no branch can reach", dropped)
 		result.Warnings = append([]string{warning}, result.Warnings...)
 	}
+	result.DroppedCheckpoints = dropped
 	return result, nil
 }
 
@@ -674,6 +675,15 @@ type unrelatedCheckpointError struct {
 
 func (err *unrelatedCheckpointError) Error() string {
 	return fmt.Sprintf("checkpoint %d belongs to unrelated base commit %q", err.Seq, err.Base)
+}
+
+// UnrelatedCheckpoint returns details from a failed strict annotation.
+func UnrelatedCheckpoint(err error) (uint64, string, bool) {
+	var unrelated *unrelatedCheckpointError
+	if !errors.As(err, &unrelated) {
+		return 0, "", false
+	}
+	return unrelated.Seq, unrelated.Base, true
 }
 
 func selectRecords(records []model.Checkpoint, consumed uint64, base, head string) ([]model.Checkpoint, []model.Checkpoint, uint64, error) {
@@ -1236,13 +1246,18 @@ func renderBlameResult(head, path, blob string, snapshot engine.Snapshot, warnin
 
 // StatusResult reports repository attribution state.
 type StatusResult struct {
-	Version             int      `json:"version"`
-	Head                string   `json:"head,omitempty"`
-	LastAnnotatedCommit string   `json:"last_annotated_commit,omitempty"`
-	PendingCheckpoints  int      `json:"pending_checkpoints"`
-	PendingFiles        int      `json:"pending_files"`
-	RetainedSnapshots   int      `json:"retained_snapshots"`
-	Warnings            []string `json:"warnings,omitempty"`
+	Version              int      `json:"version"`
+	Head                 string   `json:"head,omitempty"`
+	LastAnnotatedCommit  string   `json:"last_annotated_commit,omitempty"`
+	AnnotationPending    bool     `json:"annotation_pending"`
+	PendingCheckpoints   int      `json:"pending_checkpoints"`
+	PendingFiles         int      `json:"pending_files"`
+	RetainedSnapshots    int      `json:"retained_snapshots"`
+	UnrelatedCheckpoints int      `json:"unrelated_checkpoints"`
+	StrandedCheckpoints  int      `json:"stranded_checkpoints"`
+	BlockedCheckpoints   int      `json:"blocked_checkpoints"`
+	RecommendedAction    string   `json:"recommended_action,omitempty"`
+	Warnings             []string `json:"warnings,omitempty"`
 }
 
 // Status reads current state without changing it.
@@ -1273,18 +1288,37 @@ func Status(repo *gitcmd.Repo) (StatusResult, error) {
 	if head != "" && head != state.LastAnnotatedCommit {
 		warnings = append(warnings, "HEAD is not annotated")
 	}
+	annotationPending := head != "" && head != state.LastAnnotatedCommit
 	if state.LastAnnotatedCommit != "" {
 		if err := requireAttributionNote(repo, state.LastAnnotatedCommit); err != nil {
 			warnings = append(warnings, err.Error())
+			if state.LastAnnotatedCommit == head {
+				annotationPending = true
+			}
 		}
 	}
+	preview, previewErr := previewRecovery(repo, records, state, head, nil)
+	recommendedAction := preview.RecommendedAction
+	if previewErr != nil {
+		warnings = append(warnings, "cannot inspect stranded checkpoints: "+previewErr.Error())
+		recommendedAction = "git-byline recover"
+	} else if preview.BlockedCheckpoints > 0 {
+		recommendedAction = "git-byline recover"
+	} else if recommendedAction == "" && annotationPending {
+		recommendedAction = "git-byline annotate"
+	}
 	return StatusResult{
-		Version:             model.StateVersion,
-		Head:                head,
-		LastAnnotatedCommit: state.LastAnnotatedCommit,
-		PendingCheckpoints:  pending,
-		PendingFiles:        len(state.Pending.Files),
-		RetainedSnapshots:   retained,
-		Warnings:            warnings,
+		Version:              model.StateVersion,
+		Head:                 head,
+		LastAnnotatedCommit:  state.LastAnnotatedCommit,
+		AnnotationPending:    annotationPending,
+		PendingCheckpoints:   pending,
+		PendingFiles:         len(state.Pending.Files),
+		RetainedSnapshots:    retained,
+		UnrelatedCheckpoints: preview.UnrelatedCheckpoints,
+		StrandedCheckpoints:  preview.StrandedCheckpoints,
+		BlockedCheckpoints:   preview.BlockedCheckpoints,
+		RecommendedAction:    recommendedAction,
+		Warnings:             warnings,
 	}, nil
 }
