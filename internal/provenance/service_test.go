@@ -1356,23 +1356,7 @@ func TestAnnotateHandlesStrandedBranchEvidence(t *testing.T) {
 }
 
 func testAnnotateDropsPreRootEvidence(t *testing.T) {
-	root := testRepo(t)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	human := preset.Event{Type: model.AuthorHuman, Paths: []string{"file.txt"}}
-	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	write(t, root, "file.txt", "unborn\n")
-	if _, err := Capture(repo, human, now); err != nil {
-		t.Fatal(err)
-	}
-	commit(t, root, "root")
-	write(t, root, "file.txt", "unborn\nmainline\n")
-	if _, err := Capture(repo, human, now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	commit(t, root, "mainline")
+	repo := setupPreRootEvidence(t)
 	if _, err := Annotate(repo); err == nil || !strings.Contains(err.Error(), `unrelated base commit ""`) {
 		t.Fatalf("strict Annotate error = %v, want an empty unrelated base failure", err)
 	}

@@ -448,7 +448,7 @@ Uninstalling hooks stops new attribution. It does not delete existing notes.
 
 ## Commands
 
-Eighteen commands, one binary:
+Nineteen commands, one binary:
 
 | Capability | Commands |
 | --- | --- |
@@ -456,13 +456,14 @@ Eighteen commands, one binary:
 | Inspect | `blame`, `status`, `stats`, `dashboard`, `verify` |
 | Enforce | `check`, `disclosure` |
 | Interoperate | `export`, `import`, `ci` |
-| Maintain | `update` |
+| Maintain | `recover`, `update` |
 | Meta | `version`, `help` |
 
 | Command | Purpose |
 | --- | --- |
 | `checkpoint <preset>` | Record a human or AI edit snapshot from hook input |
-| `annotate [--drop-stranded]` | Replay pending snapshots and annotate `HEAD`; explicitly discard unreachable unrelated checkpoints when recovering |
+| `annotate [--drop-stranded]` | Replay pending snapshots and annotate `HEAD`; compatibility recovery flag remains available |
+| `recover [--drop] [--json]` | Preview unrelated checkpoints and blocking branches; explicitly drop unreachable records and retry annotation |
 | `blame [--json] [--color=auto\|always\|never] <file>` | Show line attribution for a file at `HEAD` (file resolves from the working directory first, like `git blame`) |
 | `status [--json]` | Show checkpoint, pending, and annotation state |
 | `dashboard [--range <rev-range>] [--repo] [--output FILE] [file]` | Generate a self-contained local HTML report |
@@ -481,6 +482,13 @@ Eighteen commands, one binary:
 | `help [command]` | Show command help |
 
 `git byline check` exits with status 1 when a policy violation is found.
+
+`git byline recover` is read-only by default. It reports each unrelated
+checkpoint, whether its base object still exists, and every local or
+remote-tracking branch that reaches that base. Use `recover --drop` only after
+the preview marks records as stranded. The command rechecks reachability,
+drops only unreachable records, and retries annotation. Hook-driven annotation
+never drops evidence automatically.
 
 `git byline stats` abbreviates commit identifiers in its text report and
 prints the full identifiers in `--json` output, so tooling never depends on

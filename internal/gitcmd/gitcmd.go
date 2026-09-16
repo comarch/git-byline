@@ -555,19 +555,46 @@ func (repo *Repo) MergeBase(a, b string) (string, error) {
 // but cannot be read reports the failure instead, so callers never treat a
 // damaged object database as proof of unreachability.
 func (repo *Repo) AnyBranchContains(commit string) (bool, error) {
-	if err := validateRevision(commit, "revision"); err != nil {
+	branches, _, err := repo.BranchesContaining(commit)
+	if err != nil {
 		return false, err
 	}
-	out, err := repo.run("check branch containment", nil, "for-each-ref",
+	return len(branches) > 0, nil
+}
+
+// BranchesContaining returns local and remote-tracking branches that can
+// reach commit, plus whether the commit object exists.
+func (repo *Repo) BranchesContaining(commit string) ([]string, bool, error) {
+	if err := validateRevision(commit, "revision"); err != nil {
+		return nil, false, err
+	}
+	out, stderr, err := repo.runWithStderr("check branch containment", nil, "for-each-ref",
 		"refs/heads", "refs/remotes", "--contains="+commit, "--format=%(refname)")
 	if err != nil {
 		exists, existsErr := repo.commitExistsQuiet(commit)
-		if existsErr == nil && !exists {
-			return false, nil
+		if existsErr != nil {
+			return nil, false, existsErr
 		}
-		return false, err
+		if !exists {
+			return nil, false, nil
+		}
+		return nil, true, err
 	}
-	return len(strings.TrimSpace(string(out))) > 0, nil
+	if stderr != "" {
+		return nil, true, fmt.Errorf("git check branch containment reported: %s", stderr)
+	}
+	var branches []string
+	for _, branch := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if branch == "" {
+			continue
+		}
+		if err := validateRefName(branch); err != nil {
+			return nil, true, errors.New("git returned an invalid branch reference")
+		}
+		branches = append(branches, branch)
+	}
+	sort.Strings(branches)
+	return branches, true, nil
 }
 
 // commitExistsQuiet reports whether commit resolves to an existing commit
@@ -587,19 +614,26 @@ func (repo *Repo) commitExistsQuiet(commit string) (bool, error) {
 	var commandErr *CommandError
 	if errors.As(err, &commandErr) && commandErr.ExitCode == 1 &&
 		strings.TrimSpace(commandErr.Stderr) == "" {
-		if _, fsckErr := repo.run(
-			"check object database",
-			nil,
-			"fsck",
-			"--full",
-			"--no-reflogs",
-			"--no-dangling",
-		); fsckErr != nil {
-			return false, fmt.Errorf("verify object database: %w", fsckErr)
+		if err := repo.verifyObjectDatabase(); err != nil {
+			return false, err
 		}
 		return false, nil
 	}
 	return false, err
+}
+
+func (repo *Repo) verifyObjectDatabase() error {
+	if _, err := repo.run(
+		"check object database",
+		nil,
+		"fsck",
+		"--full",
+		"--no-reflogs",
+		"--no-dangling",
+	); err != nil {
+		return fmt.Errorf("verify object database: %w", err)
+	}
+	return nil
 }
 
 // NoteCommits returns commits carrying notes in ref.
@@ -1088,6 +1122,11 @@ func validateRefName(value string) error {
 		strings.HasPrefix(value, "-") {
 		return errors.New("invalid Git reference")
 	}
+	for _, char := range value {
+		if unicode.IsControl(char) || unicode.IsSpace(char) {
+			return errors.New("invalid Git reference")
+		}
+	}
 	return nil
 }
 
@@ -1417,12 +1456,30 @@ func (repo *Repo) run(operation string, stdin io.Reader, args ...string) ([]byte
 	return repo.runLimited(operation, maxOutputBytes, stdin, args...)
 }
 
+func (repo *Repo) runWithStderr(
+	operation string,
+	stdin io.Reader,
+	args ...string,
+) ([]byte, string, error) {
+	return repo.runLimitedWithStderr(operation, maxOutputBytes, stdin, args...)
+}
+
 func (repo *Repo) runLimited(
 	operation string,
 	outputLimit int,
 	stdin io.Reader,
 	args ...string,
 ) ([]byte, error) {
+	out, _, err := repo.runLimitedWithStderr(operation, outputLimit, stdin, args...)
+	return out, err
+}
+
+func (repo *Repo) runLimitedWithStderr(
+	operation string,
+	outputLimit int,
+	stdin io.Reader,
+	args ...string,
+) ([]byte, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, repo.gitBin, args...)
@@ -1440,29 +1497,30 @@ func (repo *Repo) runLimited(
 	command.Stderr = &stderr
 	err := command.Run()
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("git %s timed out: %w", operation, ctx.Err())
+		return nil, "", fmt.Errorf("git %s timed out: %w", operation, ctx.Err())
 	}
 	if stdout.exceeded || stderr.exceeded {
 		limit := outputLimit
 		if stderr.exceeded {
 			limit = maxOutputBytes
 		}
-		return nil, fmt.Errorf("git %s: %w of %d bytes", operation, ErrOutputLimit, limit)
+		return nil, "", fmt.Errorf("git %s: %w of %d bytes", operation, ErrOutputLimit, limit)
 	}
+	stderrText := strings.TrimSpace(stderr.String())
 	if err != nil {
 		exitCode := -1
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		}
-		return nil, &CommandError{
+		return nil, stderrText, &CommandError{
 			Operation: operation,
 			ExitCode:  exitCode,
-			Stderr:    strings.TrimSpace(stderr.String()),
+			Stderr:    stderrText,
 			Err:       err,
 		}
 	}
-	return stdout.Bytes(), nil
+	return stdout.Bytes(), stderrText, nil
 }
 
 func gitEnvironment() []string {

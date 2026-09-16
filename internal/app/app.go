@@ -65,9 +65,20 @@ func commands() []*command {
 			short: "write attribution for HEAD to git notes",
 			usage: "Usage: git-byline annotate [--drop-stranded]\n\n" +
 				"Replay pending checkpoints and annotate the current commit.\n" +
-				"Use --drop-stranded to discard unrelated checkpoints whose\n" +
-				"base no local or remote-tracking branch can reach.",
+				"Use 'git-byline recover' to preview unrelated checkpoints before\n" +
+				"discarding any evidence. --drop-stranded remains available for\n" +
+				"compatibility.",
 			run: runAnnotate,
+		},
+		{
+			name:  "recover",
+			short: "preview or resolve stranded checkpoints",
+			usage: "Usage: git-byline recover [--drop] [--json]\n\n" +
+				"Preview unrelated checkpoints, object availability, and branches\n" +
+				"that still reach each base. The default does not change state.\n" +
+				"Use --drop to discard only unreachable checkpoints and retry\n" +
+				"annotation.",
+			run: runRecover,
 		},
 		{
 			name:  "blame",

@@ -287,17 +287,45 @@ func runAnnotate(env *Env, command *command, args []string) (int, error) {
 	}
 	result, err := annotate(repo)
 	if err != nil {
-		return operationalError(env, command.name, err)
+		return annotateOperationalError(env, command.name, repo, err)
 	}
 	writeWarnings(env, result.Warnings)
-	if result.Skipped {
-		fmt.Fprintf(env.Stdout, "skipped %s\n", result.Commit)
-	} else if result.Noop {
-		fmt.Fprintf(env.Stdout, "already annotated %s\n", result.Commit)
-	} else {
-		fmt.Fprintf(env.Stdout, "annotated %s (%d files)\n", result.Commit, result.Files)
-	}
+	writeAnnotateResult(env.Stdout, result)
 	return ExitSuccess, nil
+}
+
+func writeAnnotateResult(out io.Writer, result provenance.AnnotateResult) {
+	if result.Skipped {
+		fmt.Fprintf(out, "skipped %s\n", result.Commit)
+	} else if result.Noop {
+		fmt.Fprintf(out, "already annotated %s\n", result.Commit)
+	} else {
+		fmt.Fprintf(out, "annotated %s (%d files)\n", result.Commit, result.Files)
+	}
+}
+
+func annotateOperationalError(
+	env *Env,
+	name string,
+	repo *gitcmd.Repo,
+	err error,
+) (int, error) {
+	seq, base, ok := provenance.UnrelatedCheckpoint(err)
+	if !ok {
+		return operationalError(env, name, err)
+	}
+	head, headErr := repo.Head()
+	if headErr != nil {
+		return operationalError(env, name, err)
+	}
+	if base == "" {
+		base = "(before first commit)"
+	}
+	detail := fmt.Errorf(
+		"attribution pending for %s\ncheckpoint %d belongs to base %s\nrun: git-byline recover\ncause: %w",
+		shortCommit(head), seq, base, err,
+	)
+	return operationalError(env, name, detail)
 }
 
 func runBlame(env *Env, command *command, args []string) (int, error) {
@@ -421,9 +449,16 @@ func runStatus(env *Env, command *command, args []string) (int, error) {
 	}
 	fmt.Fprintf(env.Stdout, "HEAD: %s\n", valueOrNone(result.Head))
 	fmt.Fprintf(env.Stdout, "Last annotated commit: %s\n", valueOrNone(result.LastAnnotatedCommit))
+	fmt.Fprintf(env.Stdout, "Annotation pending: %t\n", result.AnnotationPending)
 	fmt.Fprintf(env.Stdout, "Pending checkpoints: %d\n", result.PendingCheckpoints)
 	fmt.Fprintf(env.Stdout, "Pending files: %d\n", result.PendingFiles)
 	fmt.Fprintf(env.Stdout, "Retained snapshots: %d\n", result.RetainedSnapshots)
+	fmt.Fprintf(env.Stdout, "Unrelated checkpoints: %d\n", result.UnrelatedCheckpoints)
+	fmt.Fprintf(env.Stdout, "Stranded checkpoints: %d\n", result.StrandedCheckpoints)
+	fmt.Fprintf(env.Stdout, "Blocked checkpoints: %d\n", result.BlockedCheckpoints)
+	if result.RecommendedAction != "" {
+		fmt.Fprintf(env.Stdout, "Recommended action: %s\n", result.RecommendedAction)
+	}
 	writeWarnings(env, result.Warnings)
 	return ExitSuccess, nil
 }
