@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -64,6 +65,9 @@ func TestValidateGoBoundaryFailures(t *testing.T) {
 
 func TestValidateCoverageFailures(t *testing.T) {
 	t.Run("temporary directory creation", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("TMPDIR does not control temporary paths on Windows")
+		}
 		t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
 		if err := checkCoverage(copyFixture(t)); err == nil {
 			t.Fatal("checkCoverage() = nil error, want temp directory failure")
@@ -330,6 +334,9 @@ func useFakeTool(t *testing.T, name, content string) {
 
 func writeExecutableTestFile(t *testing.T, path, content string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake command is not executable on Windows")
+	}
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("write executable %s: %v", path, err)
 	}

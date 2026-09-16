@@ -1,6 +1,7 @@
 package rewrite
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -11,6 +12,8 @@ import (
 const (
 	oldCommit = "1111111111111111111111111111111111111111"
 	newCommit = "2222222222222222222222222222222222222222"
+	mainRef   = "refs/heads/main"
+	tagRef    = "refs/tags/v1"
 )
 
 func TestParsePostRewriteAndRemap(t *testing.T) {
@@ -37,6 +40,9 @@ func TestParsePostRewriteAndRemap(t *testing.T) {
 	state = mapping.RemapState(state)
 	if state.LastAnnotatedCommit != oldCommit || state.Pending.BaseCommit != oldCommit {
 		t.Fatalf("RemapState() = %+v", state)
+	}
+	if got, ok := mapping.Remap("missing"); ok || got != "" {
+		t.Fatalf("missing Remap() = %q, %t", got, ok)
 	}
 }
 
@@ -126,13 +132,13 @@ func TestMappingDeduplicatesPairsAndDoesNotStoreDropState(t *testing.T) {
 func TestReferenceFilterAndStashInput(t *testing.T) {
 	t.Parallel()
 	relevant, err := HasRelevantReference(strings.NewReader(
-		oldCommit + " " + newCommit + " refs/tags/v1\n",
+		oldCommit + " " + newCommit + " " + tagRef + "\n",
 	))
 	if err != nil || relevant {
 		t.Fatalf("tag filter = %t, %v", relevant, err)
 	}
 	relevant, err = HasRelevantReference(strings.NewReader(
-		oldCommit + " " + newCommit + " refs/heads/main\n",
+		oldCommit + " " + newCommit + " " + mainRef + "\n",
 	))
 	if err != nil || !relevant {
 		t.Fatalf("branch filter = %t, %v", relevant, err)
@@ -153,7 +159,7 @@ func TestParseReferenceTransaction(t *testing.T) {
 	t.Parallel()
 	input := strings.NewReader(
 		strings.Repeat("0", 40) + " " + newCommit + " HEAD\n" +
-			oldCommit + " " + newCommit + " refs/heads/main\n" +
+			oldCommit + " " + newCommit + " " + mainRef + "\n" +
 			oldCommit + " " + newCommit + " refs/stash\n",
 	)
 	updates, err := ParseReferenceTransaction(input)
@@ -168,7 +174,7 @@ func TestParseReferenceTransaction(t *testing.T) {
 func TestParseReferenceTransactionKeepsUninterestingRefsForFiltering(t *testing.T) {
 	t.Parallel()
 	updates, err := ParseReferenceTransaction(strings.NewReader(
-		oldCommit + " " + newCommit + " refs/tags/v1\n",
+		oldCommit + " " + newCommit + " " + tagRef + "\n",
 	))
 	if err != nil || len(updates) != 1 || updates[0].Ref != "refs/tags/v1" {
 		t.Fatalf("uninteresting updates = %+v, %v", updates, err)
@@ -177,6 +183,7 @@ func TestParseReferenceTransactionKeepsUninterestingRefsForFiltering(t *testing.
 		oldCommit + " " + newCommit + " refs/heads/\n",
 		oldCommit + " " + newCommit + " refs/heads/a b\n",
 		"bad " + newCommit + " HEAD\n",
+		oldCommit + " bad HEAD\n",
 	} {
 		input := input
 		t.Run(input, func(t *testing.T) {
@@ -216,5 +223,218 @@ func TestProjectLayeredWrapper(t *testing.T) {
 	if err != nil || len(projected.Attributions) != 1 ||
 		projected.Attributions[0].Author != model.AuthorHuman {
 		t.Fatalf("ProjectLayered() = %+v, %v", projected, err)
+	}
+}
+
+func TestNewMappingUsesFlexibleObjectIDValidation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		pair    Pair
+		wantErr bool
+	}{
+		{name: "invalid old ID", pair: Pair{Old: "aaa", New: "bbbb"}, wantErr: true},
+		{name: "invalid new ID", pair: Pair{Old: "aaaa", New: "bad!"}, wantErr: true},
+		{name: "zero new ID", pair: Pair{Old: "aaaa", New: "0000"}},
+		{name: "valid IDs", pair: Pair{Old: "aaaa", New: "bbbb"}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mapping, err := newMapping([]Pair{test.pair}, 0)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("newMapping() error = %v, want error %t", err, test.wantErr)
+			}
+			if test.wantErr {
+				return
+			}
+			if len(mapping.Pairs) != 1 || mapping.Pairs[0] != test.pair {
+				t.Fatalf("newMapping() = %+v", mapping)
+			}
+		})
+	}
+}
+
+func TestRewriteParsersRejectNilInput(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		parse func() error
+	}{
+		{
+			name: "post-rewrite",
+			parse: func() error {
+				_, err := ParsePostRewrite(nil)
+				return err
+			},
+		},
+		{
+			name: "reference transaction",
+			parse: func() error {
+				_, err := ParseReferenceTransactionForLength(nil, 40)
+				return err
+			},
+		},
+		{
+			name: "reference filter",
+			parse: func() error {
+				_, err := HasRelevantReference(nil)
+				return err
+			},
+		},
+		{
+			name: "stash apply",
+			parse: func() error {
+				_, err := ParseStashApply(nil, 40)
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if err := test.parse(); err == nil {
+				t.Fatal("parser accepted nil input")
+			}
+		})
+	}
+}
+
+type rewriteErrorReader struct{}
+
+func (rewriteErrorReader) Read([]byte) (int, error) {
+	return 0, errors.New("rewrite reader failed")
+}
+
+func TestReadLinesPropagatesReaderError(t *testing.T) {
+	t.Parallel()
+	_, err := ParsePostRewrite(rewriteErrorReader{})
+	if err == nil || !strings.Contains(err.Error(), "read rewrite hook input") {
+		t.Fatalf("ParsePostRewrite() error = %v", err)
+	}
+}
+
+func TestParseStashApplyRejectsMalformedInput(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "empty", input: ""},
+		{name: "missing keep flag", input: newCommit + "\n"},
+		{name: "extra field", input: newCommit + " 1 extra\n"},
+		{name: "invalid commit", input: "not-an-object 1\n"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := ParseStashApply(strings.NewReader(test.input), 40); err == nil {
+				t.Fatal("ParseStashApply accepted malformed input")
+			}
+		})
+	}
+	stash, err := ParseStashApply(strings.NewReader(newCommit+" 0\n"), 40)
+	if err != nil || stash.Keep {
+		t.Fatalf("keep=false input = %+v, %v", stash, err)
+	}
+}
+
+func TestHasRelevantReferenceRejectsMalformedInput(t *testing.T) {
+	t.Parallel()
+	tests := []string{
+		"malformed\n",
+		oldCommit + " " + newCommit + " refs//heads\n",
+	}
+	for _, input := range tests {
+		input := input
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+			if _, err := HasRelevantReference(strings.NewReader(input)); err == nil {
+				t.Fatal("HasRelevantReference accepted malformed input")
+			}
+		})
+	}
+}
+
+func TestValidateFullObjectIDBoundaries(t *testing.T) {
+	t.Parallel()
+	valid40 := strings.Repeat("a", 40)
+	valid64 := strings.Repeat("b", 64)
+	tests := []struct {
+		name      string
+		value     string
+		length    int
+		allowZero bool
+		wantErr   bool
+	}{
+		{name: "unsupported length", value: valid40, length: 32, wantErr: true},
+		{name: "too short", value: valid40[:39], length: 40, wantErr: true},
+		{name: "too long", value: valid40 + "a", length: 40, wantErr: true},
+		{name: "non hexadecimal", value: strings.Repeat("a", 39) + "g", length: 40, wantErr: true},
+		{name: "zero rejected", value: strings.Repeat("0", 40), length: 40, wantErr: true},
+		{name: "zero allowed", value: strings.Repeat("0", 40), length: 40, allowZero: true},
+		{name: "SHA-1 boundary", value: valid40, length: 40},
+		{name: "SHA-256 boundary", value: valid64, length: 64},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateFullObjectID(test.value, test.length, test.allowZero)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("ValidateFullObjectID() error = %v, want error %t", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestIsZeroObjectIDBoundaries(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "short", value: "000", want: false},
+		{name: "zero", value: "0000", want: true},
+		{name: "nonzero", value: "0001", want: false},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isZeroObjectID(test.value); got != test.want {
+				t.Fatalf("isZeroObjectID(%q) = %t, want %t", test.value, got, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateHookRefRejectsUnsafeValues(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		ref     string
+		wantErr bool
+	}{
+		{name: "empty", ref: "", wantErr: true},
+		{name: "control character", ref: "refs/heads/\x00", wantErr: true},
+		{name: "double separator", ref: "refs//heads", wantErr: true},
+		{name: "at expression", ref: "refs/heads/main@{1}", wantErr: true},
+		{name: "dot component", ref: "refs/heads/.", wantErr: true},
+		{name: "valid branch", ref: mainRef},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateHookRef(test.ref)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateHookRef(%q) error = %v, want error %t", test.ref, err, test.wantErr)
+			}
+		})
 	}
 }

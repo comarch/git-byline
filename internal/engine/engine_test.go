@@ -604,3 +604,142 @@ func FuzzLayeredMatcher(f *testing.F) {
 		}
 	})
 }
+
+// TestNewSnapshotRejectsInvalidContentAndRanges covers the NewSnapshot
+// guards: invalid UTF-8 content and ranges that do not cover the content.
+func TestNewSnapshotRejectsInvalidContentAndRanges(t *testing.T) {
+	t.Parallel()
+	human := model.Attribution{Author: model.AuthorHuman}
+	if _, err := NewSnapshot([]byte{0xff, 'a'}, nil); err == nil {
+		t.Fatal("NewSnapshot accepted invalid UTF-8 content")
+	}
+	shortRanges := []model.Range{{Start: 1, End: 1, Attribution: human}}
+	if _, err := NewSnapshot([]byte("a\nb\n"), shortRanges); err == nil {
+		t.Fatal("NewSnapshot accepted ranges that do not cover the content")
+	}
+}
+
+// TestUniformRangesRejectsInvalidContentAndEmptyContent covers the
+// UniformRanges guards: invalid UTF-8 content and empty content.
+func TestUniformRangesRejectsInvalidContentAndEmptyContent(t *testing.T) {
+	t.Parallel()
+	human := model.Attribution{Author: model.AuthorHuman}
+	if _, err := UniformRanges([]byte{0xff}, human); err == nil {
+		t.Fatal("UniformRanges accepted invalid UTF-8 content")
+	}
+	ranges, err := UniformRanges(nil, human)
+	if err != nil || ranges != nil {
+		t.Fatalf("UniformRanges(nil) = %v, %v; want nil, nil", ranges, err)
+	}
+}
+
+// TestReplayWithStatsTransitionContentError pins the transition content
+// guard: invalid UTF-8 content fails the whole replay.
+func TestReplayWithStatsTransitionContentError(t *testing.T) {
+	t.Parallel()
+	human := model.Attribution{Author: model.AuthorHuman}
+	_, _, err := ReplayWithStats(Snapshot{}, []Transition{{Content: []byte{0xff}, Attribution: human}})
+	if err == nil || !strings.Contains(err.Error(), "transition 0 content") {
+		t.Fatalf("ReplayWithStats() error = %v, want transition content failure", err)
+	}
+}
+
+// TestReplayWithStatsOverrideSelection covers the override selection
+// branches: non-AI lines and same-agent same-session AI lines are not
+// overrides, while other-session AI lines are.
+func TestReplayWithStatsOverrideSelection(t *testing.T) {
+	t.Parallel()
+	ai := model.Attribution{Author: model.AuthorAI, Agent: "droid", Session: "session-1"}
+	other := model.Attribution{Author: model.AuthorAI, Agent: "claude", Session: "session-2"}
+	initial, err := NewSnapshot([]byte("human\nsame\nother\n"), []model.Range{
+		{Start: 1, End: 1, Attribution: model.Attribution{Author: model.AuthorHuman}},
+		{Start: 2, End: 2, Attribution: ai},
+		{Start: 3, End: 3, Attribution: other},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stats, err := ReplayWithStats(initial, []Transition{
+		{Content: []byte("replacement\n"), Attribution: ai},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 1 || len(stats[0].Overridden) != 1 {
+		t.Fatalf("ReplayWithStats() = %+v", stats)
+	}
+	if got := stats[0].Overridden[0]; got.Agent != "claude" || got.Session != "session-2" {
+		t.Fatalf("overridden attribution = %+v, want the other-session AI line", got)
+	}
+}
+
+// TestProjectGuards covers the ProjectWithBudget guards: invalid fallback
+// attribution, invalid target content, and an exhausted matcher budget.
+func TestProjectGuards(t *testing.T) {
+	t.Parallel()
+	human := model.Attribution{Author: model.AuthorHuman}
+	source := Snapshot{Lines: []string{"a"}, Attributions: []model.Attribution{human}}
+	if _, err := ProjectWithBudget(source, []byte{0xff}, human, nil); err == nil {
+		t.Fatal("Project accepted invalid UTF-8 target content")
+	}
+	if _, err := ProjectWithBudget(source, []byte("a\n"), model.Attribution{Author: model.AuthorAI}, nil); err == nil {
+		t.Fatal("Project accepted an invalid fallback attribution")
+	}
+	_, err := ProjectWithBudget(source, []byte("b\n"), human, NewMatcherBudget(0))
+	if !errors.Is(err, ErrMatcherBudget) {
+		t.Fatalf("Project budget error = %v, want %v", err, ErrMatcherBudget)
+	}
+	if _, err := ProjectLayered(nil, []byte{0xff}, human); err == nil {
+		t.Fatal("ProjectLayered accepted invalid UTF-8 target content")
+	}
+}
+
+// TestRangesRejectsInvalidAttribution pins the Ranges guard: a snapshot
+// carrying an invalid attribution must fail range derivation rather
+// than emit invalid ranges.
+func TestRangesRejectsInvalidAttribution(t *testing.T) {
+	t.Parallel()
+	invalid := Snapshot{
+		Lines:        []string{"a"},
+		Attributions: []model.Attribution{{Author: model.AuthorAI}},
+	}
+	if _, err := invalid.Ranges(); err == nil {
+		t.Fatal("Ranges accepted an invalid attribution")
+	}
+}
+
+// TestMatcherGuards covers the matcher helpers directly: greedy fallback
+// beyond the LCS cell ceiling, whitespace-gap budget exhaustion, and the
+// nil-budget reserve fast path.
+func TestMatcherGuards(t *testing.T) {
+	t.Parallel()
+	var hugeOld, hugeNew []string
+	for i := 0; i < 4001; i++ {
+		hugeOld = append(hugeOld, " old"+strconv.Itoa(i))
+	}
+	for i := 0; i < 1000; i++ {
+		hugeNew = append(hugeNew, " new"+strconv.Itoa(i))
+	}
+	pairs, err := exactPairsBudget(hugeOld, hugeNew, nil)
+	if err != nil {
+		t.Fatalf("exactPairsBudget(greedy fallback) = %v", err)
+	}
+	if len(pairs) != 0 {
+		t.Fatalf("exactPairsBudget(greedy fallback) = %d pairs, want none", len(pairs))
+	}
+	if _, err := whitespacePairsBudget(hugeOld, hugeNew, 0, 0, nil); err != nil {
+		t.Fatalf("whitespacePairsBudget(greedy fallback) = %v", err)
+	}
+	if _, err := whitespacePairsBudget(hugeOld[0:2], hugeNew[0:2], 0, 0, NewMatcherBudget(0)); !errors.Is(err, ErrMatcherBudget) {
+		t.Fatalf("whitespace budget error = %v, want %v", err, ErrMatcherBudget)
+	}
+	old := []string{"a", " p", " q", " r", "b"}
+	next := []string{"a", " P", " Q", " R", "b"}
+	if _, err := equalPairsBudget(old, next, NewMatcherBudget(10)); !errors.Is(err, ErrMatcherBudget) {
+		t.Fatalf("anchor gap budget error = %v, want %v", err, ErrMatcherBudget)
+	}
+	var nilBudget *MatcherBudget
+	if !nilBudget.reserve(2, 3) {
+		t.Fatal("nil budget reserve = false, want true")
+	}
+}

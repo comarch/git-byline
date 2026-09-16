@@ -3,6 +3,7 @@ package disclosure
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -258,6 +259,75 @@ func disclosureFixture() report.Aggregate {
 			},
 		},
 		Warnings: []string{"warning \"quoted\""},
+	}
+}
+
+// TestRangeLabelBranches covers every range label shape: explicit
+// ranges, open-ended ranges, single-commit ranges, and the default.
+func TestRangeLabelBranches(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		from string
+		to   string
+		want string
+	}{
+		{name: "explicit range", from: "base", to: "head", want: `"label": "base..head"`},
+		{name: "open ended", from: "base", to: "", want: `"label": "base..HEAD"`},
+		{name: "single commit", from: "", to: "head", want: `"label": "head"`},
+		{name: "default", from: "", to: "", want: `"label": "HEAD"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			aggregate := disclosureFixture()
+			aggregate.From = tc.from
+			aggregate.To = tc.to
+			data, err := Render("json", aggregate, time.Time{}, "dev")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), tc.want) {
+				t.Fatalf("range label = missing %s in output:\n%s", tc.want, data)
+			}
+		})
+	}
+}
+
+// TestRenderZeroLineAggregate pins the zero-division guard: an empty
+// aggregate still renders, with AI share zero rather than NaN.
+func TestRenderZeroLineAggregate(t *testing.T) {
+	t.Parallel()
+	data, err := Render("json", report.Aggregate{}, time.Time{}, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"ai_share_percent": 0`) {
+		t.Fatalf("zero-line AI share missing: %s", data)
+	}
+}
+
+// TestRenderRejectsOverflowingTotals covers the overflow guard: class
+// counts whose sum exceeds the int range fail validation instead of
+// wrapping around.
+func TestRenderRejectsOverflowingTotals(t *testing.T) {
+	t.Parallel()
+	aggregate := disclosureFixture()
+	aggregate.Totals.Human = math.MaxInt
+	aggregate.Totals.AI = math.MaxInt
+	if _, err := Render("json", aggregate, time.Time{}, "dev"); err == nil ||
+		!strings.Contains(err.Error(), "totals overflow") {
+		t.Fatalf("overflow error = %v", err)
+	}
+}
+
+// TestMarshalDocumentRejectsUnencodableValues covers the JSON encoder
+// error branch with a value encoding/json cannot represent.
+func TestMarshalDocumentRejectsUnencodableValues(t *testing.T) {
+	t.Parallel()
+	if _, err := marshalDocument(math.NaN()); err == nil ||
+		!strings.Contains(err.Error(), "encode disclosure JSON") {
+		t.Fatalf("marshalDocument(NaN) = %v, want encode error", err)
 	}
 }
 

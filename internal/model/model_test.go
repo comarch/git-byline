@@ -22,6 +22,18 @@ func TestSessionKeyAndEventID(t *testing.T) {
 	}
 }
 
+// TestValidateEventIDBounds covers the length and UTF-8 guards: an
+// oversized id and an id with invalid UTF-8 sequences must be rejected.
+func TestValidateEventIDBounds(t *testing.T) {
+	t.Parallel()
+	if err := ValidateEventID(strings.Repeat("a", maxAttributionValueBytes+1)); err == nil {
+		t.Fatal("ValidateEventID accepted an oversized id")
+	}
+	if err := ValidateEventID("\xff\xfe"); err == nil {
+		t.Fatal("ValidateEventID accepted invalid UTF-8")
+	}
+}
+
 func TestValidateAttribution(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -44,6 +56,7 @@ func TestValidateAttribution(t *testing.T) {
 			Author: AuthorHumanOverride, Agent: "droid", TS: "2026-01-02T03:04:05Z",
 		}, true},
 		{"unknown", Attribution{Author: "other"}, false},
+		{"ai invalid utf-8 agent", Attribution{Author: AuthorAI, Agent: "\xff\xfe"}, false},
 	}
 	for _, test := range tests {
 		test := test
@@ -85,6 +98,7 @@ func TestValidateRanges(t *testing.T) {
 		{"human override", []Range{{Start: 1, End: 1, Attribution: override}}, 1, true},
 		{"range on empty", []Range{{Start: 1, End: 1, Attribution: human}}, 0, false},
 		{"missing", nil, 1, false},
+		{"short", []Range{{Start: 1, End: 1, Attribution: human}}, 2, false},
 		{"gap", []Range{{Start: 2, End: 2, Attribution: human}}, 2, false},
 		{"overlap", []Range{
 			{Start: 1, End: 2, Attribution: human},

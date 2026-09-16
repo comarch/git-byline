@@ -212,6 +212,9 @@ func TestCollectBinaryCoverage(t *testing.T) {
 	if testing.Short() {
 		t.Skip("covered binary builds are slow")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("covered binary collection uses extensionless executable paths")
+	}
 	root, err := repoRoot()
 	if err != nil {
 		t.Fatalf("repoRoot: %v", err)

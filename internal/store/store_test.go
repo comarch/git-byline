@@ -474,3 +474,57 @@ func TestStorePaths(t *testing.T) {
 		t.Fatalf("unexpected store paths: %+v", value)
 	}
 }
+
+// TestReadCheckpointsWarnsOnTruncatedFinalLine covers the tail guard:
+// a final line cut off without a newline is reported as a warning and
+// ignored instead of failing the whole read.
+func TestReadCheckpointsWarnsOnTruncatedFinalLine(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	if err := value.AppendCheckpoint(validCheckpoint(1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		value.CheckpointPath(),
+		[]byte(mustJSON(validCheckpoint(1))+"\n"+`{"version":1,"seq"`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	records, warnings, err := value.ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("ReadCheckpoints() = %+v, want one record", records)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "ignored truncated final checkpoint line") {
+		t.Fatalf("warnings = %v, want truncated final line warning", warnings)
+	}
+}
+
+// TestAppendCheckpointRejectsUnwritableLog covers the append guard: a
+// non-writable log fails the append, not a silent skip. The tail
+// inspection opens the log read-write first, so the permission error
+// surfaces through the tail guard.
+func TestAppendCheckpointRejectsUnwritableLog(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only file modes do not block appends on windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	value := New(t.TempDir())
+	if err := value.AppendCheckpoint(validCheckpoint(1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(value.CheckpointPath(), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(value.CheckpointPath(), 0o600) })
+	if err := value.AppendCheckpoint(validCheckpoint(2)); err == nil ||
+		!strings.Contains(err.Error(), "read checkpoint tail") {
+		t.Fatalf("AppendCheckpoint(unwritable) = %v, want tail open failure", err)
+	}
+}
