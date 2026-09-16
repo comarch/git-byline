@@ -236,6 +236,8 @@ func noteDecodeErrorClass(err error) string {
 		return "size limit"
 	case strings.Contains(message, "invalid character"),
 		strings.Contains(message, "unexpected end"),
+		strings.Contains(message, "unexpected EOF"),
+		strings.Contains(message, ": EOF"),
 		strings.Contains(message, "multiple JSON values"):
 		return "malformed JSON"
 	default:
