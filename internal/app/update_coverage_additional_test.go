@@ -238,6 +238,16 @@ func TestUpdateTarReadFailures(t *testing.T) {
 func TestUpdateZipReadFailures(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	updateZipMissingBinaryFailure(t, dir)
+	updateZipInvalidArchiveFailure(t, dir)
+	updateZipSymlinkEntryFailure(t, dir)
+	updateZipDirectoryEntryFailure(t, dir)
+	updateZipAppleDoubleAndExtractionFailures(t, dir)
+	updateZipUnsupportedMethodFailure(t, dir)
+}
+
+func updateZipMissingBinaryFailure(t *testing.T, dir string) {
+	t.Helper()
 	missingBinary := filepath.Join(dir, "missing.zip")
 	buildZip(t, missingBinary, releaseZipEntries("")[0:3])
 	staged, err := os.Create(filepath.Join(dir, "staged"))
@@ -249,12 +259,15 @@ func TestUpdateZipReadFailures(t *testing.T) {
 		t.Fatalf("missing zip binary = %v", err)
 	}
 	_ = staged.Close()
+}
 
+func updateZipInvalidArchiveFailure(t *testing.T, dir string) {
+	t.Helper()
 	invalidZip := filepath.Join(dir, "invalid.zip")
 	if err := os.WriteFile(invalidZip, []byte("not zip"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	staged, err = os.Create(filepath.Join(dir, "staged-invalid"))
+	staged, err := os.Create(filepath.Join(dir, "staged-invalid"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +276,10 @@ func TestUpdateZipReadFailures(t *testing.T) {
 		t.Fatalf("invalid zip = %v", err)
 	}
 	_ = staged.Close()
+}
 
+func updateZipSymlinkEntryFailure(t *testing.T, dir string) {
+	t.Helper()
 	symlinkZip := filepath.Join(dir, "symlink.zip")
 	file, err := os.Create(symlinkZip)
 	if err != nil {
@@ -285,7 +301,7 @@ func TestUpdateZipReadFailures(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	staged, err = os.Create(filepath.Join(dir, "staged-symlink"))
+	staged, err := os.Create(filepath.Join(dir, "staged-symlink"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,14 +310,17 @@ func TestUpdateZipReadFailures(t *testing.T) {
 		t.Fatalf("zip symlink = %v", err)
 	}
 	_ = staged.Close()
+}
 
+func updateZipDirectoryEntryFailure(t *testing.T, dir string) {
+	t.Helper()
 	directoryZip := filepath.Join(dir, "directory.zip")
-	file, err = os.Create(directoryZip)
+	file, err := os.Create(directoryZip)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer = zip.NewWriter(file)
-	header = &zip.FileHeader{Name: "git-byline.exe"}
+	writer := zip.NewWriter(file)
+	header := &zip.FileHeader{Name: "git-byline.exe"}
 	header.SetMode(os.ModeDir | 0o755)
 	if _, err := writer.CreateHeader(header); err != nil {
 		t.Fatal(err)
@@ -312,7 +331,7 @@ func TestUpdateZipReadFailures(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	staged, err = os.Create(filepath.Join(dir, "staged-directory"))
+	staged, err := os.Create(filepath.Join(dir, "staged-directory"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,11 +340,14 @@ func TestUpdateZipReadFailures(t *testing.T) {
 		t.Fatalf("zip directory = %v", err)
 	}
 	_ = staged.Close()
+}
 
+func updateZipAppleDoubleAndExtractionFailures(t *testing.T, dir string) {
+	t.Helper()
 	appleZip := filepath.Join(dir, "apple.zip")
 	appleEntries := append([]zipEntry{{name: "._apple", content: "ignored"}}, releaseZipEntries("binary")...)
 	buildZip(t, appleZip, appleEntries)
-	staged, err = os.Create(filepath.Join(dir, "staged-apple"))
+	staged, err := os.Create(filepath.Join(dir, "staged-apple"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +371,10 @@ func TestUpdateZipReadFailures(t *testing.T) {
 		t.Fatalf("zip extraction failure = %v", err)
 	}
 	_ = staged.Close()
+}
 
+func updateZipUnsupportedMethodFailure(t *testing.T, dir string) {
+	t.Helper()
 	unsupportedZip := filepath.Join(dir, "unsupported.zip")
 	buildZip(t, unsupportedZip, []zipEntry{{name: "git-byline.exe", content: "binary"}})
 	data, err := os.ReadFile(unsupportedZip)
@@ -366,7 +391,7 @@ func TestUpdateZipReadFailures(t *testing.T) {
 	if err := os.WriteFile(unsupportedZip, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	staged, err = os.Create(filepath.Join(dir, "staged-unsupported"))
+	staged, err := os.Create(filepath.Join(dir, "staged-unsupported"))
 	if err != nil {
 		t.Fatal(err)
 	}

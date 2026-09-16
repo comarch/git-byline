@@ -118,30 +118,37 @@ func TestCoverageAcquireTemplateLockFailure(t *testing.T) {
 }
 
 func TestCoverageLegacyMarkerFailures(t *testing.T) {
-	t.Run("unreadable legacy marker", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("file permissions differ on Windows")
-		}
-		if os.Geteuid() == 0 {
-			t.Skip("root ignores file permissions")
-		}
-		xdg := templateEnv(t)
-		dir := filepath.Join(xdg, productName, "templates")
-		legacy := filepath.Join(filepath.Dir(dir), templateStockLegacyMarker)
-		if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(legacy, []byte(templateStockLegacyOwner), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(legacy, 0); err != nil {
-			t.Fatal(err)
-		}
-		if err := writeTemplateStock(dir, new([]string)); err == nil {
-			t.Fatal("unreadable legacy marker was accepted")
-		}
-	})
+	t.Run("unreadable legacy marker", coverageLegacyMarkerUnreadable)
+	coverageLegacyMarkerMissing(t)
+	coverageLegacyMarkerRegularParent(t)
+	coverageLegacyMarkerInvalid(t)
+}
 
+func coverageLegacyMarkerUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permissions differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	xdg := templateEnv(t)
+	dir := filepath.Join(xdg, productName, "templates")
+	legacy := filepath.Join(filepath.Dir(dir), templateStockLegacyMarker)
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte(templateStockLegacyOwner), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(legacy, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTemplateStock(dir, new([]string)); err == nil {
+		t.Fatal("unreadable legacy marker was accepted")
+	}
+}
+
+func coverageLegacyMarkerMissing(t *testing.T) {
 	xdg := templateEnv(t)
 	if err := os.RemoveAll(xdg); err != nil {
 		t.Fatal(err)
@@ -152,8 +159,10 @@ func TestCoverageLegacyMarkerFailures(t *testing.T) {
 	if exists, valid, err := readTemplateStockMarker(templateStockFiles[0]); err != nil || exists || valid {
 		t.Fatalf("missing base marker = %t, %t, %v", exists, valid, err)
 	}
+}
 
-	xdg = templateEnv(t)
+func coverageLegacyMarkerRegularParent(t *testing.T) {
+	xdg := templateEnv(t)
 	if err := os.WriteFile(filepath.Join(xdg, productName), []byte(coverageForeignText), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -167,8 +176,10 @@ func TestCoverageLegacyMarkerFailures(t *testing.T) {
 			t.Fatal("regular template marker parent was accepted")
 		}
 	}
+}
 
-	xdg = templateEnv(t)
+func coverageLegacyMarkerInvalid(t *testing.T) {
+	xdg := templateEnv(t)
 	file := templateStockFiles[0]
 	legacy := filepath.Join(xdg, productName, templateStockLegacyMarker)
 	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
@@ -641,14 +652,27 @@ func TestCoverageAgentAtomicWriteFailure(t *testing.T) {
 
 func TestCoverageCommandAndHookErrors(t *testing.T) {
 	command := rewriteHookCommand(productName, "post-checkout", false)
+	coverageCommandRecognitionErrors(t, command)
+
+	dir := t.TempDir()
+	coverageHookPathErrors(t, dir, command)
+	block := blockStart + "\r\n" + command + "\r\n" + blockEnd
+	coverageHookUpdateErrors(t, dir, command, block)
+	t.Run("read-only hook directory", func(t *testing.T) {
+		coverageReadOnlyHookDirectory(t, dir, command, block)
+	})
+}
+
+func coverageCommandRecognitionErrors(t *testing.T, command string) {
 	if commandHasSingleExecutable(`'/path' bad'`, "") {
 		t.Fatal("command with outside whitespace was accepted")
 	}
 	if managedGitHookBlock(blockStart + "\ninvalid") {
 		t.Fatal("malformed managed block was accepted")
 	}
+}
 
-	dir := t.TempDir()
+func coverageHookPathErrors(t *testing.T, dir, command string) {
 	path := filepath.Join(dir, "hook")
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
@@ -659,7 +683,9 @@ func TestCoverageCommandAndHookErrors(t *testing.T) {
 	if _, err := changeGitHook("bad\x00", command, true); err == nil {
 		t.Fatal("invalid hook stat was accepted")
 	}
+}
 
+func coverageHookUpdateErrors(t *testing.T, dir, command, block string) {
 	nonShell := filepath.Join(dir, "non-shell")
 	if err := os.WriteFile(nonShell, []byte("#!/bin/sh\n"), 0o700); err != nil {
 		t.Fatal(err)
@@ -668,67 +694,66 @@ func TestCoverageCommandAndHookErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	crlf := filepath.Join(dir, "crlf")
-	block := blockStart + "\r\n" + command + "\r\n" + blockEnd
 	if err := os.WriteFile(crlf, []byte("#!/bin/sh\r\n"+block+"\r\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := changeGitHook(crlf, command, false); err != nil {
 		t.Fatal(err)
 	}
+}
 
-	t.Run("read-only hook directory", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("directory permissions differ on Windows")
-		}
-		if os.Geteuid() == 0 {
-			t.Skip("root ignores directory write permissions")
-		}
-		readonly := filepath.Join(dir, "readonly")
-		t.Cleanup(func() {
-			_ = os.Chmod(readonly, 0o700)
-		})
-		if err := os.Mkdir(readonly, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		hook := filepath.Join(readonly, "hook")
-		if err := os.WriteFile(hook, []byte("#!/bin/sh\n"+blockStart+"\n"+command+"\n"+blockEnd+"\n"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-
-		installHook := filepath.Join(readonly, "install")
-		stale := rewriteHookCommand("/old/git-byline", "post-checkout", false)
-		if err := os.WriteFile(installHook, []byte("#!/bin/sh\n"+blockStart+"\n"+stale+"\n"+blockEnd+"\n"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-
-		uninstallHook := filepath.Join(readonly, "uninstall")
-		if err := os.WriteFile(uninstallHook, []byte("#!/bin/sh\n"+blockStart+"\n"+command+"\n"+blockEnd+"\necho custom\n"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-
-		atomicHook := filepath.Join(readonly, "atomic")
-		if err := os.WriteFile(atomicHook, []byte("#!/bin/sh\n"+blockStart+"\n"+command+"\n"+blockEnd+"\necho custom\n"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(atomicHook+".git-byline.bak", []byte(coverageForeignText), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(readonly, 0o500); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := changeGitHook(hook, command, false); err == nil {
-			t.Fatal("read-only generated hook was removed")
-		}
-		if _, err := changeGitHook(installHook, command, true); err == nil {
-			t.Fatal("read-only backup refresh was accepted")
-		}
-		if _, err := changeGitHook(uninstallHook, command, false); err == nil {
-			t.Fatal("read-only backup creation was accepted")
-		}
-		if _, err := changeGitHook(atomicHook, command, false); err == nil {
-			t.Fatal("read-only atomic hook replacement was accepted")
-		}
+func coverageReadOnlyHookDirectory(t *testing.T, dir, command, block string) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permissions differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory write permissions")
+	}
+	readonly := filepath.Join(dir, "readonly")
+	t.Cleanup(func() {
+		_ = os.Chmod(readonly, 0o700)
 	})
+	if err := os.Mkdir(readonly, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(readonly, "hook")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n"+blockStart+"\n"+command+"\n"+blockEnd+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	installHook := filepath.Join(readonly, "install")
+	stale := rewriteHookCommand("/old/git-byline", "post-checkout", false)
+	if err := os.WriteFile(installHook, []byte("#!/bin/sh\n"+blockStart+"\n"+stale+"\n"+blockEnd+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	uninstallHook := filepath.Join(readonly, "uninstall")
+	if err := os.WriteFile(uninstallHook, []byte("#!/bin/sh\n"+blockStart+"\n"+command+"\n"+blockEnd+"\necho custom\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	atomicHook := filepath.Join(readonly, "atomic")
+	if err := os.WriteFile(atomicHook, []byte("#!/bin/sh\n"+blockStart+"\n"+command+"\n"+blockEnd+"\necho custom\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(atomicHook+".git-byline.bak", []byte(coverageForeignText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(readonly, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := changeGitHook(hook, command, false); err == nil {
+		t.Fatal("read-only generated hook was removed")
+	}
+	if _, err := changeGitHook(installHook, command, true); err == nil {
+		t.Fatal("read-only backup refresh was accepted")
+	}
+	if _, err := changeGitHook(uninstallHook, command, false); err == nil {
+		t.Fatal("read-only backup creation was accepted")
+	}
+	if _, err := changeGitHook(atomicHook, command, false); err == nil {
+		t.Fatal("read-only atomic hook replacement was accepted")
+	}
 }
 
 func TestCoverageBackupSymlinkFailures(t *testing.T) {

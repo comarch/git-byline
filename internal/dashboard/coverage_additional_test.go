@@ -141,6 +141,12 @@ func TestDashboardSourceMappingAndTones(t *testing.T) {
 }
 
 func TestDashboardSourceOrderingAndWarnings(t *testing.T) {
+	testDashboardSourceOrdering(t)
+	testDashboardWarnings(t)
+}
+
+func testDashboardSourceOrdering(t *testing.T) {
+	t.Helper()
 	orderTests := []struct {
 		name   string
 		values map[string]*sourceCount
@@ -196,7 +202,10 @@ func TestDashboardSourceOrderingAndWarnings(t *testing.T) {
 	if got := sourceRank(coverageOther); got != 3 {
 		t.Fatalf("sourceRank(unknown) = %d, want 3", got)
 	}
+}
 
+func testDashboardWarnings(t *testing.T) {
+	t.Helper()
 	warnings := Report{
 		Commit: coverageCommit,
 		Status: provenance.StatusResult{

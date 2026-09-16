@@ -188,34 +188,40 @@ func TestCoverageRewriteSessionAndPathHelpers(t *testing.T) {
 		t.Fatal("addRewriteSession accepted conflicting agents")
 	}
 	overflowCases := []struct {
-		name  string
-		value model.NoteSession
+		name      string
+		value     model.NoteSession
+		configure func(*model.NoteSession)
 	}{
-		{"added", model.NoteSession{Agent: "droid", Model: "model", Added: 1}},
-		{"deleted", model.NoteSession{Agent: "droid", Model: "model", Deleted: 1}},
-		{"accepted", model.NoteSession{Agent: "droid", Model: "model", Accepted: 1}},
-		{"overridden", model.NoteSession{Agent: "droid", Model: "model", Overridden: 1}},
+		{
+			name:      "added",
+			value:     model.NoteSession{Agent: "droid", Model: "model", Added: 1},
+			configure: func(session *model.NoteSession) { session.Added = maxIntValue() },
+		},
+		{
+			name:      "deleted",
+			value:     model.NoteSession{Agent: "droid", Model: "model", Deleted: 1},
+			configure: func(session *model.NoteSession) { session.Deleted = maxIntValue() },
+		},
+		{
+			name:      "accepted",
+			value:     model.NoteSession{Agent: "droid", Model: "model", Accepted: 1},
+			configure: func(session *model.NoteSession) { session.Accepted = maxIntValue() },
+		},
+		{
+			name:      "overridden",
+			value:     model.NoteSession{Agent: "droid", Model: "model", Overridden: 1},
+			configure: func(session *model.NoteSession) { session.Overridden = maxIntValue() },
+		},
 	}
 	for _, test := range overflowCases {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			sessions := map[string]model.NoteSession{
-				"session": {
-					Agent: "droid",
-					Model: "model",
-					Added: maxIntValue(),
-				},
+			session := model.NoteSession{
+				Agent: "droid",
+				Model: "model",
 			}
-			switch test.name {
-			case "added":
-				sessions["session"] = model.NoteSession{Agent: "droid", Model: "model", Added: maxIntValue()}
-			case "deleted":
-				sessions["session"] = model.NoteSession{Agent: "droid", Model: "model", Deleted: maxIntValue()}
-			case "accepted":
-				sessions["session"] = model.NoteSession{Agent: "droid", Model: "model", Accepted: maxIntValue()}
-			case "overridden":
-				sessions["session"] = model.NoteSession{Agent: "droid", Model: "model", Overridden: maxIntValue()}
-			}
+			test.configure(&session)
+			sessions := map[string]model.NoteSession{"session": session}
 			if err := addRewriteSession(sessions, "session", test.value); err == nil {
 				t.Fatalf("addRewriteSession(%s) accepted overflow", test.name)
 			}

@@ -38,68 +38,75 @@ func TestScanRepositoryFailures(t *testing.T) {
 }
 
 func TestCheckScansFailures(t *testing.T) {
-	t.Run("CI template path is a file", func(t *testing.T) {
-		root := t.TempDir()
-		path := filepath.Join(root, "internal", "ci", "templates")
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("create CI parent: %v", err)
-		}
-		if err := os.WriteFile(path, []byte("not a directory"), 0o600); err != nil {
-			t.Fatalf("write CI path: %v", err)
-		}
-		if err := checkScans(root); err == nil {
-			t.Fatal("checkScans() = nil error, want CI path failure")
-		}
-	})
+	t.Run("CI template path is a file", checkScansCITemplatePathFile)
+	t.Run("CI template contract fails", checkScansCITemplateContractFailure)
+	t.Run("CI template inspection fails", checkScansCITemplateInspectionFailure)
+	t.Run("repository scan fails", checkScansRepositoryFailure)
+	t.Run("placeholder finding is rendered", checkScansPlaceholderFinding)
+}
 
-	t.Run("CI template contract fails", func(t *testing.T) {
-		root := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(root, "internal", "ci", "templates"), 0o755); err != nil {
-			t.Fatalf("create CI templates: %v", err)
-		}
-		if err := checkScans(root); err == nil {
-			t.Fatal("checkScans() = nil error, want CI contract failure")
-		}
-	})
+func checkScansCITemplatePathFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "ci", "templates")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create CI parent: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write CI path: %v", err)
+	}
+	requireCheckScansError(t, root, "checkScans() = nil error, want CI path failure")
+}
 
-	t.Run("CI template inspection fails", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("file permissions are not enforced on Windows")
-		}
-		if runtime.GOOS != "windows" && os.Geteuid() == 0 {
-			t.Skip("root ignores file permissions")
-		}
-		root := t.TempDir()
-		internal := filepath.Join(root, "internal")
-		if err := os.MkdirAll(internal, 0o755); err != nil {
-			t.Fatalf("create internal directory: %v", err)
-		}
-		if err := os.Chmod(internal, 0); err != nil {
-			t.Fatalf("chmod internal directory: %v", err)
-		}
-		if err := checkScans(root); err == nil {
-			t.Fatal("checkScans() = nil error, want CI inspection failure")
-		}
-	})
+func checkScansCITemplateContractFailure(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "ci", "templates"), 0o755); err != nil {
+		t.Fatalf("create CI templates: %v", err)
+	}
+	requireCheckScansError(t, root, "checkScans() = nil error, want CI contract failure")
+}
 
-	t.Run("repository scan fails", func(t *testing.T) {
-		root := unreadableScanRoot(t)
-		if err := checkScans(root); err == nil {
-			t.Fatal("checkScans() = nil error, want scan failure")
-		}
-	})
+func checkScansCITemplateInspectionFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permissions are not enforced on Windows")
+	}
+	if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	root := t.TempDir()
+	internal := filepath.Join(root, "internal")
+	if err := os.MkdirAll(internal, 0o755); err != nil {
+		t.Fatalf("create internal directory: %v", err)
+	}
+	if err := os.Chmod(internal, 0); err != nil {
+		t.Fatalf("chmod internal directory: %v", err)
+	}
+	requireCheckScansError(t, root, "checkScans() = nil error, want CI inspection failure")
+}
 
-	t.Run("placeholder finding is rendered", func(t *testing.T) {
-		root := t.TempDir()
-		content := "TO" + "DO: finish this\n"
-		if err := os.WriteFile(filepath.Join(root, "todo.txt"), []byte(content), 0o600); err != nil {
-			t.Fatalf("write placeholder file: %v", err)
-		}
-		err := checkScans(root)
-		if err == nil || !strings.Contains(err.Error(), "placeholder") {
-			t.Fatalf("checkScans() = %v, want placeholder finding", err)
-		}
-	})
+func checkScansRepositoryFailure(t *testing.T) {
+	root := unreadableScanRoot(t)
+	requireCheckScansError(t, root, "checkScans() = nil error, want scan failure")
+}
+
+func checkScansPlaceholderFinding(t *testing.T) {
+	root := t.TempDir()
+	content := "TO" + "DO: finish this\n"
+	if err := os.WriteFile(filepath.Join(root, "todo.txt"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write placeholder file: %v", err)
+	}
+	err := requireCheckScansError(t, root, "checkScans() = nil error, want placeholder finding")
+	if err == nil || !strings.Contains(err.Error(), "placeholder") {
+		t.Fatalf("checkScans() = %v, want placeholder finding", err)
+	}
+}
+
+func requireCheckScansError(t *testing.T, root, failure string) error {
+	t.Helper()
+	err := checkScans(root)
+	if err == nil {
+		t.Fatal(failure)
+	}
+	return err
 }
 
 func unreadableScanRoot(t *testing.T) string {

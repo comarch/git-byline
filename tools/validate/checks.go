@@ -28,6 +28,15 @@ import (
 // require injection seams across many packages or gaming the gate.
 const coverageFloor = 97.5
 
+// Environment pins and arguments shared by the go, gofmt, and covered
+// binary invocations: CGO disabled, the module proxy off, and the
+// validate flag that selects stage subsets.
+const (
+	cgoDisabledEnv = "CGO_ENABLED=0"
+	proxyOffEnv    = "GOPROXY=off"
+	stagesFlag     = "-stages"
+)
+
 // modulePathOf returns the module path of the module rooted at root.
 func modulePathOf(root string) (string, error) {
 	out, err := goCmd{dir: root}.run("list", "-m")
@@ -67,7 +76,7 @@ func (g goCmd) run(args ...string) (string, error) {
 	if g.dir != "" {
 		cmd.Dir = g.dir
 	}
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOPROXY=off")
+	cmd.Env = append(os.Environ(), cgoDisabledEnv, proxyOffEnv)
 	cmd.Env = append(cmd.Env, g.env...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -109,7 +118,7 @@ func checkGofmt(root string) error {
 	args := append([]string{"-l"}, dirs...)
 	cmd := exec.Command(gofmt, args...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GOPROXY=off")
+	cmd.Env = append(os.Environ(), proxyOffEnv)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("gofmt -l: %w: %s", err, out)
@@ -226,13 +235,13 @@ func collectBinaryCoverage(root, tmp, unitProfile string) (string, error) {
 	if err := buildCoveredBinary(root, validateBin, "./tools/validate"); err != nil {
 		return "", err
 	}
-	if err := runCoveredBinary(root, validateBin, []string{"-stages", "gofmt"}, coverEnv, 0); err != nil {
+	if err := runCoveredBinary(root, validateBin, []string{stagesFlag, "gofmt"}, coverEnv, 0); err != nil {
 		return "", err
 	}
-	if err := runCoveredBinary(root, validateBin, []string{"-stages", "no-such-stage"}, coverEnv, 2); err != nil {
+	if err := runCoveredBinary(root, validateBin, []string{stagesFlag, "no-such-stage"}, coverEnv, 2); err != nil {
 		return "", err
 	}
-	if err := runCoveredBinary(outside, validateBin, []string{"-stages", "gofmt"}, coverEnv, 1); err != nil {
+	if err := runCoveredBinary(outside, validateBin, []string{stagesFlag, "gofmt"}, coverEnv, 1); err != nil {
 		return "", err
 	}
 
@@ -274,7 +283,7 @@ func runCoveredBinary(dir, bin string, args []string, extraEnv []string, wantCod
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOPROXY=off")
+	cmd.Env = append(os.Environ(), cgoDisabledEnv, proxyOffEnv)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	var out bytes.Buffer
 	cmd.Stdout = &out

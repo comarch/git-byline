@@ -356,15 +356,23 @@ func TestAppendCheckpointFailureBranches(t *testing.T) {
 
 func TestStateReadAdditionalCases(t *testing.T) {
 	t.Parallel()
+	coverageStateReadCases(t)
+	coverageStateReadInitializesPending(t)
+	t.Run("parent is regular file", coverageStateReadParentFile)
+	coverageStateReadDirectory(t)
+}
+
+func coverageStateReadCases(t *testing.T) {
 	tests := []struct {
-		name string
-		data string
+		name   string
+		data   string
+		legacy bool
 	}{
 		{name: "malformed JSON", data: invalidJSONLine},
 		{name: "unsupported notes version", data: unsupportedStateJSON},
 		{name: "invalid pending base", data: invalidPendingBase},
-		{name: "legacy notes version one", data: stateJSONWithNotesVersion(model.NoteVersionV1)},
-		{name: "legacy notes version two", data: stateJSONWithNotesVersion(model.NoteVersionV2)},
+		{name: "legacy notes version one", data: stateJSONWithNotesVersion(model.NoteVersionV1), legacy: true},
+		{name: "legacy notes version two", data: stateJSONWithNotesVersion(model.NoteVersionV2), legacy: true},
 	}
 	for _, test := range tests {
 		test := test
@@ -373,7 +381,7 @@ func TestStateReadAdditionalCases(t *testing.T) {
 			value := New(t.TempDir())
 			writeStoreFile(t, value.StatePath(), []byte(test.data))
 			state, err := value.ReadState()
-			if test.name == "legacy notes version one" || test.name == "legacy notes version two" {
+			if test.legacy {
 				if err != nil || state.NotesVersion != model.NoteVersion {
 					t.Fatalf("ReadState() = %+v, %v", state, err)
 				}
@@ -384,7 +392,9 @@ func TestStateReadAdditionalCases(t *testing.T) {
 			}
 		})
 	}
+}
 
+func coverageStateReadInitializesPending(t *testing.T) {
 	value := New(t.TempDir())
 	writeStoreFile(t, value.StatePath(), []byte(`{"version":1,"notes_version":3,"pending":{}}`))
 	state, err := value.ReadState()
@@ -394,18 +404,20 @@ func TestStateReadAdditionalCases(t *testing.T) {
 	if state.Pending.Files == nil {
 		t.Fatal("ReadState did not initialize pending files")
 	}
+}
 
-	t.Run("parent is regular file", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("regular-file parent errors differ on Windows")
-		}
-		parent := filepath.Join(t.TempDir(), testFilePath)
-		writeStoreFile(t, parent, []byte(testPadding))
-		if _, err := (Store{Dir: parent}).ReadState(); err == nil {
-			t.Fatal("ReadState accepted an invalid parent")
-		}
-	})
+func coverageStateReadParentFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("regular-file parent errors differ on Windows")
+	}
+	parent := filepath.Join(t.TempDir(), testFilePath)
+	writeStoreFile(t, parent, []byte(testPadding))
+	if _, err := (Store{Dir: parent}).ReadState(); err == nil {
+		t.Fatal("ReadState accepted an invalid parent")
+	}
+}
 
+func coverageStateReadDirectory(t *testing.T) {
 	directoryStore := New(t.TempDir())
 	if err := os.MkdirAll(directoryStore.Dir, 0o700); err != nil {
 		t.Fatal(err)

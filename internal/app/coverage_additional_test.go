@@ -713,6 +713,14 @@ func TestDashboardAndHookOperationalFailures(t *testing.T) {
 	root := appRepo(t)
 	appWrite(t, root, "file.txt", "one\n")
 	appCommit(t, root, "content")
+	assertDashboardArgumentFailures(t, root)
+	assertDashboardOutputFailures(t, root)
+	assertBrokenStateFailures(t, root)
+	assertHookFailures(t)
+}
+
+func assertDashboardArgumentFailures(t *testing.T, root string) {
+	t.Helper()
 	if code, _, _, err := appRun(root, zeroTime(), nil, "dashboard", "--range", coverageHead, "--range", coverageHead); code != ExitUsage || err == nil {
 		t.Fatalf("duplicate dashboard range = %d, %v", code, err)
 	}
@@ -725,6 +733,10 @@ func TestDashboardAndHookOperationalFailures(t *testing.T) {
 	if code, _, _, err := appRun(t.TempDir(), zeroTime(), nil, "dashboard"); code != ExitFailure || err == nil {
 		t.Fatalf("dashboard outside repository = %d, %v", code, err)
 	}
+}
+
+func assertDashboardOutputFailures(t *testing.T, root string) {
+	t.Helper()
 	outputParent := filepath.Join(root, "output-parent")
 	if err := os.WriteFile(outputParent, []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
@@ -741,7 +753,10 @@ func TestDashboardAndHookOperationalFailures(t *testing.T) {
 		"--commit", "missing"); code != ExitFailure || err == nil {
 		t.Fatalf("export missing commit = %d, %v", code, err)
 	}
+}
 
+func assertBrokenStateFailures(t *testing.T, root string) {
+	t.Helper()
 	statePath := filepath.Join(root, ".git", "byline", "state.json")
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
 		t.Fatal(err)
@@ -758,7 +773,10 @@ func TestDashboardAndHookOperationalFailures(t *testing.T) {
 	if code, _, _, err := appRun(root, zeroTime(), nil, "dashboard"); code != ExitFailure || err == nil {
 		t.Fatalf("dashboard broken state = %d, %v", code, err)
 	}
+}
 
+func assertHookFailures(t *testing.T) {
+	t.Helper()
 	fileRoot := t.TempDir()
 	filePath := filepath.Join(fileRoot, "root-file")
 	if err := os.WriteFile(filePath, []byte("file"), 0o600); err != nil {
@@ -910,7 +928,14 @@ func TestRewriteAdditionalFailurePaths(t *testing.T) {
 	appWrite(t, root, "file.txt", "one\n")
 	appCommit(t, root, "content")
 	head := appHead(t, root)
+	assertRewriteInitialFailures(t, root)
+	assertRewriteSuccessfulTransaction(t, root, head)
+	assertRewritePostRewriteFailures(t, root)
+	assertRewritePostCheckoutFailure(t, root, head)
+}
 
+func assertRewriteInitialFailures(t *testing.T, root string) {
+	t.Helper()
 	code, _, _, err := appRun(root, zeroTime(), nil, "rewrite", "--bad")
 	if code != ExitUsage || err == nil {
 		t.Fatalf("rewrite bad flag = %d, %v", code, err)
@@ -930,16 +955,24 @@ func TestRewriteAdditionalFailurePaths(t *testing.T) {
 	if code != ExitSuccess || err != nil {
 		t.Fatalf("ref-txn outside repository = %d, %v", code, err)
 	}
+}
+
+func assertRewriteSuccessfulTransaction(t *testing.T, root, head string) {
+	t.Helper()
 	appWrite(t, root, "second.txt", "two\n")
 	appCommit(t, root, "second")
 	next := appHead(t, root)
-	relevant = head + " " + next + " refs/heads/main\n"
-	code, _, _, err = appRun(root, zeroTime(), strings.NewReader(relevant),
+	relevant := head + " " + next + " refs/heads/main\n"
+	code, _, _, err := appRun(root, zeroTime(), strings.NewReader(relevant),
 		"rewrite", "--mode", "ref-txn", "--hook-input", "stdin", "committed")
 	if code != ExitSuccess || err != nil {
 		t.Fatalf("ref-txn success = %d, %v", code, err)
 	}
-	code, _, _, err = appRun(root, zeroTime(), coverageErrorReader{err: errors.New("input failed")},
+}
+
+func assertRewritePostRewriteFailures(t *testing.T, root string) {
+	t.Helper()
+	code, _, _, err := appRun(root, zeroTime(), coverageErrorReader{err: errors.New("input failed")},
 		"rewrite", "--mode", "post-rewrite", "--hook-input", "stdin")
 	if code != ExitFailure || err == nil {
 		t.Fatalf("post-rewrite input failure = %d, %v", code, err)
@@ -954,7 +987,11 @@ func TestRewriteAdditionalFailurePaths(t *testing.T) {
 	if code != ExitFailure || err == nil {
 		t.Fatalf("post-rewrite outside repository = %d, %v", code, err)
 	}
-	code, _, _, err = appRun(root, zeroTime(), strings.NewReader(""),
+}
+
+func assertRewritePostCheckoutFailure(t *testing.T, root, head string) {
+	t.Helper()
+	code, _, _, err := appRun(root, zeroTime(), strings.NewReader(""),
 		"rewrite", "--mode", "post-checkout", "--hook-input", "stdin",
 		head, strings.Repeat("g", 40), "0")
 	if code != ExitUsage || err == nil {

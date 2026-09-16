@@ -316,6 +316,13 @@ func runWindsurfCase(t *testing.T, test windsurfCase) {
 
 func TestParseAgentV1(t *testing.T) {
 	t.Parallel()
+	testAgentV1Edit(t)
+	testAgentV1RejectsInvalidPayloads(t)
+	testAgentV1ShellEvents(t)
+}
+
+func testAgentV1Edit(t *testing.T) {
+	t.Helper()
 	payload := `{"type":"ai_agent","agent_name":"other","model":"m","conversation_id":"c","edited_filepaths":["a.go","a.go","b.go"]}`
 	event, handled, err := Parse("agent-v1", "", strings.NewReader(payload))
 	if err != nil {
@@ -327,6 +334,10 @@ func TestParseAgentV1(t *testing.T) {
 	if _, _, err := Parse("agent-v1", model.AuthorAI, strings.NewReader(payload)); err == nil {
 		t.Fatal("agent-v1 accepted an explicit type")
 	}
+}
+
+func testAgentV1RejectsInvalidPayloads(t *testing.T) {
+	t.Helper()
 	for _, invalid := range []string{
 		`{"type":"other","agent_name":"a","edited_filepaths":["a"]}`,
 		`{"type":"human","edited_filepaths":["a"]}`,
@@ -337,6 +348,10 @@ func TestParseAgentV1(t *testing.T) {
 			t.Fatalf("Parse accepted %s", invalid)
 		}
 	}
+}
+
+func testAgentV1ShellEvents(t *testing.T) {
+	t.Helper()
 	for _, test := range []struct {
 		name string
 		kind string
@@ -348,19 +363,24 @@ func TestParseAgentV1(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			payload := `{"type":"` + test.kind + `","agent_name":"agent","model":"model","conversation_id":"session"}`
-			event, handled, err := Parse("agent-v1", "", strings.NewReader(payload))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !handled || event.Kind != test.kind || event.Type != test.want || len(event.Paths) != 0 {
-				t.Fatalf("event = %+v, handled = %t", event, handled)
-			}
-			if test.want == model.AuthorAI &&
-				(event.Agent != "agent" || event.Model != "model" || event.Session != "session") {
-				t.Fatalf("shell post metadata = %+v", event)
-			}
+			testAgentV1ShellEvent(t, test.kind, test.want)
 		})
+	}
+}
+
+func testAgentV1ShellEvent(t *testing.T, kind string, want model.Author) {
+	t.Helper()
+	payload := `{"type":"` + kind + `","agent_name":"agent","model":"model","conversation_id":"session"}`
+	event, handled, err := Parse("agent-v1", "", strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || event.Kind != kind || event.Type != want || len(event.Paths) != 0 {
+		t.Fatalf("event = %+v, handled = %t", event, handled)
+	}
+	if want == model.AuthorAI &&
+		(event.Agent != "agent" || event.Model != "model" || event.Session != "session") {
+		t.Fatalf("shell post metadata = %+v", event)
 	}
 }
 

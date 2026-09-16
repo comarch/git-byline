@@ -466,38 +466,43 @@ func TestGreedyFallback(t *testing.T) {
 func TestRandomReplayInvariants(t *testing.T) {
 	t.Parallel()
 	random := rand.New(rand.NewSource(42))
+	for iteration := 0; iteration < 10_000; iteration++ {
+		runRandomReplayInvariant(t, random, iteration)
+	}
+}
+
+func runRandomReplayInvariant(t *testing.T, random *rand.Rand, iteration int) {
+	t.Helper()
 	human := model.Attribution{Author: model.AuthorHuman}
 	ai := model.Attribution{Author: model.AuthorAI, Agent: "test"}
-	for iteration := 0; iteration < 10_000; iteration++ {
-		var transitions []Transition
-		lineCount := random.Intn(12)
-		for step := 0; step < 5; step++ {
-			var value strings.Builder
-			for line := 0; line < lineCount; line++ {
-				value.WriteByte(byte('a' + random.Intn(5)))
-				value.WriteByte('\n')
-			}
-			attr := human
-			if step%2 == 1 {
-				attr = ai
-			}
-			transitions = append(transitions, Transition{Content: []byte(value.String()), Attribution: attr})
-			lineCount += random.Intn(3) - 1
-			if lineCount < 0 {
-				lineCount = 0
-			}
+	var transitions []Transition
+	lineCount := random.Intn(12)
+	for step := 0; step < 5; step++ {
+		var value strings.Builder
+		for line := 0; line < lineCount; line++ {
+			value.WriteByte(byte('a' + random.Intn(5)))
+			value.WriteByte('\n')
 		}
-		snapshot, err := Replay(Snapshot{}, transitions)
-		if err != nil {
-			t.Fatalf("iteration %d: %v", iteration, err)
+		attr := human
+		if step%2 == 1 {
+			attr = ai
 		}
-		ranges, err := snapshot.Ranges()
-		if err != nil {
-			t.Fatalf("iteration %d: %v", iteration, err)
+		transitions = append(transitions, Transition{Content: []byte(value.String()), Attribution: attr})
+		lineCount += random.Intn(3) - 1
+		if lineCount < 0 {
+			lineCount = 0
 		}
-		if err := model.ValidateRanges(ranges, len(snapshot.Lines)); err != nil {
-			t.Fatalf("iteration %d: %v", iteration, err)
-		}
+	}
+	snapshot, err := Replay(Snapshot{}, transitions)
+	if err != nil {
+		t.Fatalf("iteration %d: %v", iteration, err)
+	}
+	ranges, err := snapshot.Ranges()
+	if err != nil {
+		t.Fatalf("iteration %d: %v", iteration, err)
+	}
+	if err := model.ValidateRanges(ranges, len(snapshot.Lines)); err != nil {
+		t.Fatalf("iteration %d: %v", iteration, err)
 	}
 }
 
@@ -564,45 +569,50 @@ func FuzzLayeredMatcher(f *testing.F) {
 		f.Add(seed[0], seed[1])
 	}
 	f.Fuzz(func(t *testing.T, oldText, newText string) {
-		if len(oldText) > 64<<10 || len(newText) > 64<<10 {
-			return
-		}
-		oldLines, err := SplitLines([]byte(oldText))
-		if err != nil {
-			return
-		}
-		newLines, err := SplitLines([]byte(newText))
-		if err != nil {
-			return
-		}
-		first := equalPairs(oldLines, newLines)
-		for i := 0; i < 3; i++ {
-			if got := equalPairs(oldLines, newLines); !reflect.DeepEqual(got, first) {
-				t.Fatalf("equalPairs run %d = %+v, want %+v", i, got, first)
-			}
-		}
-		source := Snapshot{
-			Lines:        oldLines,
-			Attributions: make([]model.Attribution, len(oldLines)),
-		}
-		for i := range source.Attributions {
-			source.Attributions[i] = model.Attribution{Author: model.AuthorUntracked}
-		}
-		projected, err := Project(source, []byte(newText), model.Attribution{Author: model.AuthorHuman})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(projected.Lines) != len(projected.Attributions) {
-			t.Fatalf("line coverage length = %d/%d", len(projected.Lines), len(projected.Attributions))
-		}
-		ranges, err := projected.Ranges()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := model.ValidateRanges(ranges, len(projected.Lines)); err != nil {
-			t.Fatalf("ValidateRanges() = %v", err)
-		}
+		runLayeredMatcherFuzzCase(t, oldText, newText)
 	})
+}
+
+func runLayeredMatcherFuzzCase(t *testing.T, oldText, newText string) {
+	t.Helper()
+	if len(oldText) > 64<<10 || len(newText) > 64<<10 {
+		return
+	}
+	oldLines, err := SplitLines([]byte(oldText))
+	if err != nil {
+		return
+	}
+	newLines, err := SplitLines([]byte(newText))
+	if err != nil {
+		return
+	}
+	first := equalPairs(oldLines, newLines)
+	for i := 0; i < 3; i++ {
+		if got := equalPairs(oldLines, newLines); !reflect.DeepEqual(got, first) {
+			t.Fatalf("equalPairs run %d = %+v, want %+v", i, got, first)
+		}
+	}
+	source := Snapshot{
+		Lines:        oldLines,
+		Attributions: make([]model.Attribution, len(oldLines)),
+	}
+	for i := range source.Attributions {
+		source.Attributions[i] = model.Attribution{Author: model.AuthorUntracked}
+	}
+	projected, err := Project(source, []byte(newText), model.Attribution{Author: model.AuthorHuman})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projected.Lines) != len(projected.Attributions) {
+		t.Fatalf("line coverage length = %d/%d", len(projected.Lines), len(projected.Attributions))
+	}
+	ranges, err := projected.Ranges()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := model.ValidateRanges(ranges, len(projected.Lines)); err != nil {
+		t.Fatalf("ValidateRanges() = %v", err)
+	}
 }
 
 // TestNewSnapshotRejectsInvalidContentAndRanges covers the NewSnapshot

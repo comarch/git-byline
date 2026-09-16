@@ -16,6 +16,21 @@ const (
 	geminiManifest        = "gemini-extension.json"
 )
 
+type installerTextReplacement struct {
+	rel         string
+	old         string
+	replacement string
+}
+
+type pluginManifestFailureCase struct {
+	name          string
+	check         func(string) error
+	remove        string
+	removeMessage string
+	replace       *installerTextReplacement
+	failure       string
+}
+
 func TestCheckInstallersInputFailures(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -145,77 +160,93 @@ func TestCheckInstallersInputFailures(t *testing.T) {
 }
 
 func TestCheckPluginManifestsFailures(t *testing.T) {
-	t.Run("factory manifest missing", func(t *testing.T) {
-		root := installerFixture(t)
-		if err := os.Remove(filepath.Join(root, pluginFactoryManifest)); err != nil {
-			t.Fatalf("remove factory manifest: %v", err)
-		}
-		if err := checkPluginManifests(root); err == nil {
-			t.Fatal("checkPluginManifests() = nil error, want factory read failure")
-		}
-	})
+	tests := []pluginManifestFailureCase{
+		{
+			name:          "factory manifest missing",
+			check:         checkPluginManifests,
+			remove:        pluginFactoryManifest,
+			removeMessage: "remove factory manifest: %v",
+			failure:       "checkPluginManifests() = nil error, want factory read failure",
+		},
+		{
+			name:          "checkInstallers returns manifest failure",
+			check:         checkInstallers,
+			remove:        pluginFactoryManifest,
+			removeMessage: "remove factory manifest: %v",
+			failure:       "checkInstallers() = nil error, want manifest failure",
+		},
+		{
+			name:  "checkInstallers returns manifest mismatch",
+			check: checkInstallers,
+			replace: &installerTextReplacement{
+				rel:         pluginClaudeManifest,
+				old:         `"name": "git-byline"`,
+				replacement: `"name": "other"`,
+			},
+			failure: "checkInstallers() = nil error, want manifest mismatch",
+		},
+		{
+			name:          "Claude manifest missing",
+			check:         checkPluginManifests,
+			remove:        pluginClaudeManifest,
+			removeMessage: "remove Claude manifest: %v",
+			failure:       "checkPluginManifests() = nil error, want Claude read failure",
+		},
+		{
+			name:          "Gemini manifest missing",
+			check:         checkPluginManifests,
+			remove:        geminiManifest,
+			removeMessage: "remove Gemini manifest: %v",
+			failure:       "checkPluginManifests() = nil error, want Gemini read failure",
+		},
+		{
+			name:  "factory and Claude fields differ",
+			check: checkPluginManifests,
+			replace: &installerTextReplacement{
+				rel:         pluginClaudeManifest,
+				old:         `"name": "git-byline"`,
+				replacement: `"name": "other"`,
+			},
+			failure: "checkPluginManifests() = nil error, want plugin field mismatch",
+		},
+		{
+			name:  "Gemini fields differ",
+			check: checkPluginManifests,
+			replace: &installerTextReplacement{
+				rel:         geminiManifest,
+				old:         `"name": "git-byline"`,
+				replacement: `"name": "other"`,
+			},
+			failure: "checkPluginManifests() = nil error, want Gemini field mismatch",
+		},
+		{
+			name:  "Claude license is not MIT",
+			check: checkPluginManifests,
+			replace: &installerTextReplacement{
+				rel:         pluginClaudeManifest,
+				old:         `"license": "MIT"`,
+				replacement: `"license": "Apache-2.0"`,
+			},
+			failure: "checkPluginManifests() = nil error, want license failure",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runPluginManifestFailure(t, tc)
+		})
+	}
+}
 
-	t.Run("checkInstallers returns manifest failure", func(t *testing.T) {
-		root := installerFixture(t)
-		if err := os.Remove(filepath.Join(root, pluginFactoryManifest)); err != nil {
-			t.Fatalf("remove factory manifest: %v", err)
-		}
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want manifest failure")
-		}
-	})
-
-	t.Run("checkInstallers returns manifest mismatch", func(t *testing.T) {
-		root := installerFixture(t)
-		replaceInstallerText(t, root, pluginClaudeManifest, `"name": "git-byline"`, `"name": "other"`)
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want manifest mismatch")
-		}
-	})
-
-	t.Run("Claude manifest missing", func(t *testing.T) {
-		root := installerFixture(t)
-		if err := os.Remove(filepath.Join(root, pluginClaudeManifest)); err != nil {
-			t.Fatalf("remove Claude manifest: %v", err)
-		}
-		if err := checkPluginManifests(root); err == nil {
-			t.Fatal("checkPluginManifests() = nil error, want Claude read failure")
-		}
-	})
-
-	t.Run("Gemini manifest missing", func(t *testing.T) {
-		root := installerFixture(t)
-		if err := os.Remove(filepath.Join(root, geminiManifest)); err != nil {
-			t.Fatalf("remove Gemini manifest: %v", err)
-		}
-		if err := checkPluginManifests(root); err == nil {
-			t.Fatal("checkPluginManifests() = nil error, want Gemini read failure")
-		}
-	})
-
-	t.Run("factory and Claude fields differ", func(t *testing.T) {
-		root := installerFixture(t)
-		replaceInstallerText(t, root, pluginClaudeManifest, `"name": "git-byline"`, `"name": "other"`)
-		if err := checkPluginManifests(root); err == nil {
-			t.Fatal("checkPluginManifests() = nil error, want plugin field mismatch")
-		}
-	})
-
-	t.Run("Gemini fields differ", func(t *testing.T) {
-		root := installerFixture(t)
-		replaceInstallerText(t, root, geminiManifest, `"name": "git-byline"`, `"name": "other"`)
-		if err := checkPluginManifests(root); err == nil {
-			t.Fatal("checkPluginManifests() = nil error, want Gemini field mismatch")
-		}
-	})
-
-	t.Run("Claude license is not MIT", func(t *testing.T) {
-		root := installerFixture(t)
-		replaceInstallerText(t, root, pluginClaudeManifest, `"license": "MIT"`, `"license": "Apache-2.0"`)
-		if err := checkPluginManifests(root); err == nil {
-			t.Fatal("checkPluginManifests() = nil error, want license failure")
-		}
-	})
+func runPluginManifestFailure(t *testing.T, tc pluginManifestFailureCase) {
+	root := installerFixture(t)
+	if tc.remove != "" {
+		removeInstallerFile(t, root, tc.remove, tc.removeMessage)
+	} else {
+		replaceInstallerText(t, root, tc.replace.rel, tc.replace.old, tc.replace.replacement)
+	}
+	if err := tc.check(root); err == nil {
+		t.Fatal(tc.failure)
+	}
 }
 
 func TestCheckHarnessTemplatesFailures(t *testing.T) {
@@ -373,9 +404,12 @@ func writeInstallerFile(t *testing.T, root, rel, content string) {
 	}
 }
 
-func removeInstallerFile(t *testing.T, root, rel string) {
+func removeInstallerFile(t *testing.T, root, rel string, failureMessage ...string) {
 	t.Helper()
 	if err := os.Remove(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
+		if len(failureMessage) > 0 {
+			t.Fatalf(failureMessage[0], err)
+		}
 		t.Fatalf("remove installer fixture %s: %v", rel, err)
 	}
 }
@@ -392,7 +426,7 @@ func appendInstallerText(t *testing.T, root, rel, suffix string) {
 	}
 }
 
-func replaceInstallerText(t *testing.T, root, rel, old, new string) {
+func replaceInstallerText(t *testing.T, root, rel, old, replacement string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(rel))
 	data, err := os.ReadFile(path)
@@ -403,7 +437,7 @@ func replaceInstallerText(t *testing.T, root, rel, old, new string) {
 	if !strings.Contains(text, old) {
 		t.Fatalf("installer fixture %s missing %q", rel, old)
 	}
-	text = strings.ReplaceAll(text, old, new)
+	text = strings.ReplaceAll(text, old, replacement)
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat installer fixture %s: %v", rel, err)

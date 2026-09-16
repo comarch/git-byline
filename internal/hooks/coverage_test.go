@@ -305,10 +305,29 @@ func TestCoverageTemplatePruneErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission and symlink errors differ on Windows")
 	}
-	xdg := templateEnv(t)
+	var changed []string
+	coveragePruneMissingStock(t, &changed)
+	coveragePruneEditedStock(t, &changed)
+	coveragePruneSymlinkedStock(t, &changed)
+	coveragePruneUnreadableStock(t, &changed)
+	coveragePruneUnreadableMarker(t, &changed)
+	coveragePruneSymlinkedStockDirectory(t, &changed)
+	coveragePruneLegacyMarker(t, &changed)
+	coveragePruneHooksPath(t, &changed)
+	coveragePruneNonEmptyMarker(t, &changed)
+	coveragePruneRegularRoot(t)
+}
+
+func coverageInstallTemplate(t *testing.T) {
+	t.Helper()
 	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func coveragePruneMissingStock(t *testing.T, changed *[]string) {
+	xdg := templateEnv(t)
+	coverageInstallTemplate(t)
 	dir := filepath.Join(xdg, productName, "templates")
 	file := templateStockByRelative(t, "description")
 	markerPath, _, err := templateStockMarkerPath(file)
@@ -320,44 +339,44 @@ func TestCoverageTemplatePruneErrors(t *testing.T) {
 	if err := os.Remove(stockPath); err != nil {
 		t.Fatal(err)
 	}
-	var changed []string
-	if err := pruneTemplateStockFile(root, dir, file, false, &changed); err != nil {
+	if err := pruneTemplateStockFile(root, dir, file, false, changed); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(markerPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing stock marker survived: %v", err)
 	}
 	_ = root.Close()
+}
 
-	xdg = templateEnv(t)
-	dir = filepath.Join(xdg, productName, "templates")
-	stockPath = filepath.Join(dir, filepath.FromSlash(file.relative))
-	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
-		t.Fatal(err)
-	}
+func coveragePruneEditedStock(t *testing.T, changed *[]string) {
+	xdg := templateEnv(t)
+	dir := filepath.Join(xdg, productName, "templates")
+	file := templateStockByRelative(t, "description")
+	stockPath := filepath.Join(dir, filepath.FromSlash(file.relative))
+	coverageInstallTemplate(t)
 	if err := os.WriteFile(stockPath, []byte(strings.Repeat("x", len(file.content))), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	root, _ = coverageTemplateRoot(t)
-	changed = nil
-	if err := pruneTemplateStockFile(root, dir, file, false, &changed); err != nil {
+	root, _ := coverageTemplateRoot(t)
+	*changed = nil
+	if err := pruneTemplateStockFile(root, dir, file, false, changed); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(stockPath); err != nil {
 		t.Fatalf("edited stock was removed: %v", err)
 	}
 	_ = root.Close()
+}
 
-	xdg = templateEnv(t)
-	dir = filepath.Join(xdg, productName, "templates")
-	markerPath, _, err = templateStockMarkerPath(file)
-	if err != nil {
+func coveragePruneSymlinkedStock(t *testing.T, changed *[]string) {
+	xdg := templateEnv(t)
+	dir := filepath.Join(xdg, productName, "templates")
+	file := templateStockByRelative(t, "description")
+	if _, _, err := templateStockMarkerPath(file); err != nil {
 		t.Fatal(err)
 	}
-	stockPath = filepath.Join(dir, filepath.FromSlash(file.relative))
-	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
-		t.Fatal(err)
-	}
+	stockPath := filepath.Join(dir, filepath.FromSlash(file.relative))
+	coverageInstallTemplate(t)
 	if err := os.Remove(stockPath); err != nil {
 		t.Fatal(err)
 	}
@@ -365,61 +384,62 @@ func TestCoverageTemplatePruneErrors(t *testing.T) {
 	if err := os.Symlink(target, stockPath); err != nil {
 		t.Fatal(err)
 	}
-	root, _ = coverageTemplateRoot(t)
-	if err := pruneTemplateStockFile(root, dir, file, false, &changed); err == nil {
+	root, _ := coverageTemplateRoot(t)
+	if err := pruneTemplateStockFile(root, dir, file, false, changed); err == nil {
 		t.Fatal("symlinked stock file was removed")
 	}
 	_ = root.Close()
+}
 
-	xdg = templateEnv(t)
-	dir = filepath.Join(xdg, productName, "templates")
-	markerPath, _, err = templateStockMarkerPath(file)
-	if err != nil {
+func coveragePruneUnreadableStock(t *testing.T, changed *[]string) {
+	xdg := templateEnv(t)
+	dir := filepath.Join(xdg, productName, "templates")
+	file := templateStockByRelative(t, "description")
+	if _, _, err := templateStockMarkerPath(file); err != nil {
 		t.Fatal(err)
 	}
-	stockPath = filepath.Join(dir, filepath.FromSlash(file.relative))
-	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
-		t.Fatal(err)
-	}
+	stockPath := filepath.Join(dir, filepath.FromSlash(file.relative))
+	coverageInstallTemplate(t)
 	if err := os.WriteFile(stockPath, []byte(file.content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(stockPath, 0); err != nil {
 		t.Fatal(err)
 	}
-	root, _ = coverageTemplateRoot(t)
-	if err := pruneTemplateStockFile(root, dir, file, false, &changed); err == nil {
+	root, _ := coverageTemplateRoot(t)
+	if err := pruneTemplateStockFile(root, dir, file, false, changed); err == nil {
 		t.Fatal("unreadable stock file was accepted")
 	}
 	_ = root.Close()
+}
 
-	xdg = templateEnv(t)
-	dir = filepath.Join(xdg, productName, "templates")
-	markerPath, _, err = templateStockMarkerPath(file)
+func coveragePruneUnreadableMarker(t *testing.T, changed *[]string) {
+	xdg := templateEnv(t)
+	dir := filepath.Join(xdg, productName, "templates")
+	file := templateStockByRelative(t, "description")
+	markerPath, _, err := templateStockMarkerPath(file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
-		t.Fatal(err)
-	}
+	coverageInstallTemplate(t)
 	if err := os.Chmod(markerPath, 0); err != nil {
 		t.Fatal(err)
 	}
-	root, _ = coverageTemplateRoot(t)
-	if err := pruneTemplateStockFile(root, dir, file, false, &changed); err == nil {
+	root, _ := coverageTemplateRoot(t)
+	if err := pruneTemplateStockFile(root, dir, file, false, changed); err == nil {
 		t.Fatal("unreadable stock marker was accepted")
 	}
 	_ = root.Close()
+}
 
-	xdg = templateEnv(t)
-	dir = filepath.Join(xdg, productName, "templates")
-	markerPath, _, err = templateStockMarkerPath(file)
-	if err != nil {
+func coveragePruneSymlinkedStockDirectory(t *testing.T, changed *[]string) {
+	xdg := templateEnv(t)
+	dir := filepath.Join(xdg, productName, "templates")
+	file := templateStockByRelative(t, "description")
+	if _, _, err := templateStockMarkerPath(file); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Install(t.TempDir(), templateOptions(false)); err != nil {
-		t.Fatal(err)
-	}
+	coverageInstallTemplate(t)
 	infoFile := templateStockByRelative(t, "info/exclude")
 	if err := os.Remove(filepath.Join(dir, "info", "exclude")); err != nil {
 		t.Fatal(err)
@@ -431,15 +451,17 @@ func TestCoverageTemplatePruneErrors(t *testing.T) {
 	if err := os.Symlink(infoTarget, filepath.Join(dir, "info")); err != nil {
 		t.Fatal(err)
 	}
-	root, _ = coverageTemplateRoot(t)
+	root, _ := coverageTemplateRoot(t)
 	infoFile = templateStockByRelative(t, "info/exclude")
-	if err := pruneTemplateStockFile(root, dir, infoFile, false, &changed); err == nil {
+	if err := pruneTemplateStockFile(root, dir, infoFile, false, changed); err == nil {
 		t.Fatal("symlinked stock directory was accepted")
 	}
 	_ = root.Close()
+}
 
-	xdg = templateEnv(t)
-	root, dir = coverageTemplateRoot(t)
+func coveragePruneLegacyMarker(t *testing.T, changed *[]string) {
+	templateEnv(t)
+	root, dir := coverageTemplateRoot(t)
 	legacyPath := filepath.Join(filepath.Dir(dir), templateStockLegacyMarker)
 	if err := os.MkdirAll(legacyPath, 0o700); err != nil {
 		t.Fatal(err)
@@ -447,24 +469,26 @@ func TestCoverageTemplatePruneErrors(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(legacyPath, coverageConfigJSON), []byte(coverageForeignText), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := pruneTemplateStock(root, dir, true, &changed); err == nil {
+	if err := pruneTemplateStock(root, dir, true, changed); err == nil {
 		t.Fatal("non-empty legacy marker was removed")
 	}
 	_ = root.Close()
+}
 
-	xdg = templateEnv(t)
-	dir = filepath.Join(xdg, productName, "templates")
+func coveragePruneHooksPath(t *testing.T, changed *[]string) {
+	xdg := templateEnv(t)
+	dir := filepath.Join(xdg, productName, "templates")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	legacyPath = filepath.Join(filepath.Dir(dir), templateStockLegacyMarker)
+	legacyPath := filepath.Join(filepath.Dir(dir), templateStockLegacyMarker)
 	if err := os.WriteFile(legacyPath, []byte(templateStockLegacyOwner), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(legacyPath, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := pruneTemplate(dir, &changed); err == nil {
+	if err := pruneTemplate(dir, changed); err == nil {
 		t.Fatal("unreadable legacy marker was accepted")
 	}
 
@@ -476,25 +500,29 @@ func TestCoverageTemplatePruneErrors(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "hooks"), []byte(coverageForeignText), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := pruneTemplate(dir, &changed); err == nil {
+	if err := pruneTemplate(dir, changed); err == nil {
 		t.Fatal("regular hooks path was accepted")
 	}
+}
 
-	xdg = templateEnv(t)
-	file = templateStockByRelative(t, "description")
-	markerPath, _, err = templateStockMarkerPath(file)
+func coveragePruneNonEmptyMarker(t *testing.T, changed *[]string) {
+	templateEnv(t)
+	file := templateStockByRelative(t, "description")
+	markerPath, _, err := templateStockMarkerPath(file)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(markerPath, coverageConfigJSON), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeChangedTemplateStockMarker(file, true, &changed); err == nil {
+	if err := removeChangedTemplateStockMarker(file, true, changed); err == nil {
 		t.Fatal("non-empty marker was removed")
 	}
+}
 
-	xdg = templateEnv(t)
-	root, _ = coverageTemplateRoot(t)
+func coveragePruneRegularRoot(t *testing.T) {
+	xdg := templateEnv(t)
+	root, _ := coverageTemplateRoot(t)
 	regular := filepath.Join(xdg, productName, "templates", coverageConfigJSON)
 	if err := os.WriteFile(regular, []byte(coverageForeignText), 0o600); err != nil {
 		t.Fatal(err)

@@ -1009,13 +1009,13 @@ func TestImportCommitsCoverage(t *testing.T) {
 
 func TestInteropCoverageHelperFixtures(t *testing.T) {
 	value := coverageMetadataMap(coverageCommit)
-	if got := coverageMetadataJSON(t, value); got == "" {
+	if coverageMetadataJSON(t, value) == "" {
 		t.Fatal("empty metadata fixture")
 	}
-	if got := coverageSessionWireMap()["agent_id"]; got == nil {
+	if coverageSessionWireMap()["agent_id"] == nil {
 		t.Fatal("empty session fixture")
 	}
-	if got := coveragePromptWireMap()["agent_id"]; got == nil {
+	if coveragePromptWireMap()["agent_id"] == nil {
 		t.Fatal("empty prompt fixture")
 	}
 }

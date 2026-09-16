@@ -10,16 +10,28 @@ import (
 
 const promptScriptVersionOutput = "promptscript " + pinnedPromptScriptVersion + "\n"
 
+type promptScriptFailureCase struct {
+	name          string
+	mode          string
+	pathMissing   bool
+	writeOutputs  bool
+	complete      bool
+	checkPortable bool
+	want          string
+}
+
+type driftFailureCase struct {
+	name             string
+	command          string
+	mode             string
+	tempDirFailure   bool
+	missingSource    bool
+	unreadableSource bool
+	want             string
+}
+
 func TestCheckPromptScriptFailures(t *testing.T) {
-	tests := []struct {
-		name          string
-		mode          string
-		pathMissing   bool
-		writeOutputs  bool
-		complete      bool
-		checkPortable bool
-		want          string
-	}{
+	tests := []promptScriptFailureCase{
 		{name: "CLI is missing", pathMissing: true, want: "missing CLI failure"},
 		{name: "version command fails", mode: "version-error", want: "version failure"},
 		{name: "version output has no semver", mode: "version-empty", want: "missing version failure"},
@@ -43,39 +55,35 @@ func TestCheckPromptScriptFailures(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			root := promptScriptFixture(t)
-			if tc.pathMissing {
-				t.Setenv("PATH", t.TempDir())
-			}
-			if tc.writeOutputs {
-				writePortableOutputs(t, root, tc.complete)
-			}
-			if tc.mode != "" {
-				usePromptScript(t, tc.mode)
-			}
-			if tc.checkPortable {
-				if err := checkPortableHookOutputs(root); err == nil {
-					t.Fatalf("checkPortableHookOutputs() = nil error, want %s", tc.want)
-				}
-				return
-			}
-			if err := checkPromptScript(root); err == nil {
-				t.Fatalf("checkPromptScript() = nil error, want %s", tc.want)
-			}
+			runPromptScriptFailure(t, tc)
 		})
 	}
 }
 
+func runPromptScriptFailure(t *testing.T, tc promptScriptFailureCase) {
+	root := promptScriptFixture(t)
+	if tc.pathMissing {
+		t.Setenv("PATH", t.TempDir())
+	}
+	if tc.writeOutputs {
+		writePortableOutputs(t, root, tc.complete)
+	}
+	if tc.mode != "" {
+		usePromptScript(t, tc.mode)
+	}
+	if tc.checkPortable {
+		if err := checkPortableHookOutputs(root); err == nil {
+			t.Fatalf("checkPortableHookOutputs() = nil error, want %s", tc.want)
+		}
+		return
+	}
+	if err := checkPromptScript(root); err == nil {
+		t.Fatalf("checkPromptScript() = nil error, want %s", tc.want)
+	}
+}
+
 func TestCheckDriftFailures(t *testing.T) {
-	tests := []struct {
-		name             string
-		command          string
-		mode             string
-		tempDirFailure   bool
-		missingSource    bool
-		unreadableSource bool
-		want             string
-	}{
+	tests := []driftFailureCase{
 		{
 			name:           "temporary directory creation",
 			command:        "/bin/true",
@@ -103,31 +111,35 @@ func TestCheckDriftFailures(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var root string
-			if tc.missingSource {
-				root = t.TempDir()
-				if err := os.WriteFile(filepath.Join(root, "promptscript.yaml"), []byte("{}"), 0o644); err != nil {
-					t.Fatalf("write config: %v", err)
-				}
-			} else {
-				root = promptScriptFixture(t)
-			}
-			if tc.tempDirFailure {
-				t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
-			}
-			if tc.unreadableSource {
-				source := filepath.Join(root, ".promptscript", "broken.prs")
-				if err := os.Symlink(filepath.Join(root, "missing.prs"), source); err != nil {
-					t.Skipf("symlink unavailable: %v", err)
-				}
-			}
-			if tc.mode != "" {
-				usePromptScript(t, tc.mode)
-			}
-			if err := checkDrift(tc.command, root); err == nil {
-				t.Fatalf("checkDrift() = nil error, want %s", tc.want)
-			}
+			runDriftFailure(t, tc)
 		})
+	}
+}
+
+func runDriftFailure(t *testing.T, tc driftFailureCase) {
+	var root string
+	if tc.missingSource {
+		root = t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "promptscript.yaml"), []byte("{}"), 0o644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+	} else {
+		root = promptScriptFixture(t)
+	}
+	if tc.tempDirFailure {
+		t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	}
+	if tc.unreadableSource {
+		source := filepath.Join(root, ".promptscript", "broken.prs")
+		if err := os.Symlink(filepath.Join(root, "missing.prs"), source); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+	}
+	if tc.mode != "" {
+		usePromptScript(t, tc.mode)
+	}
+	if err := checkDrift(tc.command, root); err == nil {
+		t.Fatalf("checkDrift() = nil error, want %s", tc.want)
 	}
 }
 

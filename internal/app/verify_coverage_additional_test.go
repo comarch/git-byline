@@ -23,6 +23,13 @@ func TestRunVerifyTextAndArgumentFailures(t *testing.T) {
 	root := appRepo(t)
 	appWrite(t, root, "file.txt", "one\n")
 	appCommit(t, root, "content")
+	assertVerifyArgumentFailures(t, root)
+	assertVerifyTextSuccess(t, root)
+	assertVerifyOutsideRepositoryFailure(t)
+}
+
+func assertVerifyArgumentFailures(t *testing.T, root string) {
+	t.Helper()
 	tests := [][]string{
 		{"verify", "--help"},
 		{"verify", "--bad"},
@@ -32,24 +39,37 @@ func TestRunVerifyTextAndArgumentFailures(t *testing.T) {
 	for _, args := range tests {
 		args := args
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			code, _, _, err := appRun(root, zeroTime(), nil, args...)
-			if args[1] == "--help" {
-				if code != ExitSuccess || err != nil {
-					t.Fatalf("Run(%v) = %d, %v", args, code, err)
-				}
-				return
-			}
-			if code != ExitUsage || err == nil {
-				t.Fatalf("Run(%v) = %d, %v, want usage error", args, code, err)
-			}
+			assertVerifyArgumentCase(t, root, args)
 		})
 	}
+}
+
+func assertVerifyArgumentCase(t *testing.T, root string, args []string) {
+	t.Helper()
+	code, _, _, err := appRun(root, zeroTime(), nil, args...)
+	if args[1] == "--help" {
+		if code != ExitSuccess || err != nil {
+			t.Fatalf("Run(%v) = %d, %v", args, code, err)
+		}
+		return
+	}
+	if code != ExitUsage || err == nil {
+		t.Fatalf("Run(%v) = %d, %v, want usage error", args, code, err)
+	}
+}
+
+func assertVerifyTextSuccess(t *testing.T, root string) {
+	t.Helper()
 	code, stdout, stderr, err := appRun(root, zeroTime(), nil, "verify")
 	if code != ExitSuccess || err != nil || stderr != "" ||
 		!strings.Contains(stdout, "verified 0 annotated commits") {
 		t.Fatalf("verify text = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
-	code, _, _, err = appRun(t.TempDir(), zeroTime(), nil, "verify")
+}
+
+func assertVerifyOutsideRepositoryFailure(t *testing.T) {
+	t.Helper()
+	code, _, _, err := appRun(t.TempDir(), zeroTime(), nil, "verify")
 	if code != ExitFailure || err == nil {
 		t.Fatalf("verify outside repository = %d, %v", code, err)
 	}

@@ -511,6 +511,16 @@ func TestGitcmdMalformedOutputs(t *testing.T) {
 }
 
 func TestGitcmdValidationBranches(t *testing.T) {
+	testGitcmdCommitValidation(t)
+	testGitcmdRevisionValidation(t)
+	testGitcmdMessageValidation(t)
+	testGitcmdMergeValidation(t)
+	testGitcmdObjectValidation(t)
+	testGitcmdReferenceValidation(t)
+}
+
+func testGitcmdCommitValidation(t *testing.T) {
+	t.Helper()
 	if _, err := repoWithOutput(t, "").Parent(""); err == nil {
 		t.Fatal("Parent accepted an invalid commit")
 	}
@@ -520,6 +530,17 @@ func TestGitcmdValidationBranches(t *testing.T) {
 	if _, err := repoWithOutput(t, "").Changes(coverageOID, coverageBad); err == nil {
 		t.Fatal("Changes accepted an invalid parent")
 	}
+}
+
+func testGitcmdMessageValidation(t *testing.T) {
+	t.Helper()
+	if _, err := repoWithOutput(t, "").CommitMessage(""); err == nil {
+		t.Fatal("CommitMessage accepted an empty revision")
+	}
+}
+
+func testGitcmdRevisionValidation(t *testing.T) {
+	t.Helper()
 	if _, err := repoWithOutput(t, "").RevList("", "", -1); err == nil {
 		t.Fatal("RevList accepted a negative limit")
 	}
@@ -538,9 +559,10 @@ func TestGitcmdValidationBranches(t *testing.T) {
 	if _, _, err := repoWithOutput(t, "").CommitAuthor(""); err == nil {
 		t.Fatal("CommitAuthor accepted an empty revision")
 	}
-	if _, err := repoWithOutput(t, "").CommitMessage(""); err == nil {
-		t.Fatal("CommitMessage accepted an empty revision")
-	}
+}
+
+func testGitcmdMergeValidation(t *testing.T) {
+	t.Helper()
 	if _, err := repoWithOutput(t, "").MergeBase("", coverageOID); err == nil {
 		t.Fatal("MergeBase accepted an empty first revision")
 	}
@@ -553,6 +575,10 @@ func TestGitcmdValidationBranches(t *testing.T) {
 	if _, err := repoWithOutput(t, "").FirstParentHistory(""); err == nil {
 		t.Fatal("FirstParentHistory accepted an empty revision")
 	}
+}
+
+func testGitcmdObjectValidation(t *testing.T) {
+	t.Helper()
 	if _, _, err := repoWithOutput(t, "").BlobID("", coverageFileName); err == nil {
 		t.Fatal("BlobID accepted an empty revision")
 	}
@@ -565,6 +591,10 @@ func TestGitcmdValidationBranches(t *testing.T) {
 	if _, err := repoWithOutput(t, "").BlobSize(""); err == nil {
 		t.Fatal("BlobSize accepted an empty object ID")
 	}
+}
+
+func testGitcmdReferenceValidation(t *testing.T) {
+	t.Helper()
 	if _, _, err := repoWithOutput(t, "").RefValue("refs/heads/../main"); err == nil {
 		t.Fatal("RefValue accepted an invalid ref")
 	}
