@@ -17,141 +17,131 @@ const (
 )
 
 func TestCheckInstallersInputFailures(t *testing.T) {
-	t.Run("shell installer missing", func(t *testing.T) {
-		root := installerFixture(t)
-		if err := os.Remove(filepath.Join(root, shellInstaller)); err != nil {
-			t.Fatalf("remove shell installer: %v", err)
-		}
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want missing shell installer")
-		}
-	})
-
-	t.Run("PowerShell installer missing", func(t *testing.T) {
-		root := installerFixture(t)
-		if err := os.Remove(filepath.Join(root, powerShellInstaller)); err != nil {
-			t.Fatalf("remove PowerShell installer: %v", err)
-		}
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want missing PowerShell installer")
-		}
-	})
-
-	t.Run("shell installer is not executable", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("POSIX executable permission check")
-		}
-		root := installerFixture(t)
-		if err := os.Chmod(filepath.Join(root, shellInstaller), 0o644); err != nil {
-			t.Fatalf("chmod shell installer: %v", err)
-		}
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want executable permission failure")
-		}
-	})
-
-	t.Run("common requirement is missing", func(t *testing.T) {
-		root := installerFixture(t)
-		replaceInstallerText(t, root, shellInstaller, "checksums.txt", "checksum-file")
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want common requirement failure")
-		}
-	})
-
-	t.Run("sudo is rejected", func(t *testing.T) {
-		root := installerFixture(t)
-		appendInstallerText(t, root, shellInstaller, "\nsudo echo forbidden\n")
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want sudo failure")
-		}
-	})
-
-	t.Run("shell checksum requirement is missing", func(t *testing.T) {
-		root := installerFixture(t)
-		replaceInstallerText(t, root, shellInstaller, "--proto '=https'", "--proto")
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want shell checksum failure")
-		}
-	})
-
-	t.Run("PowerShell checksum requirement is missing", func(t *testing.T) {
-		root := installerFixture(t)
-		replaceInstallerText(t, root, powerShellInstaller, "Get-FileHash", "Get-Hash")
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want PowerShell checksum failure")
-		}
-	})
-
-	t.Run("shell agent requirement is missing", func(t *testing.T) {
-		root := installerFixture(t)
-		replaceInstallerText(t, root, shellInstaller, "--no-agent-hooks", "--no-agent")
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want shell agent requirement failure")
-		}
-	})
-
-	t.Run("PowerShell agent requirement is missing", func(t *testing.T) {
-		root := installerFixture(t)
-		replaceInstallerText(t, root, powerShellInstaller, "NoAgentHooks", "NoAgent")
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want PowerShell agent requirement failure")
-		}
-	})
-
-	t.Run("shell syntax is invalid", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("POSIX shell syntax check")
-		}
-		root := installerFixture(t)
-		appendInstallerText(t, root, shellInstaller, "\nif (\n")
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want shell syntax failure")
-		}
-	})
-
-	t.Run("PowerShell syntax probe fails", func(t *testing.T) {
-		root := installerFixture(t)
-		useFakePowerShell(t)
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want PowerShell syntax failure")
-		}
-	})
-
-	t.Run("JSON manifest is invalid", func(t *testing.T) {
-		root := installerFixture(t)
-		writeInstallerFile(t, root, filepath.Join(".factory-plugin", "marketplace.json"), "{")
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want JSON validation failure")
-		}
-	})
-
-	t.Run("plugin license is missing", func(t *testing.T) {
-		root := installerFixture(t)
-		if err := os.Remove(filepath.Join(root, "marketplace", "git-byline", "LICENSE")); err != nil {
-			t.Fatalf("remove plugin license: %v", err)
-		}
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want plugin license failure")
-		}
-	})
-
-	t.Run("root license is missing", func(t *testing.T) {
-		root := installerFixture(t)
-		if err := os.Remove(filepath.Join(root, "LICENSE")); err != nil {
-			t.Fatalf("remove root license: %v", err)
-		}
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want root license failure")
-		}
-	})
-
-	t.Run("licenses differ", func(t *testing.T) {
-		root := installerFixture(t)
-		appendInstallerText(t, root, "LICENSE", "different\n")
-		if err := checkInstallers(root); err == nil {
-			t.Fatal("checkInstallers() = nil error, want license mismatch")
-		}
-	})
+	tests := []struct {
+		name      string
+		skip      string
+		setup     func(*testing.T, string)
+		want      string
+		posixOnly bool
+	}{
+		{
+			name:  "shell installer missing",
+			setup: func(t *testing.T, root string) { removeInstallerFile(t, root, shellInstaller) },
+			want:  "missing shell installer",
+		},
+		{
+			name:  "PowerShell installer missing",
+			setup: func(t *testing.T, root string) { removeInstallerFile(t, root, powerShellInstaller) },
+			want:  "missing PowerShell installer",
+		},
+		{
+			name: "shell installer is not executable",
+			setup: func(t *testing.T, root string) {
+				if err := os.Chmod(filepath.Join(root, shellInstaller), 0o644); err != nil {
+					t.Fatalf("chmod shell installer: %v", err)
+				}
+			},
+			want:      "executable permission failure",
+			posixOnly: true,
+			skip:      "POSIX executable permission check",
+		},
+		{
+			name: "common requirement is missing",
+			setup: func(t *testing.T, root string) {
+				replaceInstallerText(t, root, shellInstaller, "checksums.txt", "checksum-file")
+			},
+			want: "common requirement failure",
+		},
+		{
+			name: "sudo is rejected",
+			setup: func(t *testing.T, root string) {
+				appendInstallerText(t, root, shellInstaller, "\nsudo echo forbidden\n")
+			},
+			want: "sudo failure",
+		},
+		{
+			name: "shell checksum requirement is missing",
+			setup: func(t *testing.T, root string) {
+				replaceInstallerText(t, root, shellInstaller, "--proto '=https'", "--proto")
+			},
+			want: "shell checksum failure",
+		},
+		{
+			name: "PowerShell checksum requirement is missing",
+			setup: func(t *testing.T, root string) {
+				replaceInstallerText(t, root, powerShellInstaller, "Get-FileHash", "Get-Hash")
+			},
+			want: "PowerShell checksum failure",
+		},
+		{
+			name: "shell agent requirement is missing",
+			setup: func(t *testing.T, root string) {
+				replaceInstallerText(t, root, shellInstaller, "--no-agent-hooks", "--no-agent")
+			},
+			want: "shell agent requirement failure",
+		},
+		{
+			name: "PowerShell agent requirement is missing",
+			setup: func(t *testing.T, root string) {
+				replaceInstallerText(t, root, powerShellInstaller, "NoAgentHooks", "NoAgent")
+			},
+			want: "PowerShell agent requirement failure",
+		},
+		{
+			name: "shell syntax is invalid",
+			setup: func(t *testing.T, root string) {
+				appendInstallerText(t, root, shellInstaller, "\nif (\n")
+			},
+			want:      "shell syntax failure",
+			posixOnly: true,
+			skip:      "POSIX shell syntax check",
+		},
+		{
+			name: "PowerShell syntax probe fails",
+			setup: func(t *testing.T, root string) {
+				useFakePowerShell(t)
+			},
+			want: "PowerShell syntax failure",
+		},
+		{
+			name: "JSON manifest is invalid",
+			setup: func(t *testing.T, root string) {
+				writeInstallerFile(t, root, filepath.Join(".factory-plugin", "marketplace.json"), "{")
+			},
+			want: "JSON validation failure",
+		},
+		{
+			name: "plugin license is missing",
+			setup: func(t *testing.T, root string) {
+				removeInstallerFile(t, root, filepath.Join("marketplace", "git-byline", "LICENSE"))
+			},
+			want: "plugin license failure",
+		},
+		{
+			name:  "root license is missing",
+			setup: func(t *testing.T, root string) { removeInstallerFile(t, root, "LICENSE") },
+			want:  "root license failure",
+		},
+		{
+			name: "licenses differ",
+			setup: func(t *testing.T, root string) {
+				appendInstallerText(t, root, "LICENSE", "different\n")
+			},
+			want: "license mismatch",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.posixOnly && runtime.GOOS == "windows" {
+				t.Skip(tc.skip)
+			}
+			root := installerFixture(t)
+			tc.setup(t, root)
+			if err := checkInstallers(root); err == nil {
+				t.Fatalf("checkInstallers() = nil error, want %s", tc.want)
+			}
+		})
+	}
 }
 
 func TestCheckPluginManifestsFailures(t *testing.T) {
@@ -380,6 +370,13 @@ func writeInstallerFile(t *testing.T, root, rel, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write installer fixture %s: %v", rel, err)
+	}
+}
+
+func removeInstallerFile(t *testing.T, root, rel string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
+		t.Fatalf("remove installer fixture %s: %v", rel, err)
 	}
 }
 

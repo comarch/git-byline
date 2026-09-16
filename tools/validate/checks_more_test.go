@@ -105,26 +105,22 @@ func TestValidateCoverageFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("cover command fails", func(t *testing.T) {
-		useFakeGo(t, "cover-error")
-		if err := checkCoverage(copyFixture(t)); err == nil {
-			t.Fatal("checkCoverage() = nil error, want cover command failure")
-		}
-	})
-
-	t.Run("coverage output is unparsable", func(t *testing.T) {
-		useFakeGo(t, "cover-parse-error")
-		if err := checkCoverage(copyFixture(t)); err == nil {
-			t.Fatal("checkCoverage() = nil error, want parse failure")
-		}
-	})
-
-	t.Run("coverage is below floor", func(t *testing.T) {
-		useFakeGo(t, "cover-low")
-		if err := checkCoverage(copyFixture(t)); err == nil {
-			t.Fatal("checkCoverage() = nil error, want floor failure")
-		}
-	})
+	for _, tc := range []struct {
+		name string
+		mode string
+		want string
+	}{
+		{name: "cover command fails", mode: "cover-error", want: "cover command failure"},
+		{name: "coverage output is unparsable", mode: "cover-parse-error", want: "parse failure"},
+		{name: "coverage is below floor", mode: "cover-low", want: "floor failure"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useFakeGo(t, tc.mode)
+			if err := checkCoverage(copyFixture(t)); err == nil {
+				t.Fatalf("checkCoverage() = nil error, want %s", tc.want)
+			}
+		})
+	}
 
 	t.Run("binary collection succeeds", func(t *testing.T) {
 		root := copyFixture(t)
@@ -136,35 +132,25 @@ func TestValidateCoverageFailures(t *testing.T) {
 }
 
 func TestCollectBinaryCoverageSetupFailures(t *testing.T) {
-	t.Run("coverage directory exists", func(t *testing.T) {
-		tmp := t.TempDir()
-		if err := os.Mkdir(filepath.Join(tmp, "covbin"), 0o755); err != nil {
-			t.Fatalf("create coverage directory: %v", err)
-		}
-		if _, err := collectBinaryCoverage("", tmp, ""); err == nil {
-			t.Fatal("collectBinaryCoverage() = nil error, want coverage directory failure")
-		}
-	})
-
-	t.Run("binary directory exists", func(t *testing.T) {
-		tmp := t.TempDir()
-		if err := os.Mkdir(filepath.Join(tmp, "bin"), 0o755); err != nil {
-			t.Fatalf("create binary directory: %v", err)
-		}
-		if _, err := collectBinaryCoverage("", tmp, ""); err == nil {
-			t.Fatal("collectBinaryCoverage() = nil error, want binary directory failure")
-		}
-	})
-
-	t.Run("outside directory exists", func(t *testing.T) {
-		tmp := t.TempDir()
-		if err := os.Mkdir(filepath.Join(tmp, "outside"), 0o755); err != nil {
-			t.Fatalf("create outside directory: %v", err)
-		}
-		if _, err := collectBinaryCoverage("", tmp, ""); err == nil {
-			t.Fatal("collectBinaryCoverage() = nil error, want outside directory failure")
-		}
-	})
+	for _, tc := range []struct {
+		name string
+		dir  string
+		want string
+	}{
+		{name: "coverage directory exists", dir: "covbin", want: "coverage directory failure"},
+		{name: "binary directory exists", dir: "bin", want: "binary directory failure"},
+		{name: "outside directory exists", dir: "outside", want: "outside directory failure"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			if err := os.Mkdir(filepath.Join(tmp, tc.dir), 0o755); err != nil {
+				t.Fatalf("create %s directory: %v", tc.dir, err)
+			}
+			if _, err := collectBinaryCoverage("", tmp, ""); err == nil {
+				t.Fatalf("collectBinaryCoverage() = nil error, want %s", tc.want)
+			}
+		})
+	}
 }
 
 func TestCollectBinaryCoverageFailures(t *testing.T) {
@@ -221,29 +207,23 @@ func TestValidateForbiddenImportFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("package listing fails", func(t *testing.T) {
-		root := fixtureWithCommand(t)
-		useFakeGo(t, "imports-error")
-		if err := checkForbiddenImports(root); err == nil {
-			t.Fatal("checkForbiddenImports() = nil error, want list failure")
-		}
-	})
-
-	t.Run("unparsable package listing", func(t *testing.T) {
-		root := fixtureWithCommand(t)
-		useFakeGo(t, "imports-unparsable")
-		if err := checkForbiddenImports(root); err == nil {
-			t.Fatal("checkForbiddenImports() = nil error, want parse failure")
-		}
-	})
-
-	t.Run("C and os exec imports", func(t *testing.T) {
-		root := fixtureWithCommand(t)
-		useFakeGo(t, "imports-forbidden")
-		if err := checkForbiddenImports(root); err == nil {
-			t.Fatal("checkForbiddenImports() = nil error, want forbidden import failure")
-		}
-	})
+	for _, tc := range []struct {
+		name string
+		mode string
+		want string
+	}{
+		{name: "package listing fails", mode: "imports-error", want: "list failure"},
+		{name: "unparsable package listing", mode: "imports-unparsable", want: "parse failure"},
+		{name: "C and os exec imports", mode: "imports-forbidden", want: "forbidden import failure"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := fixtureWithCommand(t)
+			useFakeGo(t, tc.mode)
+			if err := checkForbiddenImports(root); err == nil {
+				t.Fatalf("checkForbiddenImports() = nil error, want %s", tc.want)
+			}
+		})
+	}
 
 	t.Run("clean production package", func(t *testing.T) {
 		root := fixtureWithCommand(t)
@@ -301,7 +281,6 @@ func useFakeGo(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatalf("look up go: %v", err)
 	}
-	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"list\" ] && [ \"$2\" = \"-m\" ] && [ \"$VALIDATE_FAKE_GO_MODE\" = \"empty-module\" ]; then exit 0; fi\n" +
 		"if [ \"$1\" = \"list\" ] && [ \"$2\" = \"-f\" ]; then\n" +
@@ -320,12 +299,16 @@ func useFakeGo(t *testing.T, mode string) {
 		"  esac\n" +
 		"fi\n" +
 		"exec " + shellQuote(realGo) + " \"$@\"\n"
-	writeExecutableTestFile(t, filepath.Join(dir, "go"), script)
+	useFakeCommand(t, "go", script)
 	t.Setenv("VALIDATE_FAKE_GO_MODE", mode)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func useFakeTool(t *testing.T, name, content string) {
+	t.Helper()
+	useFakeCommand(t, name, content)
+}
+
+func useFakeCommand(t *testing.T, name, content string) {
 	t.Helper()
 	dir := t.TempDir()
 	writeExecutableTestFile(t, filepath.Join(dir, name), content)
@@ -348,7 +331,6 @@ func shellQuote(value string) string {
 
 func useCoverageFakeGo(t *testing.T, mode string) {
 	t.Helper()
-	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
 		"mode=\"$VALIDATE_COVERAGE_FAKE_MODE\"\n" +
 		"if [ \"$1\" = test ]; then\n" +
@@ -398,7 +380,6 @@ func useCoverageFakeGo(t *testing.T, mode string) {
 		"fi\n" +
 		"if [ \"$1\" = tool ] && [ \"$2\" = cover ]; then printf '%s\\n' 'total: (statements) 100.0%'; exit 0; fi\n" +
 		"exit 1\n"
-	writeExecutableTestFile(t, filepath.Join(dir, "go"), script)
+	useFakeCommand(t, "go", script)
 	t.Setenv("VALIDATE_COVERAGE_FAKE_MODE", mode)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

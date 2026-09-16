@@ -955,35 +955,8 @@ func TestInteropMetadataDecodeAndExportErrors(t *testing.T) {
 }
 
 func TestExportGitAIEmptyEntriesCoverage(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, coverageMessage)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob, exists, err := repo.BlobID(commit, coverageFile)
-	if err != nil || !exists {
-		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
-	}
-	note, err := notes.Encode(model.Note{
-		Version: model.NoteVersion,
-		Files: map[string]model.NoteFile{
-			coverageFile: {
-				Blob: blob,
-				Ranges: []model.Range{{
-					Start: 1, End: 1,
-					Attribution: model.Attribution{Author: model.AuthorUntracked},
-				}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.WriteNote(commit, note); err != nil {
-		t.Fatal(err)
-	}
+	_, commit, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
+	writeCoverageUntrackedNote(t, repo, commit, coverageFile, 1)
 	data, err := ExportGitAI(repo, commit)
 	if err != nil {
 		t.Fatal(err)
@@ -1103,25 +1076,35 @@ func coverageNoteWithRawMetadata(attestations, metadata string) []byte {
 	return []byte(attestations + "\n---\n" + metadata)
 }
 
-func TestInteropReadBylineCheckpointError(t *testing.T) {
+func coverageRepoWithFile(t *testing.T, content, message string) (string, string, *gitcmd.Repo) {
+	t.Helper()
 	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, coverageMessage)
+	writeInteropFile(t, root, coverageFile, content)
+	commit := commitInterop(t, root, message)
 	repo, err := gitcmd.Discover(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	blob, exists, err := repo.BlobID(commit, coverageFile)
-	if err != nil || !exists {
-		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
+	return root, commit, repo
+}
+
+func writeCoverageUntrackedNote(t *testing.T, repo *gitcmd.Repo, commit, path string, end int) {
+	t.Helper()
+	blob := mustInteropBlob(t, repo, commit, path)
+	if err := repo.WriteNote(commit, coverageUntrackedNote(t, blob, path, end)); err != nil {
+		t.Fatal(err)
 	}
-	encoded, err := notes.Encode(model.Note{
+}
+
+func coverageUntrackedNote(t *testing.T, blob, path string, end int) []byte {
+	t.Helper()
+	note, err := notes.Encode(model.Note{
 		Version: model.NoteVersion,
 		Files: map[string]model.NoteFile{
-			coverageFile: {
+			path: {
 				Blob: blob,
 				Ranges: []model.Range{{
-					Start: 1, End: 1,
+					Start: 1, End: end,
 					Attribution: model.Attribution{Author: model.AuthorUntracked},
 				}},
 			},
@@ -1130,9 +1113,12 @@ func TestInteropReadBylineCheckpointError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.WriteNote(commit, encoded); err != nil {
-		t.Fatal(err)
-	}
+	return note
+}
+
+func TestInteropReadBylineCheckpointError(t *testing.T) {
+	_, commit, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
+	writeCoverageUntrackedNote(t, repo, commit, coverageFile, 1)
 	stateDir := filepath.Join(repo.GitDir, "byline")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -1215,14 +1201,7 @@ func testExportGitAISessionConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blobs := map[string]string{}
-	for _, path := range []string{"a.txt", "b.txt"} {
-		blob, exists, err := repo.BlobID(commit, path)
-		if err != nil || !exists {
-			t.Fatalf("blob %q = %q, %t, %v", path, blob, exists, err)
-		}
-		blobs[path] = blob
-	}
+	blobs := mustInteropBlobs(t, repo, commit, "a.txt", "b.txt")
 	note := model.Note{
 		Version: model.NoteVersion,
 		Files: map[string]model.NoteFile{
@@ -1338,13 +1317,7 @@ func TestExportGitAIEntryConflict(t *testing.T) {
 }
 
 func testReadGitAINoteError(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, coverageMessage)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	root, commit, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
 	setInteropRefToBlob(t, root, GitAINotesRef)
 	if _, _, err := ReadGitAINote(repo, commit); err == nil {
 		t.Fatal("ReadGitAINote accepted an invalid notes ref")
@@ -1352,35 +1325,11 @@ func testReadGitAINoteError(t *testing.T) {
 }
 
 func testWriteGitAINoteErrors(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, coverageMessage)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	root, commit, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
 	if err := WriteGitAINote(repo, coverageBadRevision); err == nil {
 		t.Fatal("WriteGitAINote accepted an invalid revision")
 	}
-	blob := mustInteropBlob(t, repo, commit, coverageFile)
-	note, err := notes.Encode(model.Note{
-		Version: model.NoteVersion,
-		Files: map[string]model.NoteFile{
-			coverageFile: {
-				Blob: blob,
-				Ranges: []model.Range{{
-					Start: 1, End: 1,
-					Attribution: model.Attribution{Author: model.AuthorUntracked},
-				}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.WriteNote(commit, note); err != nil {
-		t.Fatal(err)
-	}
+	writeCoverageUntrackedNote(t, repo, commit, coverageFile, 1)
 	if err := WriteGitAINote(repo, commit); err != nil {
 		t.Fatal(err)
 	}
@@ -1391,26 +1340,14 @@ func testWriteGitAINoteErrors(t *testing.T) {
 }
 
 func testExportAgentTraceMissingByline(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, coverageMessage)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, commit, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
 	if _, err := ExportAgentTrace(repo, commit); err == nil {
 		t.Fatal("ExportAgentTrace accepted missing byline note")
 	}
 }
 
 func TestExportAgentTraceTimestampError(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, "timestamp error")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	root, commit, _ := coverageRepoWithFile(t, coverageOneLine, "timestamp error")
 	note, err := notes.Encode(model.Note{Version: model.NoteVersion})
 	if err != nil {
 		t.Fatal(err)
@@ -1435,17 +1372,10 @@ show) echo "timestamp failure" >&2; exit 1 ;;
 	if _, err := ExportAgentTrace(fakeRepo, commit); err == nil {
 		t.Fatal("ExportAgentTrace accepted timestamp failure")
 	}
-	_ = repo
 }
 
 func testImportGitAIReadError(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, coverageMessage)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	root, commit, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
 	setInteropRefToBlob(t, root, GitAINotesRef)
 	if _, err := ImportGitAI(repo, commit, false); err == nil {
 		t.Fatal("ImportGitAI accepted an invalid Git AI notes ref")
@@ -1466,13 +1396,7 @@ func TestImportGitAICoversMissingAndSkippedNotes(t *testing.T) {
 }
 
 func testImportGitAIMissingNote(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, "no Git AI note")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, commit, repo := coverageRepoWithFile(t, coverageOneLine, "no Git AI note")
 	result, err := ImportGitAI(repo, commit, false)
 	if err != nil || result.Imported != 0 || result.Skipped != 0 {
 		t.Fatalf("ImportGitAI missing note = %+v, %v", result, err)
@@ -1480,13 +1404,7 @@ func testImportGitAIMissingNote(t *testing.T) {
 }
 
 func testImportGitAIConversionError(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, "invalid conversion")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, commit, repo := coverageRepoWithFile(t, coverageOneLine, "invalid conversion")
 	data := coverageNoteWithRawMetadata(
 		coverageFile+"\n  "+coveragePrompt+" 2",
 		coverageMetadataJSON(t, coverageMetadataMap(commit)),
@@ -1501,32 +1419,8 @@ func testImportGitAIConversionError(t *testing.T) {
 }
 
 func testImportGitAIBylineReadError(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, "byline read error")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob := mustInteropBlob(t, repo, commit, coverageFile)
-	note, err := notes.Encode(model.Note{
-		Version: model.NoteVersion,
-		Files: map[string]model.NoteFile{
-			coverageFile: {
-				Blob: blob,
-				Ranges: []model.Range{{
-					Start: 1, End: 1,
-					Attribution: model.Attribution{Author: model.AuthorUntracked},
-				}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.WriteNote(commit, note); err != nil {
-		t.Fatal(err)
-	}
+	root, commit, repo := coverageRepoWithFile(t, coverageOneLine, "byline read error")
+	writeCoverageUntrackedNote(t, repo, commit, coverageFile, 1)
 	if err := WriteGitAINote(repo, commit); err != nil {
 		t.Fatal(err)
 	}
@@ -1633,13 +1527,7 @@ func testImportGitAIEncodeFailure(t *testing.T) {
 }
 
 func testImportGitAIInvalidRange(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commitInterop(t, root, coverageMessage)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, _, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
 	if _, err := ImportGitAI(repo, coverageBadRevision, false); err == nil {
 		t.Fatal("ImportGitAI accepted an invalid revision range")
 	}
@@ -1655,13 +1543,7 @@ func TestInteropCoverageBylineAndBinaryErrors(t *testing.T) {
 }
 
 func testToBylineBinary(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, string([]byte{0}))
-	commit := commitInterop(t, root, "binary")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, commit, repo := coverageRepoWithFile(t, string([]byte{0}), "binary")
 	note := GitAINote{
 		BaseCommit: commit,
 		Files: map[string][]GitAIAttestation{
@@ -1675,13 +1557,7 @@ func testToBylineBinary(t *testing.T) {
 }
 
 func TestToBylineGitErrors(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, "Git errors")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	root, commit, repo := coverageRepoWithFile(t, coverageOneLine, "Git errors")
 	note := GitAINote{
 		BaseCommit: commit,
 		Files: map[string][]GitAIAttestation{
@@ -1706,13 +1582,7 @@ cat-file) echo "blob failure" >&2; exit 1 ;;
 }
 
 func testToBylineMissingMetadata(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, coverageMessage)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, commit, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
 	note := GitAINote{
 		BaseCommit: commit,
 		Files: map[string][]GitAIAttestation{
@@ -1726,13 +1596,7 @@ func testToBylineMissingMetadata(t *testing.T) {
 }
 
 func testReadBylineMalformedNote(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, coverageMessage)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, commit, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
 	if err := repo.WriteNoteRef("refs/notes/byline", commit, []byte(coverageBadValue)); err != nil {
 		t.Fatal(err)
 	}
@@ -1742,83 +1606,23 @@ func testReadBylineMalformedNote(t *testing.T) {
 }
 
 func testReadBylineBinary(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, string([]byte{0}))
-	commit := commitInterop(t, root, "binary")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob, exists, err := repo.BlobID(commit, coverageFile)
-	if err != nil || !exists {
-		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
-	}
-	note, err := notes.Encode(model.Note{
-		Version: model.NoteVersion,
-		Files: map[string]model.NoteFile{
-			coverageFile: {
-				Blob: blob,
-				Ranges: []model.Range{{
-					Start: 1, End: 1,
-					Attribution: model.Attribution{Author: model.AuthorUntracked},
-				}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.WriteNote(commit, note); err != nil {
-		t.Fatal(err)
-	}
+	_, commit, repo := coverageRepoWithFile(t, string([]byte{0}), "binary")
+	writeCoverageUntrackedNote(t, repo, commit, coverageFile, 1)
 	if _, _, err := readByline(repo, commit); err == nil {
 		t.Fatal("readByline accepted binary content")
 	}
 }
 
 func testReadBylineInvalidRanges(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, coverageMessage)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob, exists, err := repo.BlobID(commit, coverageFile)
-	if err != nil || !exists {
-		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
-	}
-	note, err := notes.Encode(model.Note{
-		Version: model.NoteVersion,
-		Files: map[string]model.NoteFile{
-			coverageFile: {
-				Blob: blob,
-				Ranges: []model.Range{{
-					Start: 1, End: 2,
-					Attribution: model.Attribution{Author: model.AuthorUntracked},
-				}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.WriteNote(commit, note); err != nil {
-		t.Fatal(err)
-	}
+	_, commit, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
+	writeCoverageUntrackedNote(t, repo, commit, coverageFile, 2)
 	if _, _, err := readByline(repo, commit); err == nil {
 		t.Fatal("readByline accepted out-of-bounds ranges")
 	}
 }
 
 func testReadBylineInvalidRef(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, coverageMessage)
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	root, commit, repo := coverageRepoWithFile(t, coverageOneLine, coverageMessage)
 	setInteropRefToBlob(t, root, "refs/notes/byline")
 	if _, _, err := readByline(repo, commit); err == nil {
 		t.Fatal("readByline accepted an invalid notes ref")
@@ -1844,17 +1648,8 @@ func testDecodeMissingPrompts(t *testing.T) {
 }
 
 func testExportEmptyTraceFile(t *testing.T) {
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, "")
-	commit := commitInterop(t, root, "empty")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob, exists, err := repo.BlobID(commit, coverageFile)
-	if err != nil || !exists {
-		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
-	}
+	_, commit, repo := coverageRepoWithFile(t, "", "empty")
+	blob := mustInteropBlob(t, repo, commit, coverageFile)
 	note, err := notes.Encode(model.Note{
 		Version: model.NoteVersion,
 		Files: map[string]model.NoteFile{
@@ -1999,15 +1794,6 @@ func storeCheckpointForCoverage(t *testing.T, repo *gitcmd.Repo, checkpoint mode
 	return store.New(repo.GitDir).AppendCheckpoint(checkpoint)
 }
 
-func mustInteropBlob(t *testing.T, repo *gitcmd.Repo, commit, path string) string {
-	t.Helper()
-	blob, exists, err := repo.BlobID(commit, path)
-	if err != nil || !exists {
-		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
-	}
-	return blob
-}
-
 func setInteropRefToBlob(t *testing.T, root, ref string) {
 	t.Helper()
 	objectPath := filepath.Join(t.TempDir(), "object")
@@ -2058,29 +1844,9 @@ fi
 
 func coverageFakeReadBylineFixture(t *testing.T) (string, []byte, string, string) {
 	t.Helper()
-	root := interopRepo(t)
-	writeInteropFile(t, root, coverageFile, coverageOneLine)
-	commit := commitInterop(t, root, "fake read byline")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	root, commit, repo := coverageRepoWithFile(t, coverageOneLine, "fake read byline")
 	blob := mustInteropBlob(t, repo, commit, coverageFile)
-	note, err := notes.Encode(model.Note{
-		Version: model.NoteVersion,
-		Files: map[string]model.NoteFile{
-			coverageFile: {
-				Blob: blob,
-				Ranges: []model.Range{{
-					Start: 1, End: 1,
-					Attribution: model.Attribution{Author: model.AuthorUntracked},
-				}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	note := coverageUntrackedNote(t, blob, coverageFile, 1)
 	return root, note, commit, blob
 }
 

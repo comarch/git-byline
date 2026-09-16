@@ -28,22 +28,35 @@ func readProfileFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-func TestMergeFilesMergesCountsAndOrdersDeterministically(t *testing.T) {
-	dir := t.TempDir()
-	unit := writeProfileFile(t, dir, "unit.out",
-		"mode: count\n"+
-			"github.com/comarch/git-byline/internal/store/store.go:10.2,11.10 2 0\n"+
-			"github.com/comarch/git-byline/cmd/git-byline/main.go:13.2,16.20 4 0\n")
-	child := writeProfileFile(t, dir, "child.out",
-		"mode: count\n"+
-			"github.com/comarch/git-byline/cmd/git-byline/main.go:13.2,16.20 4 3\n"+
-			"github.com/comarch/git-byline/internal/app/app.go:5.2,6.8 1 1\n")
-	out := filepath.Join(dir, "merged.out")
+type profileFixture struct {
+	name    string
+	content string
+}
 
-	covered, count, err := MergeFiles([]string{unit, child}, out)
+func mergeProfileFixtures(t *testing.T, fixtures ...profileFixture) (string, float64, int) {
+	t.Helper()
+	dir := t.TempDir()
+	paths := make([]string, 0, len(fixtures))
+	for _, fixture := range fixtures {
+		paths = append(paths, writeProfileFile(t, dir, fixture.name, fixture.content))
+	}
+	out := filepath.Join(dir, "merged.out")
+	covered, count, err := MergeFiles(paths, out)
 	if err != nil {
 		t.Fatalf("MergeFiles() = %v, want nil", err)
 	}
+	return out, covered, count
+}
+
+func TestMergeFilesMergesCountsAndOrdersDeterministically(t *testing.T) {
+	out, covered, count := mergeProfileFixtures(t,
+		profileFixture{name: "unit.out", content: "mode: count\n" +
+			"github.com/comarch/git-byline/internal/store/store.go:10.2,11.10 2 0\n" +
+			"github.com/comarch/git-byline/cmd/git-byline/main.go:13.2,16.20 4 0\n"},
+		profileFixture{name: "child.out", content: "mode: count\n" +
+			"github.com/comarch/git-byline/cmd/git-byline/main.go:13.2,16.20 4 3\n" +
+			"github.com/comarch/git-byline/internal/app/app.go:5.2,6.8 1 1\n"},
+	)
 	if count != 3 {
 		t.Fatalf("block count = %d, want 3", count)
 	}
@@ -60,16 +73,10 @@ func TestMergeFilesMergesCountsAndOrdersDeterministically(t *testing.T) {
 }
 
 func TestMergeFilesSumCountsSameBlockAcrossProfiles(t *testing.T) {
-	dir := t.TempDir()
-	a := writeProfileFile(t, dir, "a.out",
-		"mode: count\nmain.go:1.2,2.10 1 2\n")
-	b := writeProfileFile(t, dir, "b.out",
-		"mode: count\nmain.go:1.2,2.10 1 3\n")
-	out := filepath.Join(dir, "merged.out")
-
-	if _, _, err := MergeFiles([]string{a, b}, out); err != nil {
-		t.Fatalf("MergeFiles() = %v, want nil", err)
-	}
+	out, _, _ := mergeProfileFixtures(t,
+		profileFixture{name: "a.out", content: "mode: count\nmain.go:1.2,2.10 1 2\n"},
+		profileFixture{name: "b.out", content: "mode: count\nmain.go:1.2,2.10 1 3\n"},
+	)
 	if got := readProfileFile(t, out); !strings.Contains(got, "main.go:1.2,2.10 1 5\n") {
 		t.Fatalf("merged counts not summed: %q", got)
 	}
@@ -79,16 +86,10 @@ func TestMergeFilesSumCountsSameBlockAcrossProfiles(t *testing.T) {
 // zero-statement blocks (Go emits them for empty regions) merge like
 // any other block instead of failing validation.
 func TestMergeFilesAcceptsZeroStatementBlocks(t *testing.T) {
-	dir := t.TempDir()
-	a := writeProfileFile(t, dir, "a.out",
-		"mode: count\nrewrite.go:214.11,214.11 0 1\n")
-	b := writeProfileFile(t, dir, "b.out",
-		"mode: count\nrewrite.go:214.11,214.11 0 1\n")
-	out := filepath.Join(dir, "merged.out")
-
-	if _, _, err := MergeFiles([]string{a, b}, out); err != nil {
-		t.Fatalf("MergeFiles() = %v, want nil", err)
-	}
+	out, _, _ := mergeProfileFixtures(t,
+		profileFixture{name: "a.out", content: "mode: count\nrewrite.go:214.11,214.11 0 1\n"},
+		profileFixture{name: "b.out", content: "mode: count\nrewrite.go:214.11,214.11 0 1\n"},
+	)
 	if got := readProfileFile(t, out); !strings.Contains(got, "rewrite.go:214.11,214.11 0 2\n") {
 		t.Fatalf("zero-statement block not merged: %q", got)
 	}

@@ -16,20 +16,7 @@ func TestScanRepositoryFailures(t *testing.T) {
 	})
 
 	t.Run("file read fails", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("file permissions are not enforced on Windows")
-		}
-		if runtime.GOOS != "windows" && os.Geteuid() == 0 {
-			t.Skip("root ignores file permissions")
-		}
-		root := t.TempDir()
-		path := filepath.Join(root, "unreadable.txt")
-		if err := os.WriteFile(path, []byte("content\n"), 0o600); err != nil {
-			t.Fatalf("write unreadable file: %v", err)
-		}
-		if err := os.Chmod(path, 0); err != nil {
-			t.Fatalf("chmod unreadable file: %v", err)
-		}
+		root := unreadableScanRoot(t)
 		if _, err := scanRepo(root); err == nil {
 			t.Fatal("scanRepo() = nil error, want file read failure")
 		}
@@ -96,20 +83,7 @@ func TestCheckScansFailures(t *testing.T) {
 	})
 
 	t.Run("repository scan fails", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("file permissions are not enforced on Windows")
-		}
-		if runtime.GOOS != "windows" && os.Geteuid() == 0 {
-			t.Skip("root ignores file permissions")
-		}
-		root := t.TempDir()
-		path := filepath.Join(root, "unreadable.txt")
-		if err := os.WriteFile(path, []byte("content\n"), 0o600); err != nil {
-			t.Fatalf("write unreadable file: %v", err)
-		}
-		if err := os.Chmod(path, 0); err != nil {
-			t.Fatalf("chmod unreadable file: %v", err)
-		}
+		root := unreadableScanRoot(t)
 		if err := checkScans(root); err == nil {
 			t.Fatal("checkScans() = nil error, want scan failure")
 		}
@@ -126,4 +100,23 @@ func TestCheckScansFailures(t *testing.T) {
 			t.Fatalf("checkScans() = %v, want placeholder finding", err)
 		}
 	})
+}
+
+func unreadableScanRoot(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("file permissions are not enforced on Windows")
+	}
+	if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "unreadable.txt")
+	if err := os.WriteFile(path, []byte("content\n"), 0o600); err != nil {
+		t.Fatalf("write unreadable file: %v", err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatalf("chmod unreadable file: %v", err)
+	}
+	return root
 }

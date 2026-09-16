@@ -1090,7 +1090,10 @@ func rebaseCoveragePath(index int) string {
 	return "rebase-" + string(rune('a'+index)) + ".txt"
 }
 
-func coverageRebaseHashError(t *testing.T) {
+// coverageRebasePendingFixture builds the one-file pending state the
+// rebase error scenarios share, wrapped in the named fake Git.
+func coverageRebasePendingFixture(t *testing.T, fake string) (*gitcmd.Repo, string, model.State) {
+	t.Helper()
 	root := testRepo(t)
 	write(t, root, coverageFile, "content\n")
 	commitID := commit(t, root, "content")
@@ -1102,7 +1105,7 @@ func coverageRebaseHashError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo = fakeRewriteRepo(t, root, "hash-error", "")
+	repo = fakeRewriteRepo(t, root, fake, "")
 	state := model.NewState()
 	state.Pending.BaseCommit = commitID
 	state.Pending.Files[coverageFile] = model.PendingFile{
@@ -1113,36 +1116,19 @@ func coverageRebaseHashError(t *testing.T) {
 			Attribution: model.Attribution{Author: model.AuthorHuman},
 		}},
 	}
-	_, err = rebasePendingLocked(repo, commitID, store.New(repo.GitDir), state)
-	if err == nil {
+	return repo, commitID, state
+}
+
+func coverageRebaseHashError(t *testing.T) {
+	repo, commitID, state := coverageRebasePendingFixture(t, "hash-error")
+	if _, err := rebasePendingLocked(repo, commitID, store.New(repo.GitDir), state); err == nil {
 		t.Fatal("rebasePendingLocked accepted a hash failure")
 	}
 }
 
 func coverageRebaseStateWriteError(t *testing.T) {
-	root := testRepo(t)
-	write(t, root, coverageFile, "content\n")
-	commitID := commit(t, root, "content")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob, err := repo.HashBytes([]byte("content\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo = fakeRewriteRepo(t, root, "update-ref-error", "")
-	state := model.NewState()
-	state.Pending.BaseCommit = commitID
-	state.Pending.Files[coverageFile] = model.PendingFile{
-		Blob: blob,
-		Ranges: []model.Range{{
-			Start:       1,
-			End:         1,
-			Attribution: model.Attribution{Author: model.AuthorHuman},
-		}},
-	}
-	_, err = rebasePendingLocked(repo, commitID, store.New(repo.GitDir), state)
+	repo, commitID, state := coverageRebasePendingFixture(t, "update-ref-error")
+	_, err := rebasePendingLocked(repo, commitID, store.New(repo.GitDir), state)
 	assertCoverageError(t, err, "write checkout state")
 }
 
@@ -1736,7 +1722,12 @@ func coverageApplyMatcherBudget(t *testing.T) {
 	}
 }
 
-func coverageApplyExistingNoteBudget(t *testing.T) {
+// coverageApplyNoteFixture prepares one old commit carrying a note and
+// wraps the repository in the named fake Git. When baseIsTarget is set
+// the fake reports the rewritten commit as its base, matching the
+// scenarios that exercise note reading during a rewrite.
+func coverageApplyNoteFixture(t *testing.T, fake string, baseIsTarget bool) (*gitcmd.Repo, string, string) {
+	t.Helper()
 	root := testRepo(t)
 	write(t, root, coverageFile, "content\n")
 	old := commit(t, root, "old")
@@ -1749,7 +1740,16 @@ func coverageApplyExistingNoteBudget(t *testing.T) {
 	if err := repo.WriteNote(old, encodeCoverageNote(t, makeCoverageNote(blob))); err != nil {
 		t.Fatal(err)
 	}
-	repo = fakeRewriteRepo(t, root, "large-note", target)
+	base := ""
+	if baseIsTarget {
+		base = target
+	}
+	repo = fakeRewriteRepo(t, root, fake, base)
+	return repo, old, target
+}
+
+func coverageApplyExistingNoteBudget(t *testing.T) {
+	repo, old, target := coverageApplyNoteFixture(t, "large-note", true)
 	result, err := applyRewriteMapping(repo, coverageMapping(t, old, target))
 	if err != nil {
 		t.Fatal(err)
@@ -1760,34 +1760,14 @@ func coverageApplyExistingNoteBudget(t *testing.T) {
 }
 
 func coverageApplyReadTargetNoteError(t *testing.T) {
-	root := testRepo(t)
-	write(t, root, coverageFile, "content\n")
-	old := commit(t, root, "old")
-	target := commitWithMessage(t, root, "target")
-	repo := fakeRewriteRepo(t, root, "notes-read-error", target)
-	blob := mustBlob(t, repo, old, coverageFile)
-	if err := repo.WriteNote(old, encodeCoverageNote(t, makeCoverageNote(blob))); err != nil {
-		t.Fatal(err)
-	}
+	repo, old, target := coverageApplyNoteFixture(t, "notes-read-error", true)
 	_, err := applyRewriteMapping(repo, coverageMapping(t, old, target))
 	assertCoverageError(t, err, "read rewritten note")
 }
 
 func coverageApplyWriteTargetNoteError(t *testing.T) {
-	root := testRepo(t)
-	write(t, root, coverageFile, "content\n")
-	old := commit(t, root, "old")
-	target := commitWithMessage(t, root, "target")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob := mustBlob(t, repo, old, coverageFile)
-	if err := repo.WriteNote(old, encodeCoverageNote(t, makeCoverageNote(blob))); err != nil {
-		t.Fatal(err)
-	}
-	repo = fakeRewriteRepo(t, root, "notes-write-error", "")
-	_, err = applyRewriteMapping(repo, coverageMapping(t, old, target))
+	repo, old, target := coverageApplyNoteFixture(t, "notes-write-error", false)
+	_, err := applyRewriteMapping(repo, coverageMapping(t, old, target))
 	assertCoverageError(t, err, "write rewritten note")
 }
 

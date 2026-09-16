@@ -52,295 +52,15 @@ func coverageShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func TestGitcmdEarlyErrorPaths(t *testing.T) {
-	tests := []struct {
-		name string
-		run  func(*Repo) error
-	}{
-		{
-			name: "head command",
-			run: func(repo *Repo) error {
-				_, err := repo.Head()
-				return err
-			},
-		},
-		{
-			name: "object format command",
-			run: func(repo *Repo) error {
-				_, err := repo.ObjectIDLength()
-				return err
-			},
-		},
-		{
-			name: "previous head command",
-			run: func(repo *Repo) error {
-				_, _, err := repo.PreviousHead()
-				return err
-			},
-		},
-		{
-			name: "current branch command",
-			run: func(repo *Repo) error {
-				_, _, err := repo.CurrentBranchRef()
-				return err
-			},
-		},
-		{
-			name: "parents command",
-			run: func(repo *Repo) error {
-				_, err := repo.Parents(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "changes command",
-			run: func(repo *Repo) error {
-				_, err := repo.Changes(coverageOID, "")
-				return err
-			},
-		},
-		{
-			name: "rev-list command",
-			run: func(repo *Repo) error {
-				_, err := repo.RevList("", "", 0)
-				return err
-			},
-		},
-		{
-			name: "patch command",
-			run: func(repo *Repo) error {
-				_, err := repo.PatchID(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "worktree revision validation",
-			run: func(repo *Repo) error {
-				_, err := repo.WorktreeMatchesRevision("", coverageFileName)
-				return err
-			},
-		},
-		{
-			name: "worktree path validation",
-			run: func(repo *Repo) error {
-				_, err := repo.WorktreeMatchesRevision(coverageOID, "../file")
-				return err
-			},
-		},
-		{
-			name: "worktree blob command",
-			run: func(repo *Repo) error {
-				_, err := repo.WorktreeMatchesRevision(coverageOID, coverageFileName)
-				return err
-			},
-		},
-		{
-			name: "stash parent command",
-			run: func(repo *Repo) error {
-				_, err := repo.StashPaths(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "stash applied command",
-			run: func(repo *Repo) error {
-				_, err := repo.StashApplied(coverageOID, []string{coverageFileName})
-				return err
-			},
-		},
-		{
-			name: "dirty paths command",
-			run: func(repo *Repo) error {
-				_, err := repo.DirtyPaths()
-				return err
-			},
-		},
-		{
-			name: "commit time command",
-			run: func(repo *Repo) error {
-				_, err := repo.CommitTime(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "commit message command",
-			run: func(repo *Repo) error {
-				_, err := repo.CommitMessage(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "merge-base command",
-			run: func(repo *Repo) error {
-				_, err := repo.MergeBase(coverageOID, coverageOID2)
-				return err
-			},
-		},
-		{
-			name: "note list command",
-			run: func(repo *Repo) error {
-				_, err := repo.NoteCommits(coverageNotesName)
-				return err
-			},
-		},
-		{
-			name: "blob command",
-			run: func(repo *Repo) error {
-				_, _, err := repo.BlobID(coverageOID, coverageFileName)
-				return err
-			},
-		},
-		{
-			name: "read blob command",
-			run: func(repo *Repo) error {
-				_, err := repo.ReadBlob(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "blob size command",
-			run: func(repo *Repo) error {
-				_, err := repo.BlobSize(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "hash command",
-			run: func(repo *Repo) error {
-				_, err := repo.HashBytes([]byte("content"))
-				return err
-			},
-		},
-		{
-			name: "ignored command",
-			run: func(repo *Repo) error {
-				_, err := repo.Ignored(coverageFileName)
-				return err
-			},
-		},
-		{
-			name: "read note ref validation",
-			run: func(repo *Repo) error {
-				_, _, err := repo.ReadNoteRef(coverageBranch, coverageOID)
-				return err
-			},
-		},
-		{
-			name: "read note commit validation",
-			run: func(repo *Repo) error {
-				_, _, err := repo.ReadNoteRef(coverageNotesName, "")
-				return err
-			},
-		},
-		{
-			name: "write note ref validation",
-			run: func(repo *Repo) error {
-				return repo.WriteNoteRef(coverageBranch, coverageOID, nil)
-			},
-		},
-		{
-			name: "write note commit validation",
-			run: func(repo *Repo) error {
-				return repo.WriteNoteRef(coverageNotesName, "", nil)
-			},
-		},
-		{
-			name: "delete note ref validation",
-			run: func(repo *Repo) error {
-				return repo.DeleteNoteRef(coverageBranch, coverageOID)
-			},
-		},
-		{
-			name: "delete note commit validation",
-			run: func(repo *Repo) error {
-				return repo.DeleteNoteRef(coverageNotesName, "")
-			},
-		},
-		{
-			name: "delete note command",
-			run: func(repo *Repo) error {
-				return repo.DeleteNoteRef(coverageNotesName, coverageOID)
-			},
-		},
-		{
-			name: "delete equal read command",
-			run: func(repo *Repo) error {
-				_, err := repo.DeleteNoteRefIfEqual(coverageNotesName, coverageOID, nil)
-				return err
-			},
-		},
-		{
-			name: "ref validation",
-			run: func(repo *Repo) error {
-				_, _, err := repo.RefValue("refs/heads/../bad")
-				return err
-			},
-		},
-		{
-			name: "ref command",
-			run: func(repo *Repo) error {
-				_, _, err := repo.RefValue(coverageBranch)
-				return err
-			},
-		},
-		{
-			name: "retention tree command",
-			run: func(repo *Repo) error {
-				return repo.ProtectBlobs([]string{coverageOID})
-			},
-		},
-		{
-			name: "retained count command",
-			run: func(repo *Repo) error {
-				_, err := repo.ProtectedBlobCount()
-				return err
-			},
-		},
-		{
-			name: "history command",
-			run: func(repo *Repo) error {
-				_, err := repo.FirstParentHistory(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "config command",
-			run: func(repo *Repo) error {
-				_, _, err := repo.ConfigPath("core.hooksPath")
-				return err
-			},
-		},
-		{
-			name: "Git path command",
-			run: func(repo *Repo) error {
-				_, err := repo.GitPath("hooks")
-				return err
-			},
-		},
-		{
-			name: "version command",
-			run: func(repo *Repo) error {
-				_, _, err := repo.Version()
-				return err
-			},
-		},
-	}
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			repo := coverageOutputRepo(t, "", "failure", 2)
-			if err := test.run(repo); err == nil {
-				t.Fatal("operation accepted fake Git failure")
-			}
-		})
-	}
+type coverageCommandRun struct {
+	name string
+	run  func(*Repo) error
 }
 
-func TestGitcmdMalformedOutputs(t *testing.T) {
-	tests := []struct {
-		name string
-		run  func(*Repo) error
-	}{
+// Shared command probes reused by the error-path and malformed-output
+// tables: the same Git calls checked against different fake behaviors.
+func coverageCommandRuns() []coverageCommandRun {
+	return []coverageCommandRun{
 		{
 			name: "head",
 			run: func(repo *Repo) error {
@@ -377,6 +97,13 @@ func TestGitcmdMalformedOutputs(t *testing.T) {
 			},
 		},
 		{
+			name: "changes",
+			run: func(repo *Repo) error {
+				_, err := repo.Changes(coverageOID, "")
+				return err
+			},
+		},
+		{
 			name: "rev-list",
 			run: func(repo *Repo) error {
 				_, err := repo.RevList("", "", 0)
@@ -384,118 +111,376 @@ func TestGitcmdMalformedOutputs(t *testing.T) {
 			},
 		},
 		{
-			name: "patch ID",
+			name: "patch",
 			run: func(repo *Repo) error {
 				_, err := repo.PatchID(coverageOID)
 				return err
 			},
 		},
-		{
-			name: "commit time",
-			run: func(repo *Repo) error {
-				_, err := repo.CommitTime(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "commit author",
-			run: func(repo *Repo) error {
-				_, _, err := repo.CommitAuthor(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "merge base",
-			run: func(repo *Repo) error {
-				_, err := repo.MergeBase(coverageOID, coverageOID2)
-				return err
-			},
-		},
-		{
-			name: "note list length",
-			run: func(repo *Repo) error {
-				_, err := repo.NoteCommits(coverageNotesName)
-				return err
-			},
-		},
-		{
-			name: "note list object",
-			run: func(repo *Repo) error {
-				_, err := repo.NoteCommits(coverageNotesName)
-				return err
-			},
-		},
-		{
-			name: "tree entry",
-			run: func(repo *Repo) error {
-				_, _, err := repo.BlobID(coverageOID, coverageFileName)
-				return err
-			},
-		},
-		{
-			name: "tree metadata",
-			run: func(repo *Repo) error {
-				_, _, err := repo.BlobID(coverageOID, coverageFileName)
-				return err
-			},
-		},
-		{
-			name: "blob size",
-			run: func(repo *Repo) error {
-				_, err := repo.BlobSize(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "hash object",
-			run: func(repo *Repo) error {
-				_, err := repo.HashBytes([]byte("content"))
-				return err
-			},
-		},
-		{
-			name: "retention tree",
-			run: func(repo *Repo) error {
-				return repo.ProtectBlobs([]string{coverageOID})
-			},
-		},
-		{
-			name: "ref value",
-			run: func(repo *Repo) error {
-				_, _, err := repo.RefValue(coverageBranch)
-				return err
-			},
-		},
-		{
-			name: "history object",
-			run: func(repo *Repo) error {
-				_, err := repo.FirstParentHistory(coverageOID)
-				return err
-			},
-		},
-		{
-			name: "Git path",
-			run: func(repo *Repo) error {
-				_, err := repo.GitPath("hooks")
-				return err
-			},
-		},
 	}
-	outputs := []string{
+}
+
+// coverageCommandRunOutputs aligns index by index with
+// coverageCommandRuns and feeds the malformed-output table. The extra
+// trailing entry feeds the "patch ID" case, which overrides its fake
+// body, so the value is only a placeholder.
+func coverageCommandRunOutputs() []string {
+	return []string{
 		coverageBad,
 		"sha512",
 		coverageBad,
 		"refs/tags/v1",
 		coverageBad,
 		coverageBad,
+		coverageBad,
 		"diff text",
 		"",
+	}
+}
+
+func TestGitcmdEarlyErrorPaths(t *testing.T) {
+	tests := make([]coverageCommandRun, 0, 60)
+	for _, entry := range coverageCommandRuns() {
+		tests = append(tests, coverageCommandRun{name: entry.name + " command", run: entry.run})
+	}
+	tests = append(tests,
+		coverageCommandRun{
+			name: "worktree revision validation",
+			run: func(repo *Repo) error {
+				_, err := repo.WorktreeMatchesRevision("", coverageFileName)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "worktree revision validation",
+			run: func(repo *Repo) error {
+				_, err := repo.WorktreeMatchesRevision("", coverageFileName)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "worktree path validation",
+			run: func(repo *Repo) error {
+				_, err := repo.WorktreeMatchesRevision(coverageOID, "../file")
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "worktree blob command",
+			run: func(repo *Repo) error {
+				_, err := repo.WorktreeMatchesRevision(coverageOID, coverageFileName)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "stash parent command",
+			run: func(repo *Repo) error {
+				_, err := repo.StashPaths(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "stash applied command",
+			run: func(repo *Repo) error {
+				_, err := repo.StashApplied(coverageOID, []string{coverageFileName})
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "dirty paths command",
+			run: func(repo *Repo) error {
+				_, err := repo.DirtyPaths()
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "commit time command",
+			run: func(repo *Repo) error {
+				_, err := repo.CommitTime(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "commit message command",
+			run: func(repo *Repo) error {
+				_, err := repo.CommitMessage(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "merge-base command",
+			run: func(repo *Repo) error {
+				_, err := repo.MergeBase(coverageOID, coverageOID2)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "note list command",
+			run: func(repo *Repo) error {
+				_, err := repo.NoteCommits(coverageNotesName)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "blob command",
+			run: func(repo *Repo) error {
+				_, _, err := repo.BlobID(coverageOID, coverageFileName)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "read blob command",
+			run: func(repo *Repo) error {
+				_, err := repo.ReadBlob(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "blob size command",
+			run: func(repo *Repo) error {
+				_, err := repo.BlobSize(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "hash command",
+			run: func(repo *Repo) error {
+				_, err := repo.HashBytes([]byte("content"))
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "ignored command",
+			run: func(repo *Repo) error {
+				_, err := repo.Ignored(coverageFileName)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "read note ref validation",
+			run: func(repo *Repo) error {
+				_, _, err := repo.ReadNoteRef(coverageBranch, coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "read note commit validation",
+			run: func(repo *Repo) error {
+				_, _, err := repo.ReadNoteRef(coverageNotesName, "")
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "write note ref validation",
+			run: func(repo *Repo) error {
+				return repo.WriteNoteRef(coverageBranch, coverageOID, nil)
+			},
+		},
+		coverageCommandRun{
+			name: "write note commit validation",
+			run: func(repo *Repo) error {
+				return repo.WriteNoteRef(coverageNotesName, "", nil)
+			},
+		},
+		coverageCommandRun{
+			name: "delete note ref validation",
+			run: func(repo *Repo) error {
+				return repo.DeleteNoteRef(coverageBranch, coverageOID)
+			},
+		},
+		coverageCommandRun{
+			name: "delete note commit validation",
+			run: func(repo *Repo) error {
+				return repo.DeleteNoteRef(coverageNotesName, "")
+			},
+		},
+		coverageCommandRun{
+			name: "delete note command",
+			run: func(repo *Repo) error {
+				return repo.DeleteNoteRef(coverageNotesName, coverageOID)
+			},
+		},
+		coverageCommandRun{
+			name: "delete equal read command",
+			run: func(repo *Repo) error {
+				_, err := repo.DeleteNoteRefIfEqual(coverageNotesName, coverageOID, nil)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "ref validation",
+			run: func(repo *Repo) error {
+				_, _, err := repo.RefValue("refs/heads/../bad")
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "ref command",
+			run: func(repo *Repo) error {
+				_, _, err := repo.RefValue(coverageBranch)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "retention tree command",
+			run: func(repo *Repo) error {
+				return repo.ProtectBlobs([]string{coverageOID})
+			},
+		},
+		coverageCommandRun{
+			name: "retained count command",
+			run: func(repo *Repo) error {
+				_, err := repo.ProtectedBlobCount()
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "history command",
+			run: func(repo *Repo) error {
+				_, err := repo.FirstParentHistory(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "config command",
+			run: func(repo *Repo) error {
+				_, _, err := repo.ConfigPath("core.hooksPath")
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "Git path command",
+			run: func(repo *Repo) error {
+				_, err := repo.GitPath("hooks")
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "version command",
+			run: func(repo *Repo) error {
+				_, _, err := repo.Version()
+				return err
+			},
+		},
+	)
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			repo := coverageOutputRepo(t, "", "failure", 2)
+			if err := test.run(repo); err == nil {
+				t.Fatal("operation accepted fake Git failure")
+			}
+		})
+	}
+}
+
+func TestGitcmdMalformedOutputs(t *testing.T) {
+	tests := append(coverageCommandRuns(),
+		coverageCommandRun{
+			name: "patch ID",
+			run: func(repo *Repo) error {
+				_, err := repo.PatchID(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "commit time",
+			run: func(repo *Repo) error {
+				_, err := repo.CommitTime(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "commit author",
+			run: func(repo *Repo) error {
+				_, _, err := repo.CommitAuthor(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "merge base",
+			run: func(repo *Repo) error {
+				_, err := repo.MergeBase(coverageOID, coverageOID2)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "note list length",
+			run: func(repo *Repo) error {
+				_, err := repo.NoteCommits(coverageNotesName)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "note list object",
+			run: func(repo *Repo) error {
+				_, err := repo.NoteCommits(coverageNotesName)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "tree entry",
+			run: func(repo *Repo) error {
+				_, _, err := repo.BlobID(coverageOID, coverageFileName)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "tree metadata",
+			run: func(repo *Repo) error {
+				_, _, err := repo.BlobID(coverageOID, coverageFileName)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "blob size",
+			run: func(repo *Repo) error {
+				_, err := repo.BlobSize(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "hash object",
+			run: func(repo *Repo) error {
+				_, err := repo.HashBytes([]byte("content"))
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "retention tree",
+			run: func(repo *Repo) error {
+				return repo.ProtectBlobs([]string{coverageOID})
+			},
+		},
+		coverageCommandRun{
+			name: "ref value",
+			run: func(repo *Repo) error {
+				_, _, err := repo.RefValue(coverageBranch)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "history object",
+			run: func(repo *Repo) error {
+				_, err := repo.FirstParentHistory(coverageOID)
+				return err
+			},
+		},
+		coverageCommandRun{
+			name: "Git path",
+			run: func(repo *Repo) error {
+				_, err := repo.GitPath("hooks")
+				return err
+			},
+		},
+	)
+	outputs := append(coverageCommandRunOutputs(),
 		"author only",
 		coverageBad,
 		"one\n",
-		coverageOID + " " + coverageOID + " " + coverageOID,
-		"100644 blob " + coverageOID + "\tother",
-		"100644 tree " + coverageOID + "\tfile",
+		coverageOID+" "+coverageOID+" "+coverageOID,
+		"100644 blob "+coverageOID+"\tother",
+		"100644 tree "+coverageOID+"\tfile",
 		"-1",
 		coverageBad,
 		coverageBad,
@@ -503,7 +488,7 @@ func TestGitcmdMalformedOutputs(t *testing.T) {
 		coverageBad,
 		coverageBad,
 		"relative/path",
-	}
+	)
 	for index, test := range tests {
 		test := test
 		output := outputs[index]

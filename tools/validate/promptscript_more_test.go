@@ -11,150 +11,124 @@ import (
 const promptScriptVersionOutput = "promptscript " + pinnedPromptScriptVersion + "\n"
 
 func TestCheckPromptScriptFailures(t *testing.T) {
-	t.Run("CLI is missing", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		t.Setenv("PATH", t.TempDir())
-		if err := checkPromptScript(root); err == nil {
-			t.Fatal("checkPromptScript() = nil error, want missing CLI failure")
-		}
-	})
-
-	t.Run("version command fails", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "version-error")
-		if err := checkPromptScript(root); err == nil {
-			t.Fatal("checkPromptScript() = nil error, want version failure")
-		}
-	})
-
-	t.Run("version output has no semver", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "version-empty")
-		if err := checkPromptScript(root); err == nil {
-			t.Fatal("checkPromptScript() = nil error, want missing version failure")
-		}
-	})
-
-	t.Run("version does not match pin", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "version-mismatch")
-		if err := checkPromptScript(root); err == nil {
-			t.Fatal("checkPromptScript() = nil error, want version mismatch")
-		}
-	})
-
-	t.Run("strict validation fails", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "validate-error")
-		if err := checkPromptScript(root); err == nil {
-			t.Fatal("checkPromptScript() = nil error, want strict validation failure")
-		}
-	})
-
-	t.Run("portable output is missing", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "success")
-		if err := checkPromptScript(root); err == nil {
-			t.Fatal("checkPromptScript() = nil error, want portable output read failure")
-		}
-	})
-
-	t.Run("portable hook is incomplete", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		writePortableOutputs(t, root, false)
-		usePromptScript(t, "success")
-		if err := checkPortableHookOutputs(root); err == nil {
-			t.Fatal("checkPortableHookOutputs() = nil error, want missing hook failure")
-		}
-	})
-
-	t.Run("drift check fails", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		writePortableOutputs(t, root, true)
-		usePromptScript(t, "generated-missing")
-		if err := checkPromptScript(root); err == nil {
-			t.Fatal("checkPromptScript() = nil error, want drift failure")
-		}
-	})
+	tests := []struct {
+		name          string
+		mode          string
+		pathMissing   bool
+		writeOutputs  bool
+		complete      bool
+		checkPortable bool
+		want          string
+	}{
+		{name: "CLI is missing", pathMissing: true, want: "missing CLI failure"},
+		{name: "version command fails", mode: "version-error", want: "version failure"},
+		{name: "version output has no semver", mode: "version-empty", want: "missing version failure"},
+		{name: "version does not match pin", mode: "version-mismatch", want: "version mismatch"},
+		{name: "strict validation fails", mode: "validate-error", want: "strict validation failure"},
+		{name: "portable output is missing", mode: "success", want: "portable output read failure"},
+		{
+			name:          "portable hook is incomplete",
+			mode:          "success",
+			writeOutputs:  true,
+			checkPortable: true,
+			want:          "missing hook failure",
+		},
+		{
+			name:         "drift check fails",
+			mode:         "generated-missing",
+			writeOutputs: true,
+			complete:     true,
+			want:         "drift failure",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := promptScriptFixture(t)
+			if tc.pathMissing {
+				t.Setenv("PATH", t.TempDir())
+			}
+			if tc.writeOutputs {
+				writePortableOutputs(t, root, tc.complete)
+			}
+			if tc.mode != "" {
+				usePromptScript(t, tc.mode)
+			}
+			if tc.checkPortable {
+				if err := checkPortableHookOutputs(root); err == nil {
+					t.Fatalf("checkPortableHookOutputs() = nil error, want %s", tc.want)
+				}
+				return
+			}
+			if err := checkPromptScript(root); err == nil {
+				t.Fatalf("checkPromptScript() = nil error, want %s", tc.want)
+			}
+		})
+	}
 }
 
 func TestCheckDriftFailures(t *testing.T) {
-	t.Run("temporary directory creation", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
-		if err := checkDrift("/bin/true", root); err == nil {
-			t.Fatal("checkDrift() = nil error, want temp directory failure")
-		}
-	})
-
-	t.Run("PromptScript source directory is missing", func(t *testing.T) {
-		root := t.TempDir()
-		if err := os.WriteFile(filepath.Join(root, "promptscript.yaml"), []byte("{}"), 0o644); err != nil {
-			t.Fatalf("write config: %v", err)
-		}
-		if err := checkDrift("/bin/true", root); err == nil {
-			t.Fatal("checkDrift() = nil error, want source directory failure")
-		}
-	})
-
-	t.Run("source file cannot be read", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		source := filepath.Join(root, ".promptscript", "broken.prs")
-		if err := os.Symlink(filepath.Join(root, "missing.prs"), source); err != nil {
-			t.Skipf("symlink unavailable: %v", err)
-		}
-		if err := checkDrift("/bin/true", root); err == nil {
-			t.Fatal("checkDrift() = nil error, want source read failure")
-		}
-	})
-
-	t.Run("build profiles fail", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "build-error")
-		if err := checkDrift("promptscript", root); err == nil {
-			t.Fatal("checkDrift() = nil error, want build compile failure")
-		}
-	})
-
-	t.Run("targets fail", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "target-error")
-		if err := checkDrift("promptscript", root); err == nil {
-			t.Fatal("checkDrift() = nil error, want target compile failure")
-		}
-	})
-
-	t.Run("compiled output walk fails", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "walk-error")
-		if err := checkDrift("promptscript", root); err == nil {
-			t.Fatal("checkDrift() = nil error, want compiled output walk failure")
-		}
-	})
-
-	t.Run("untracked output is rejected", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "extra-output")
-		if err := checkDrift("promptscript", root); err == nil {
-			t.Fatal("checkDrift() = nil error, want untracked output failure")
-		}
-	})
-
-	t.Run("generated output is missing", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "generated-missing")
-		if err := checkDrift("promptscript", root); err == nil {
-			t.Fatal("checkDrift() = nil error, want generated output failure")
-		}
-	})
-
-	t.Run("committed output is missing", func(t *testing.T) {
-		root := promptScriptFixture(t)
-		usePromptScript(t, "all-outputs")
-		if err := checkDrift("promptscript", root); err == nil {
-			t.Fatal("checkDrift() = nil error, want committed output failure")
-		}
-	})
+	tests := []struct {
+		name             string
+		command          string
+		mode             string
+		tempDirFailure   bool
+		missingSource    bool
+		unreadableSource bool
+		want             string
+	}{
+		{
+			name:           "temporary directory creation",
+			command:        "/bin/true",
+			tempDirFailure: true,
+			want:           "temp directory failure",
+		},
+		{
+			name:          "PromptScript source directory is missing",
+			command:       "/bin/true",
+			missingSource: true,
+			want:          "source directory failure",
+		},
+		{
+			name:             "source file cannot be read",
+			command:          "/bin/true",
+			unreadableSource: true,
+			want:             "source read failure",
+		},
+		{name: "build profiles fail", command: "promptscript", mode: "build-error", want: "build compile failure"},
+		{name: "targets fail", command: "promptscript", mode: "target-error", want: "target compile failure"},
+		{name: "compiled output walk fails", command: "promptscript", mode: "walk-error", want: "compiled output walk failure"},
+		{name: "untracked output is rejected", command: "promptscript", mode: "extra-output", want: "untracked output failure"},
+		{name: "generated output is missing", command: "promptscript", mode: "generated-missing", want: "generated output failure"},
+		{name: "committed output is missing", command: "promptscript", mode: "all-outputs", want: "committed output failure"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var root string
+			if tc.missingSource {
+				root = t.TempDir()
+				if err := os.WriteFile(filepath.Join(root, "promptscript.yaml"), []byte("{}"), 0o644); err != nil {
+					t.Fatalf("write config: %v", err)
+				}
+			} else {
+				root = promptScriptFixture(t)
+			}
+			if tc.tempDirFailure {
+				t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+			}
+			if tc.unreadableSource {
+				source := filepath.Join(root, ".promptscript", "broken.prs")
+				if err := os.Symlink(filepath.Join(root, "missing.prs"), source); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+			}
+			if tc.mode != "" {
+				usePromptScript(t, tc.mode)
+			}
+			if err := checkDrift(tc.command, root); err == nil {
+				t.Fatalf("checkDrift() = nil error, want %s", tc.want)
+			}
+		})
+	}
 }
 
 func TestPromptScriptHelpers(t *testing.T) {
@@ -213,7 +187,6 @@ func writePortableOutputs(t *testing.T, root string, complete bool) {
 
 func usePromptScript(t *testing.T, mode string) {
 	t.Helper()
-	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
 		"mode=\"$PROMPTSCRIPT_TEST_MODE\"\n" +
 		"if [ \"$1\" = \"--version\" ]; then\n" +
@@ -239,10 +212,9 @@ func usePromptScript(t *testing.T, mode string) {
 		"  exit 0\n" +
 		"fi\n" +
 		"exit 0\n"
-	writeExecutableTestFile(t, filepath.Join(dir, "promptscript"), script)
+	useFakeTool(t, "promptscript", script)
 	t.Setenv("PROMPTSCRIPT_TEST_MODE", mode)
 	t.Setenv("PROMPTSCRIPT_TEST_OUTPUTS", strings.Join(promptScriptOutputs, " "))
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func writePromptScriptFile(t *testing.T, root, rel, content string) {

@@ -119,17 +119,7 @@ func TestCoverageCaptureRejectsDifferentShellBase(t *testing.T) {
 	}
 	write(t, root, coverageFile, "next\n")
 	commit(t, root, "next")
-	result, err := Capture(repo, preset.Event{
-		Kind:    model.CheckpointKindShellPost,
-		Type:    model.AuthorAI,
-		Agent:   "droid",
-		Model:   "model",
-		Session: "shell-session",
-		EventID: "shell-event",
-	}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := captureShellPost(t, repo, "shell-session", "shell-event")
 	if result.Recorded != 0 || len(result.Warnings) != 1 ||
 		!strings.Contains(result.Warnings[0], "different base") {
 		t.Fatalf("Capture() = %+v", result)
@@ -380,7 +370,11 @@ func TestCoverageStatusAndBlameErrors(t *testing.T) {
 	t.Run("head note failures", coverageHeadNoteFailures)
 }
 
-func coverageStatusFailures(t *testing.T) {
+// coverageBrokenStateRepo returns a repository and data store whose
+// byline state file holds malformed JSON, shared by the status and
+// annotate failure scenarios.
+func coverageBrokenStateRepo(t *testing.T) (*gitcmd.Repo, store.Store) {
+	t.Helper()
 	root := testRepo(t)
 	write(t, root, coverageFile, "content\n")
 	commit(t, root, "content")
@@ -395,6 +389,11 @@ func coverageStatusFailures(t *testing.T) {
 	if err := os.WriteFile(dataStore.StatePath(), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return repo, dataStore
+}
+
+func coverageStatusFailures(t *testing.T) {
+	repo, dataStore := coverageBrokenStateRepo(t)
 	if _, err := Status(repo); err == nil {
 		t.Fatal("Status accepted invalid state")
 	}
@@ -538,17 +537,7 @@ func TestCoverageShellPostLimit(t *testing.T) {
 		t.Fatalf("shell_pre = %+v, %v", result, err)
 	}
 	write(t, root, "shell-over-limit.txt", "content\n")
-	result, err := Capture(repo, preset.Event{
-		Kind:    model.CheckpointKindShellPost,
-		Type:    model.AuthorAI,
-		Agent:   "droid",
-		Model:   "model",
-		Session: "shell-limit-session",
-		EventID: "shell-limit",
-	}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := captureShellPost(t, repo, "shell-limit-session", "shell-limit")
 	if result.Recorded != 0 || len(result.Warnings) != 1 ||
 		!strings.Contains(result.Warnings[0], "more than 500") {
 		t.Fatalf("shell_post = %+v", result)
@@ -654,21 +643,26 @@ func coverageAnnotateReflogFailure(t *testing.T) {
 	}
 }
 
-func coverageAnnotateStateFailure(t *testing.T) {
-	root := testRepo(t)
-	write(t, root, coverageFile, "content\n")
-	commit(t, root, "content")
-	repo, err := gitcmd.Discover(root)
+// captureShellPost records one shell_post checkpoint and returns the
+// capture result, mirroring the inline event literals it replaces.
+func captureShellPost(t *testing.T, repo *gitcmd.Repo, session, eventID string) CaptureResult {
+	t.Helper()
+	result, err := Capture(repo, preset.Event{
+		Kind:    model.CheckpointKindShellPost,
+		Type:    model.AuthorAI,
+		Agent:   "droid",
+		Model:   "model",
+		Session: session,
+		EventID: eventID,
+	}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	dataStore := store.New(repo.GitDir)
-	if err := os.MkdirAll(dataStore.Dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dataStore.StatePath(), []byte("{"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	return result
+}
+
+func coverageAnnotateStateFailure(t *testing.T) {
+	repo, _ := coverageBrokenStateRepo(t)
 	if _, err := Annotate(repo); err == nil {
 		t.Fatal("Annotate accepted invalid state")
 	}

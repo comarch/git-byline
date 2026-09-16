@@ -388,14 +388,7 @@ func TestExportGitAIUsesGoldenBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blobs := map[string]string{}
-	for _, path := range []string{"a.go", "z.go"} {
-		blob, exists, err := repo.BlobID(commit, path)
-		if err != nil || !exists {
-			t.Fatalf("blob %q = %q, %t, %v", path, blob, exists, err)
-		}
-		blobs[path] = blob
-	}
+	blobs := mustInteropBlobs(t, repo, commit, "a.go", "z.go")
 	note := model.Note{
 		Version: model.NoteVersion,
 		Files: map[string]model.NoteFile{
@@ -817,6 +810,24 @@ func mustInteropNote(t *testing.T, blob string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func mustInteropBlob(t *testing.T, repo *gitcmd.Repo, commit, path string) string {
+	t.Helper()
+	blob, exists, err := repo.BlobID(commit, path)
+	if err != nil || !exists {
+		t.Fatalf("blob = %q, %t, %v", blob, exists, err)
+	}
+	return blob
+}
+
+func mustInteropBlobs(t *testing.T, repo *gitcmd.Repo, commit string, paths ...string) map[string]string {
+	t.Helper()
+	blobs := make(map[string]string, len(paths))
+	for _, path := range paths {
+		blobs[path] = mustInteropBlob(t, repo, commit, path)
+	}
+	return blobs
 }
 
 func interopRepo(t *testing.T) string {
