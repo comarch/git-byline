@@ -646,3 +646,10 @@ func assertWarningContains(t *testing.T, warnings []string, want string) {
 	}
 	t.Fatalf("warnings = %v, want %q", warnings, want)
 }
+
+func TestInstallRejectsUnsupportedProvider(t *testing.T) {
+	if _, err := Install(t.TempDir(), Provider("bogus")); err == nil ||
+		!strings.Contains(err.Error(), "unsupported CI provider") {
+		t.Fatalf("Install(bogus) = %v, want unsupported provider error", err)
+	}
+}

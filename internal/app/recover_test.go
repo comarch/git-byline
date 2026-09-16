@@ -2,6 +2,10 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -129,6 +133,104 @@ func TestRecoverUsage(t *testing.T) {
 	}
 }
 
+func TestRecoverOperationalEdges(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	// Outside a repository, discovery fails before a preview is built.
+	if code, _, _, err := appRun(t.TempDir(), now, nil, "recover"); code != ExitFailure || err == nil {
+		t.Fatalf("recover outside repository = %d, %v", code, err)
+	}
+
+	// Malformed state turns the preview itself into an operational error.
+	broken := appRepo(t)
+	statePath := filepath.Join(broken, ".git", "byline", "state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _, err := appRun(broken, now, nil, "recover"); code != ExitFailure || err == nil {
+		t.Fatalf("recover with malformed state = %d, %v", code, err)
+	}
+
+	// A pending checkpoint recorded before the first commit keeps an
+	// empty base, and the preview reports it as such.
+	preRoot := appRepo(t)
+	appWrite(t, preRoot, "file.txt", "unborn\n")
+	repo, err := gitcmd.Discover(preRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	human := preset.Event{Type: model.AuthorHuman, Paths: []string{"file.txt"}}
+	if _, err := provenance.Capture(repo, human, now); err != nil {
+		t.Fatal(err)
+	}
+	appCommit(t, preRoot, "root")
+	appWrite(t, preRoot, "file.txt", "unborn\nmainline\n")
+	if _, err := provenance.Capture(repo, human, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	appCommit(t, preRoot, "mainline")
+	code, stdout, _, err := appRun(preRoot, now, nil, "recover")
+	if code != ExitSuccess || err != nil ||
+		!strings.Contains(stdout, "(before first commit)") {
+		t.Fatalf("recover pre-root preview = %d, %q, %v", code, stdout, err)
+	}
+
+	// A plain drop prints the annotate result without JSON once the
+	// stranded branch is gone.
+	root, _ := setupAppStrandedRecovery(t)
+	appGit(t, root, "branch", "-D", "feature")
+	code, stdout, _, err = appRun(root, now, nil, "recover", "--drop")
+	if code != ExitSuccess || err != nil || !strings.Contains(stdout, "annotated ") {
+		t.Fatalf("plain recover drop = %d, %q, %v", code, stdout, err)
+	}
+
+	// Failing stdout writers surface as operational errors in both the
+	// preview and the dropped JSON reports.
+	failing := func(root string, args ...string) (int, error) {
+		env := &Env{
+			Stdin:  strings.NewReader(""),
+			Stdout: coverageErrorWriter{err: errors.New("stdout unavailable")},
+			Stderr: io.Discard,
+			Dir:    root,
+			Now:    func() time.Time { return now },
+		}
+		return Run(args, env)
+	}
+	if code, err := failing(appRepo(t), "recover", "--json"); code != ExitFailure || err == nil {
+		t.Fatalf("recover JSON preview with failing stdout = %d, %v", code, err)
+	}
+	if code, err := failing(root, "recover", "--drop", "--json"); code != ExitFailure || err == nil {
+		t.Fatalf("recover JSON drop with failing stdout = %d, %v", code, err)
+	}
+
+	// A droppable checkpoint among blocked ones exercises the skip in
+	// the refusal listing.
+	root, _ = setupAppStrandedRecovery(t)
+	appGit(t, root, "checkout", "-b", "temp")
+	appWrite(t, root, "file.txt", "base\ntemp\n")
+	appCommit(t, root, "temp")
+	repo, err = gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provenance.Capture(repo, preset.Event{
+		Type:  model.AuthorHuman,
+		Paths: []string{"file.txt"},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	appGit(t, root, "checkout", "main")
+	appGit(t, root, "branch", "-D", "temp")
+	code, _, stderr, err := appRun(root, now, nil, "recover", "--drop")
+	if code != ExitFailure || err == nil || !strings.Contains(stderr, "refs/heads/feature") {
+		t.Fatalf("mixed blocked drop = %d, %q, %v", code, stderr, err)
+	}
+}
+
 func setupAppStrandedRecovery(t *testing.T) (string, string) {
 	t.Helper()
 	root := appRepo(t)
@@ -170,4 +272,36 @@ func readRecoveryPreview(t *testing.T, root string) provenance.RecoveryReport {
 		t.Fatal(err)
 	}
 	return report
+}
+
+func TestRecoverDropReportsAnnotateFailure(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "base\n")
+	appCommit(t, root, "base")
+	appGit(t, root, "checkout", "-b", "temp")
+	appWrite(t, root, "file.txt", "base\ntemp\n")
+	appCommit(t, root, "temp")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	human := preset.Event{Type: model.AuthorHuman, Paths: []string{"file.txt"}}
+	if _, err := provenance.Capture(repo, human, now); err != nil {
+		t.Fatal(err)
+	}
+	appGit(t, root, "checkout", "main")
+	appGit(t, root, "branch", "-D", "temp")
+
+	// A different attribution note already sits on the head commit, so
+	// dropping the stranded checkpoint still leaves the retry
+	// annotation refusing to overwrite it.
+	head := strings.TrimSpace(appGit(t, root, "rev-parse", "HEAD"))
+	appGit(t, root, "notes", "--ref=byline", "add", "-f", "-m", `{"version":1,"files":{}}`, head)
+
+	code, _, _, err := appRun(root, now, nil, "recover", "--drop")
+	if code != ExitFailure || err == nil {
+		t.Fatalf("recover drop with conflicting note = %d, %v", code, err)
+	}
 }
