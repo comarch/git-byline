@@ -297,7 +297,7 @@ func TestGitcmdContainmentAndNoteErrors(t *testing.T) {
 	if _, err := coverageOutputRepo(t, "", "", 2).AnyBranchContains(coverageOID); err == nil {
 		t.Fatal("AnyBranchContains accepted a failed containment command")
 	}
-	if exists, err := coverageOutputRepo(t, "", "", 0).commitExistsQuiet(coverageOID); err != nil || !exists {
+	if exists, err := coverageOutputRepo(t, "", "", 0).NewBranchScanner().commitExistsQuiet(coverageOID); err != nil || !exists {
 		t.Fatalf("commitExistsQuiet(existing) = %v, %v", exists, err)
 	}
 	// rev-parse reports a missing commit with exit 1 and no stderr, and
@@ -308,13 +308,13 @@ if [ "$1" = "rev-parse" ]; then
 	exit 1
 fi
 exit 0
-`).commitExistsQuiet(coverageOID); err != nil {
+`).NewBranchScanner().commitExistsQuiet(coverageOID); err != nil {
 		t.Fatalf("commitExistsQuiet(missing) = %v", err)
 	}
-	if _, err := coverageOutputRepo(t, "", "", 2).commitExistsQuiet(coverageOID); err == nil {
+	if _, err := coverageOutputRepo(t, "", "", 2).NewBranchScanner().commitExistsQuiet(coverageOID); err == nil {
 		t.Fatal("commitExistsQuiet accepted a failed existence command")
 	}
-	if _, err := coverageOutputRepo(t, "", "", 2).commitExistsQuiet(""); err == nil {
+	if _, err := coverageOutputRepo(t, "", "", 2).NewBranchScanner().commitExistsQuiet(""); err == nil {
 		t.Fatal("commitExistsQuiet accepted an invalid revision")
 	}
 	if _, err := coverageOutputRepo(t, "", "", 1).NoteCommits(coverageNotesName); err != nil {
