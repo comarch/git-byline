@@ -2,7 +2,6 @@ package provenance
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,11 +17,14 @@ import (
 
 func TestCheckpointLaneBasesReadError(t *testing.T) {
 	t.Parallel()
-	parent := filepath.Join(t.TempDir(), "file")
-	if err := os.WriteFile(parent, []byte("x"), 0o600); err != nil {
+	dataStore := store.New(t.TempDir())
+	if err := os.MkdirAll(dataStore.Dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := checkpointLaneBases(store.Store{Dir: parent}, ""); err == nil {
+	if err := os.WriteFile(dataStore.CheckpointPath(), []byte("{\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checkpointLaneBases(dataStore, ""); err == nil {
 		t.Fatal("checkpointLaneBases accepted an invalid store")
 	}
 }

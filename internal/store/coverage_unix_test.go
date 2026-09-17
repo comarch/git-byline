@@ -6,21 +6,48 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 )
 
-func withFileSizeLimit(t *testing.T, limit uint64, test func() error) {
+func runFileSizeLimitTest(t *testing.T, mode string, limit uint64) {
 	t.Helper()
+	command := exec.Command(os.Args[0], "-test.run=^TestFileSizeLimitChild$", "-test.v")
+	command.Env = append(os.Environ(),
+		"GIT_BYLINE_FILE_LIMIT_MODE="+mode,
+		"GIT_BYLINE_FILE_LIMIT="+strconv.FormatUint(limit, 10),
+	)
+	output, err := command.CombinedOutput()
+	if bytes.Contains(output, []byte("--- SKIP: TestFileSizeLimitChild")) {
+		t.Skip("file-size limit unavailable in child process")
+	}
+	if err != nil {
+		t.Fatalf("file-size child: %v\n%s", err, output)
+	}
+}
+
+func TestFileSizeLimitChild(t *testing.T) {
+	mode := os.Getenv("GIT_BYLINE_FILE_LIMIT_MODE")
+	if mode == "" {
+		return
+	}
+	limit, err := strconv.ParseUint(os.Getenv("GIT_BYLINE_FILE_LIMIT"), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var original syscall.Rlimit
 	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &original); err != nil {
 		t.Skipf("file-size limit unavailable: %v", err)
 	}
 	signal.Ignore(syscall.SIGXFSZ)
 	defer func() {
-		_ = syscall.Setrlimit(syscall.RLIMIT_FSIZE, &original)
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &original); err != nil {
+			t.Errorf("restore file-size limit: %v", err)
+		}
 		signal.Reset(syscall.SIGXFSZ)
 	}()
 	restricted := original
@@ -28,30 +55,33 @@ func withFileSizeLimit(t *testing.T, limit uint64, test func() error) {
 	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &restricted); err != nil {
 		t.Skipf("cannot set file-size limit: %v", err)
 	}
-	if err := test(); err != nil {
-		t.Fatal(err)
+	switch mode {
+	case "append":
+		if err := New(t.TempDir()).AppendCheckpoint(validCheckpoint(1)); err == nil {
+			t.Fatal("AppendCheckpoint accepted a partial write")
+		}
+	case "atomic":
+		dir := t.TempDir()
+		if err := writeAtomicFile(
+			dir,
+			dir+"/state.json",
+			"state-*.tmp",
+			"state",
+			[]byte("larger than one byte"),
+		); err == nil {
+			t.Fatal("writeAtomicFile accepted a partial write")
+		}
+	default:
+		t.Fatalf("unknown file-size test mode %q", mode)
 	}
 }
 
 func TestAppendCheckpointWriteError(t *testing.T) {
-	value := New(t.TempDir())
-	withFileSizeLimit(t, 1, func() error {
-		if err := value.AppendCheckpoint(validCheckpoint(1)); err == nil {
-			return errors.New("AppendCheckpoint accepted a partial write")
-		}
-		return nil
-	})
+	runFileSizeLimitTest(t, "append", 1)
 }
 
 func TestWriteAtomicFileWriteError(t *testing.T) {
-	dir := t.TempDir()
-	path := dir + "/state.json"
-	withFileSizeLimit(t, 1, func() error {
-		if err := writeAtomicFile(dir, path, "state-*.tmp", "state", []byte("larger than one byte")); err == nil {
-			return errors.New("writeAtomicFile accepted a partial write")
-		}
-		return nil
-	})
+	runFileSizeLimitTest(t, "atomic", 1)
 }
 
 func TestReadBoundedFileSpecialFiles(t *testing.T) {
