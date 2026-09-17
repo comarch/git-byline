@@ -2,6 +2,7 @@ package provenance
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1989,9 +1990,14 @@ func coverageApplyCheckpointRewriteRollbackError(t *testing.T) {
 	dataStore := store.New(fake.GitDir)
 	seedCheckpointRewriteState(t, fake, dataStore, base)
 	t.Setenv("FAKE_GIT_CHECKPOINT_PATH", dataStore.CheckpointPath())
-	if _, err := applyRewriteMapping(fake, coverageMapping(t, base, head)); err == nil ||
+	_, err := applyRewriteMapping(fake, coverageMapping(t, base, head))
+	if err == nil ||
 		!strings.Contains(err.Error(), "rollback state") {
 		t.Fatalf("checkpoint rollback error = %v", err)
+	}
+	var wrapped interface{ Unwrap() []error }
+	if !errors.As(err, &wrapped) || len(wrapped.Unwrap()) != 2 {
+		t.Fatalf("checkpoint rollback error does not wrap both causes: %v", err)
 	}
 }
 

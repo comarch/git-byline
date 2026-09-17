@@ -96,6 +96,9 @@ func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]str
 	if err := model.ValidateBranchRef(branchRef); err != nil {
 		return err
 	}
+	if err := validateCheckpointBaseTargets(bases); err != nil {
+		return err
+	}
 	data, err := readBoundedFile(store.CheckpointPath(), maxCheckpointBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -120,6 +123,22 @@ func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]str
 		return err
 	}
 	return nil
+}
+
+func validateCheckpointBaseTargets(bases map[string]string) error {
+	invalidSource := ""
+	for source, target := range bases {
+		if target == "" || model.ValidObjectID(target) {
+			continue
+		}
+		if invalidSource == "" || source < invalidSource {
+			invalidSource = source
+		}
+	}
+	if invalidSource == "" {
+		return nil
+	}
+	return fmt.Errorf("rewrite target for base %q is not a valid object ID", invalidSource)
 }
 
 func rewriteCheckpointBaseData(

@@ -430,7 +430,7 @@ func applyRewriteMapping(repo *gitcmd.Repo, mapping rewrite.Mapping) (RewriteRes
 	if err := dataStore.RewriteCheckpointBases(branchRef, baseRemaps); err != nil {
 		remapErr := fmt.Errorf("remap checkpoint bases: %w", err)
 		if rollbackErr := writeRewriteState(repo, dataStore, originalState); rollbackErr != nil {
-			return RewriteResult{}, fmt.Errorf("%w; rollback state: %v", remapErr, rollbackErr)
+			return RewriteResult{}, fmt.Errorf("%w; rollback state: %w", remapErr, rollbackErr)
 		}
 		return RewriteResult{}, remapErr
 	}

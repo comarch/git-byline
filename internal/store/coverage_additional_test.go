@@ -256,6 +256,35 @@ func TestRewriteCheckpointBasesRejectsInvalidLogs(t *testing.T) {
 	}
 }
 
+func TestRewriteCheckpointBasesRejectsInvalidTargetWithoutMutation(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	record := validCheckpoint(1)
+	record.BaseCommit = "aaaa"
+	record.BranchRef = "refs/heads/main"
+	if err := value.AppendCheckpoint(record); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(value.CheckpointPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := value.RewriteCheckpointBases(
+		record.BranchRef,
+		map[string]string{record.BaseCommit: "main", "bbbb": "branch"},
+	); err == nil ||
+		!strings.Contains(err.Error(), `rewrite target for base "aaaa"`) {
+		t.Fatalf("invalid rewrite target error = %v", err)
+	}
+	after, err := os.ReadFile(value.CheckpointPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("invalid rewrite target changed checkpoint log")
+	}
+}
+
 func TestRewriteCheckpointBasesPreservesTruncatedTail(t *testing.T) {
 	t.Parallel()
 	value := New(t.TempDir())

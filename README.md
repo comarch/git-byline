@@ -489,13 +489,13 @@ remote-tracking branch that reaches that base. Parked checkpoints keep their
 source branch context, so sibling branches from one base stay independent.
 They resume automatically when both branch and base return, so recovery is
 usually not needed. Use
-`recover --drop` only after the preview marks every unrelated record as
-stranded. Any blocked checkpoint refuses the whole cleanup; restore its
-recorded branch and base to consume the evidence, or delete every listed
-branch, then preview again. The command validates ordinary annotation before
-deletion, rechecks reachability, drops only unreachable records, and retries
-annotation. Hook-driven annotation never drops evidence
-automatically.
+`recover --drop` only after the preview reports `Blocked checkpoints: 0` and
+marks every listed parked checkpoint `droppable true`. Any blocked checkpoint
+refuses the whole cleanup; restore its recorded branch and base to consume the
+evidence, or delete every listed branch, then preview again. The command
+validates ordinary annotation before deletion, rechecks reachability, drops
+only unreachable records, and retries annotation. Hook-driven annotation
+never drops evidence automatically.
 
 `git byline stats` abbreviates commit identifiers in its text report and
 prints the full identifiers in `--json` output, so tooling never depends on
