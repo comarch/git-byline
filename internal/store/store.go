@@ -51,7 +51,7 @@ func (store Store) DropCheckpointRecords(sequences map[uint64]bool) (int, error)
 	if _, _, err := store.ReadCheckpoints(); err != nil {
 		return 0, err
 	}
-	data, err := os.ReadFile(store.CheckpointPath())
+	data, err := readBoundedFile(store.CheckpointPath(), maxCheckpointBytes)
 	if err != nil {
 		return 0, fmt.Errorf("read checkpoint log for rewrite: %w", err)
 	}
@@ -69,7 +69,7 @@ func (store Store) DropCheckpointRecords(sequences map[uint64]bool) (int, error)
 		}
 		if err := json.Unmarshal(bytes.TrimSuffix(raw, []byte{'\n'}), &header); err != nil {
 			kept.Write(raw)
-		} else if header.Version == model.CheckpointVersion && sequences[header.Seq] {
+		} else if model.SupportedCheckpointVersion(header.Version) && sequences[header.Seq] {
 			dropped++
 		} else {
 			kept.Write(raw)
@@ -85,6 +85,87 @@ func (store Store) DropCheckpointRecords(sequences map[uint64]bool) (int, error)
 		return 0, err
 	}
 	return dropped, nil
+}
+
+// RewriteCheckpointBases remaps supported checkpoint bases for one branch
+// context while preserving unknown versions and a truncated final line.
+func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]string) error {
+	if len(bases) == 0 {
+		return nil
+	}
+	if err := model.ValidateBranchRef(branchRef); err != nil {
+		return err
+	}
+	if _, _, err := store.ReadCheckpoints(); err != nil {
+		return err
+	}
+	data, err := readBoundedFile(store.CheckpointPath(), maxCheckpointBytes)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read checkpoint log for base rewrite: %w", err)
+	}
+	reader := bufio.NewReaderSize(bytes.NewReader(data), checkpointBufferBytes)
+	var rewritten bytes.Buffer
+	changed := false
+	for {
+		raw, readErr := readCheckpointLine(reader)
+		if len(raw) == 0 && errors.Is(readErr, io.EOF) {
+			break
+		}
+		line := bytes.TrimSuffix(raw, []byte{'\n'})
+		var header struct {
+			Version int `json:"version"`
+		}
+		if err := json.Unmarshal(line, &header); err != nil ||
+			!model.SupportedCheckpointVersion(header.Version) {
+			rewritten.Write(raw)
+		} else {
+			var record model.Checkpoint
+			if err := decodeStrict(line, &record); err != nil {
+				return fmt.Errorf("decode checkpoint for base rewrite: %w", err)
+			}
+			target, mapped := bases[record.BaseCommit]
+			if mapped &&
+				(record.Version == model.CheckpointVersionV1 ||
+					model.IsLegacyCheckpointLaneID(record.LaneID) ||
+					record.BranchRef == branchRef) {
+				if record.Version == model.CheckpointVersionV1 {
+					record.Version = model.CheckpointVersion
+					record.LaneID = model.LegacyCheckpointLaneID(record.BaseCommit)
+				}
+				record.BaseCommit = target
+				encoded, err := json.Marshal(record)
+				if err != nil {
+					return fmt.Errorf("encode checkpoint for base rewrite: %w", err)
+				}
+				rewritten.Write(encoded)
+				if bytes.HasSuffix(raw, []byte{'\n'}) {
+					rewritten.WriteByte('\n')
+				}
+				changed = true
+			} else {
+				rewritten.Write(raw)
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if err := writeAtomicFile(
+		store.Dir,
+		store.CheckpointPath(),
+		"checkpoints-*.tmp",
+		"checkpoint log",
+		rewritten.Bytes(),
+	); err != nil {
+		return err
+	}
+	return nil
 }
 
 // StatePath returns the state file path.
@@ -149,7 +230,7 @@ func (store Store) ReadCheckpoints() ([]model.Checkpoint, []string, error) {
 			}
 			return nil, nil, fmt.Errorf("decode checkpoint header line %d: %w", line, err)
 		}
-		if header.Version != model.CheckpointVersion {
+		if !model.SupportedCheckpointVersion(header.Version) {
 			warnings = append(warnings, fmt.Sprintf("skipped checkpoint line %d with version %d", line, header.Version))
 			continue
 		}
@@ -194,6 +275,29 @@ func readCheckpointLine(reader *bufio.Reader) ([]byte, error) {
 }
 
 func validateCheckpoint(record model.Checkpoint) error {
+	if !model.SupportedCheckpointVersion(record.Version) {
+		return fmt.Errorf("unsupported checkpoint version %d", record.Version)
+	}
+	if record.Version == model.CheckpointVersionV1 && record.BranchRef != "" {
+		return errors.New("version 1 checkpoint contains branch context")
+	}
+	if record.Version == model.CheckpointVersionV1 && record.LaneID != "" {
+		return errors.New("version 1 checkpoint contains a lane ID")
+	}
+	if record.Version == model.CheckpointVersion {
+		if err := model.ValidateCheckpointLaneID(record.LaneID); err != nil {
+			return err
+		}
+		if model.IsLegacyCheckpointLaneID(record.LaneID) && record.BranchRef != "" {
+			return errors.New("legacy checkpoint lane contains branch context")
+		}
+	}
+	if record.BaseCommit != "" && !model.ValidObjectID(record.BaseCommit) {
+		return errors.New("base commit is not a valid object ID")
+	}
+	if err := model.ValidateBranchRef(record.BranchRef); err != nil {
+		return err
+	}
 	switch record.Kind {
 	case model.CheckpointKindEdit, model.CheckpointKindShellPre, model.CheckpointKindShellPost:
 	default:
@@ -397,7 +501,7 @@ func inspectCheckpointTail(path string, repair bool) ([]byte, int64, bool, error
 		}
 		return nil, start, true, nil
 	}
-	if header.Version == model.CheckpointVersion {
+	if model.SupportedCheckpointVersion(header.Version) {
 		var record model.Checkpoint
 		if err := decodeStrict(tail, &record); err != nil {
 			return nil, 0, false, fmt.Errorf("decode checkpoint tail: %w", err)
@@ -414,48 +518,102 @@ func isIncompleteJSON(err error) bool {
 	return errors.As(err, &syntax) && strings.Contains(syntax.Error(), "unexpected end of JSON input")
 }
 
-// ReadState reads state or returns a new empty state. Version 1 states
-// migrate deterministically in memory: the scalar watermark becomes a
-// frozen consumption floor and lanes start empty, because version 1 could
-// only ever consume an unbroken journal prefix, so the floor alone already
-// marks exactly the consumed records. The next state write persists the
-// migrated shape.
+type stateWire struct {
+	Version             int                `json:"version"`
+	LastAnnotatedCommit string             `json:"last_annotated_commit,omitempty"`
+	LastCheckpointSeq   uint64             `json:"last_checkpoint_seq"`
+	NotesVersion        int                `json:"notes_version"`
+	Pending             model.PendingState `json:"pending"`
+	Lanes               json.RawMessage    `json:"lanes,omitempty"`
+}
+
+// ReadState reads state or returns a new empty state. Legacy states migrate
+// deterministically in memory and persist on the next state write.
 func (store Store) ReadState() (model.State, error) {
+	state, _, err := store.ReadStateForUpdate()
+	return state, err
+}
+
+// ReadStateForUpdate also reports whether callers must persist migration
+// before writing data that older binaries cannot consume.
+func (store Store) ReadStateForUpdate() (model.State, bool, error) {
 	data, err := readBoundedFile(store.StatePath(), maxStateBytes)
 	if errors.Is(err, os.ErrNotExist) {
-		return model.NewState(), nil
+		return model.NewState(), true, nil
 	}
 	if err != nil {
-		return model.State{}, fmt.Errorf("read state: %w", err)
+		return model.State{}, false, fmt.Errorf("read state: %w", err)
 	}
-	var state model.State
-	if err := decodeStrict(data, &state); err != nil {
-		return model.State{}, fmt.Errorf("decode state: %w", err)
+	var wire stateWire
+	if err := decodeStrict(data, &wire); err != nil {
+		return model.State{}, false, fmt.Errorf("decode state: %w", err)
 	}
-	switch state.Version {
+	state := model.State{
+		Version:             model.StateVersion,
+		LastAnnotatedCommit: wire.LastAnnotatedCommit,
+		LastCheckpointSeq:   wire.LastCheckpointSeq,
+		NotesVersion:        wire.NotesVersion,
+		Pending:             wire.Pending,
+		Lanes:               map[string]map[string]uint64{},
+	}
+	migrated := wire.Version != model.StateVersion
+	switch wire.Version {
 	case model.StateVersionV1:
-		state.Version = model.StateVersion
+		legacy, err := decodeLegacyLanes(wire.Lanes)
+		if err != nil {
+			return model.State{}, false, fmt.Errorf("decode version 1 lanes: %w", err)
+		}
+		if len(legacy) != 0 {
+			return model.State{}, false, errors.New("version 1 state contains lanes")
+		}
+	case model.StateVersionV2:
+		legacy, err := decodeLegacyLanes(wire.Lanes)
+		if err != nil {
+			return model.State{}, false, fmt.Errorf("decode version 2 lanes: %w", err)
+		}
+		if len(legacy) > 0 {
+			state.Lanes[""] = make(map[string]uint64, len(legacy))
+			for base, consumed := range legacy {
+				state.Lanes[""][model.LegacyCheckpointLaneID(base)] = consumed
+			}
+		}
 	case model.StateVersion:
+		if len(wire.Lanes) > 0 && string(wire.Lanes) != "null" {
+			if err := decodeStrict(wire.Lanes, &state.Lanes); err != nil {
+				return model.State{}, false, fmt.Errorf("decode state lanes: %w", err)
+			}
+		}
 	default:
-		return model.State{}, fmt.Errorf("unsupported state version %d", state.Version)
+		return model.State{}, false, fmt.Errorf("unsupported state version %d", wire.Version)
 	}
 	switch state.NotesVersion {
 	case model.NoteVersionV1, model.NoteVersionV2:
 		state.NotesVersion = model.NoteVersion
 	case model.NoteVersion:
 	default:
-		return model.State{}, fmt.Errorf("unsupported notes version %d", state.NotesVersion)
+		return model.State{}, false, fmt.Errorf("unsupported notes version %d", state.NotesVersion)
 	}
 	if state.Pending.Files == nil {
 		state.Pending.Files = map[string]model.PendingFile{}
 	}
 	if state.Lanes == nil {
-		state.Lanes = map[string]uint64{}
+		state.Lanes = map[string]map[string]uint64{}
 	}
 	if err := validateState(state); err != nil {
-		return model.State{}, fmt.Errorf("validate state: %w", err)
+		return model.State{}, false, fmt.Errorf("validate state: %w", err)
 	}
-	return state, nil
+	return state, migrated, nil
+}
+
+func decodeLegacyLanes(data json.RawMessage) (map[string]uint64, error) {
+	lanes := map[string]uint64{}
+	if len(data) == 0 || string(data) == "null" {
+		return lanes, nil
+	}
+	if err := decodeStrict(data, &lanes); err != nil {
+		return nil, err
+	}
+	return lanes, nil
 }
 
 func readBoundedFile(path string, limit int64) ([]byte, error) {
@@ -559,17 +717,30 @@ func validateState(state model.State) error {
 	if state.Pending.BaseCommit != state.LastAnnotatedCommit {
 		return errors.New("pending base commit differs from last annotated commit")
 	}
-	laneBases := make([]string, 0, len(state.Lanes))
-	for base := range state.Lanes {
-		laneBases = append(laneBases, base)
+	branchRefs := make([]string, 0, len(state.Lanes))
+	for branchRef := range state.Lanes {
+		branchRefs = append(branchRefs, branchRef)
 	}
-	sort.Strings(laneBases)
-	for _, base := range laneBases {
-		if base != "" && !model.ValidObjectID(base) {
-			return fmt.Errorf("lane base %q is not a valid object id", base)
+	sort.Strings(branchRefs)
+	for _, branchRef := range branchRefs {
+		if err := model.ValidateBranchRef(branchRef); err != nil {
+			return fmt.Errorf("lane branch %q: %w", branchRef, err)
 		}
-		if state.Lanes[base] == 0 {
-			return fmt.Errorf("lane %q has consumed sequence 0", base)
+		laneIDs := make([]string, 0, len(state.Lanes[branchRef]))
+		for laneID := range state.Lanes[branchRef] {
+			laneIDs = append(laneIDs, laneID)
+		}
+		sort.Strings(laneIDs)
+		for _, laneID := range laneIDs {
+			if err := model.ValidateCheckpointLaneID(laneID); err != nil {
+				return fmt.Errorf("lane %q ID %q: %w", branchRef, laneID, err)
+			}
+			if model.IsLegacyCheckpointLaneID(laneID) && branchRef != "" {
+				return fmt.Errorf("legacy lane %q has branch context %q", laneID, branchRef)
+			}
+			if state.Lanes[branchRef][laneID] == 0 {
+				return fmt.Errorf("lane %q ID %q has consumed sequence 0", branchRef, laneID)
+			}
 		}
 	}
 	paths := make([]string, 0, len(state.Pending.Files))

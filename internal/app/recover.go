@@ -82,8 +82,12 @@ func writeRecoveryPreview(out io.Writer, report provenance.RecoveryReport) {
 		if base == "" {
 			base = "(before first commit)"
 		}
-		fmt.Fprintf(out, "Checkpoint %d: base %s, object present %t, droppable %t\n",
-			checkpoint.Seq, base, checkpoint.ObjectPresent, checkpoint.Droppable)
+		branch := checkpoint.BranchRef
+		if branch == "" {
+			branch = "(legacy or detached)"
+		}
+		fmt.Fprintf(out, "Checkpoint %d: branch %s, base %s, object present %t, droppable %t\n",
+			checkpoint.Seq, branch, base, checkpoint.ObjectPresent, checkpoint.Droppable)
 		for _, branch := range checkpoint.Branches {
 			fmt.Fprintf(out, "  Branch: %s\n", branch)
 		}
@@ -100,16 +104,22 @@ func blockedRecoveryError(report provenance.RecoveryReport) error {
 		if checkpoint.Droppable {
 			continue
 		}
+		branch := checkpoint.BranchRef
+		if branch == "" {
+			branch = "(legacy or detached)"
+		}
 		details = append(details, fmt.Sprintf(
-			"checkpoint %d base %s is reachable from %s",
+			"checkpoint %d branch %s base %s is reachable from %s",
 			checkpoint.Seq,
+			branch,
 			checkpoint.BaseCommit,
 			strings.Join(checkpoint.Branches, ", "),
 		))
 	}
 	return fmt.Errorf(
 		"refusing to drop %d blocked checkpoints\n%s\n"+
-			"return to the listed branches to consume these checkpoints, or delete them and run: git-byline recover",
+			"restore each checkpoint's recorded branch and base to consume it, "+
+			"or delete every listed branch and run: git-byline recover",
 		report.BlockedCheckpoints,
 		strings.Join(details, "\n"),
 	)

@@ -344,6 +344,10 @@ func TestPostRewriteDropRemapsBoundaryToRetainedParent(t *testing.T) {
 	if _, err := Annotate(repo); err != nil {
 		t.Fatal(err)
 	}
+	write(t, root, "file.txt", "base\ndropped\npending\n")
+	if _, err := Capture(repo, presetAI("dropped-base", "file.txt"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	result, err := HandlePostRewrite(repo, strings.NewReader(
 		dropped+" "+strings.Repeat("0", 40)+"\n",
 	))
@@ -360,6 +364,135 @@ func TestPostRewriteDropRemapsBoundaryToRetainedParent(t *testing.T) {
 	if state.LastAnnotatedCommit != parent || state.Pending.BaseCommit != parent {
 		t.Fatalf("drop boundary = %+v, want %s", state, parent)
 	}
+	records, _, err := store.New(repo.GitDir).ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].BaseCommit != parent {
+		t.Fatalf("drop checkpoint base = %+v, want parent %s", records, parent)
+	}
+}
+
+func TestCheckpointBaseRemapFollowsDroppedParentRewrite(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "parent\n")
+	parent := commit(t, root, "parent")
+	write(t, root, "file.txt", "parent\ndropped\n")
+	dropped := commit(t, root, "dropped")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := strings.Repeat("c", len(parent))
+	mapping, err := rewrite.NewMappingForLength([]rewrite.Pair{
+		{Old: dropped, New: strings.Repeat("0", len(dropped))},
+		{Old: parent, New: target},
+	}, len(parent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := checkpointBaseRemaps(repo, mapping, map[string]bool{dropped: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[dropped] != target {
+		t.Fatalf("checkpoint base remap = %q, want %q", got[dropped], target)
+	}
+}
+
+func TestCheckpointBaseRemapBranches(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "file.txt", "root\n")
+	rootCommit := commit(t, root, "root")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := strings.Repeat("0", len(rootCommit))
+	other := strings.Repeat("a", len(rootCommit))
+
+	t.Run("root drop", func(t *testing.T) {
+		mapping, err := rewrite.NewMappingForLength(
+			[]rewrite.Pair{{Old: rootCommit, New: zero}},
+			len(rootCommit),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := checkpointBaseRemaps(repo, mapping, map[string]bool{rootCommit: true})
+		if err != nil || got[rootCommit] != "" {
+			t.Fatalf("root drop = %+v, %v", got, err)
+		}
+	})
+
+	t.Run("same target", func(t *testing.T) {
+		mapping, err := rewrite.NewMappingForLength(
+			[]rewrite.Pair{{Old: rootCommit, New: rootCommit}},
+			len(rootCommit),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := checkpointBaseRemaps(repo, mapping, map[string]bool{rootCommit: true})
+		if err != nil || got[rootCommit] != rootCommit {
+			t.Fatalf("same target = %+v, %v", got, err)
+		}
+	})
+
+	t.Run("cycle", func(t *testing.T) {
+		mapping, err := rewrite.NewMappingForLength(
+			[]rewrite.Pair{{Old: rootCommit, New: other}, {Old: other, New: rootCommit}},
+			len(rootCommit),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := checkpointBaseRemaps(
+			repo,
+			mapping,
+			map[string]bool{rootCommit: true},
+		); err == nil {
+			t.Fatal("cycle was accepted")
+		}
+	})
+
+	t.Run("missing mapping and duplicate pair", func(t *testing.T) {
+		missing := rewrite.Mapping{Pairs: []rewrite.Pair{{Old: rootCommit}}}
+		if got, err := checkpointBaseRemaps(
+			repo,
+			missing,
+			map[string]bool{rootCommit: true},
+		); err != nil || len(got) != 0 {
+			t.Fatalf("missing mapping = %+v, %v", got, err)
+		}
+		duplicate := rewrite.Mapping{
+			Pairs:  []rewrite.Pair{{Old: rootCommit}, {Old: rootCommit}},
+			OldNew: map[string][]string{rootCommit: {other}},
+		}
+		got, err := checkpointBaseRemaps(repo, duplicate, map[string]bool{rootCommit: true})
+		if err != nil || got[rootCommit] != other {
+			t.Fatalf("duplicate pair = %+v, %v", got, err)
+		}
+	})
+
+	t.Run("missing dropped object", func(t *testing.T) {
+		mapping, err := rewrite.NewMappingForLength(
+			[]rewrite.Pair{{Old: other, New: zero}},
+			len(rootCommit),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := checkpointBaseRemaps(
+			repo,
+			mapping,
+			map[string]bool{other: true},
+		); err == nil {
+			t.Fatal("missing dropped object was accepted")
+		}
+	})
 }
 
 func TestReferenceTransactionSafetyAndResetModes(t *testing.T) {
@@ -1411,5 +1544,73 @@ func TestAnnotateSkipsRebaseReplayAndPostRewriteRemaps(t *testing.T) {
 	}
 	if len(blame.Lines) != 1 || blame.Lines[0].Attribution.Author != model.AuthorAI {
 		t.Fatalf("f2 attribution after rebase = %+v, want ai", blame.Lines)
+	}
+}
+
+func TestPostRewriteRemapsPendingCheckpointLane(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "base.txt", "base\n")
+	base := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "checkout", "-b", "feature")
+	write(t, root, "feat.txt", "feature\n")
+	old := commit(t, root, "feature")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "feat.txt", "feature\nai\n")
+	if _, err := Capture(repo, presetAI("pending-rewrite", "feat.txt"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "stash")
+	git(t, root, "checkout", "main")
+	if _, err := HandlePostCheckout(repo, old, base); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "main.txt", "main\n")
+	mid := commit(t, root, "main")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "checkout", "feature")
+	if _, err := HandlePostCheckout(repo, mid, old); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "rebase", "main")
+	rewritten := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	if _, err := HandlePostRewrite(repo, strings.NewReader(old+" "+rewritten+"\n")); err != nil {
+		t.Fatal(err)
+	}
+	records, _, err := store.New(repo.GitDir).ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 ||
+		records[0].BaseCommit != rewritten ||
+		records[0].BranchRef != "refs/heads/feature" {
+		t.Fatalf("rewritten checkpoints = %+v", records)
+	}
+	git(t, root, "stash", "pop")
+	commit(t, root, "resume")
+	result, err := Annotate(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ParkedCheckpoints != 0 {
+		t.Fatalf("Annotate(resume) = %+v, want remapped checkpoint consumed", result)
+	}
+	blame, err := Blame(repo, "feat.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blame.Lines) != 2 || blame.Lines[1].Attribution.Author != model.AuthorAI {
+		t.Fatalf("Blame(resume) = %+v, want rewritten AI evidence", blame.Lines)
 	}
 }

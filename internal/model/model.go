@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -12,14 +13,18 @@ import (
 )
 
 const (
-	// CheckpointVersion is the supported checkpoint log format.
-	CheckpointVersion = 1
+	// CheckpointVersionV1 is the legacy checkpoint format without branch context.
+	CheckpointVersionV1 = 1
+	// CheckpointVersion is the supported checkpoint log format. Version 2 adds
+	// a stable lane ID and attached branch ref.
+	CheckpointVersion = 2
 	// StateVersionV1 is the legacy state format with one scalar watermark.
 	StateVersionV1 = 1
-	// StateVersion is the supported state file format. Version 2 adds
-	// per-base lanes so checkpoints from one branch never block
-	// annotation on another.
-	StateVersion = 2
+	// StateVersionV2 is the legacy state format with per-base lanes.
+	StateVersionV2 = 2
+	// StateVersion is the supported state file format. Version 3 nests stable
+	// lane IDs under their branch context.
+	StateVersion = 3
 	// NoteVersionV1 is the legacy git note format used by persisted state.
 	NoteVersionV1 = 1
 	// NoteVersionV2 is the git note format without human identities.
@@ -38,6 +43,11 @@ const (
 	// CheckpointKindShellPost records the changed state after a shell event.
 	CheckpointKindShellPost = "shell_post"
 )
+
+// SupportedCheckpointVersion reports whether the checkpoint reader supports version.
+func SupportedCheckpointVersion(version int) bool {
+	return version == CheckpointVersionV1 || version == CheckpointVersion
+}
 
 // Author identifies the source of one or more lines.
 type Author string
@@ -105,6 +115,8 @@ type Checkpoint struct {
 	Kind       string     `json:"kind"`
 	Seq        uint64     `json:"seq"`
 	BaseCommit string     `json:"base_commit,omitempty"`
+	BranchRef  string     `json:"branch_ref,omitempty"`
+	LaneID     string     `json:"lane_id,omitempty"`
 	EventID    string     `json:"event_id,omitempty"`
 	TS         string     `json:"ts"`
 	Type       Author     `json:"type"`
@@ -126,16 +138,15 @@ type PendingState struct {
 	Files      map[string]PendingFile `json:"files"`
 }
 
-// State records the durable replay boundary. Lanes key each checkpoint
-// base commit to the highest sequence an annotation consumed for that base,
-// so unrelated bases park instead of blocking the active lane.
+// State records the durable replay boundary. Lanes key branch refs and stable
+// checkpoint lane IDs to the highest sequence consumed in that context.
 type State struct {
-	Version             int               `json:"version"`
-	LastAnnotatedCommit string            `json:"last_annotated_commit,omitempty"`
-	LastCheckpointSeq   uint64            `json:"last_checkpoint_seq"`
-	NotesVersion        int               `json:"notes_version"`
-	Pending             PendingState      `json:"pending"`
-	Lanes               map[string]uint64 `json:"lanes,omitempty"`
+	Version             int                          `json:"version"`
+	LastAnnotatedCommit string                       `json:"last_annotated_commit,omitempty"`
+	LastCheckpointSeq   uint64                       `json:"last_checkpoint_seq"`
+	NotesVersion        int                          `json:"notes_version"`
+	Pending             PendingState                 `json:"pending"`
+	Lanes               map[string]map[string]uint64 `json:"lanes,omitempty"`
 }
 
 // NoteFile stores attribution for one committed blob.
@@ -174,6 +185,12 @@ const maxAttributionValueBytes = 1024
 
 // MaxIdentityBytes bounds one stored human identity token.
 const MaxIdentityBytes = 64
+
+// MaxBranchRefBytes bounds one stored attached branch ref.
+const MaxBranchRefBytes = 4096
+
+const checkpointLanePrefix = "seq:"
+const legacyCheckpointLanePrefix = "legacy:"
 
 var identityPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9._+-]*[a-z0-9])?$`)
 
@@ -225,6 +242,63 @@ func ValidateIdentity(value string) error {
 		return fmt.Errorf("identity %q is not a normalized token", value)
 	}
 	return nil
+}
+
+// ValidateBranchRef validates an optional attached local branch ref.
+func ValidateBranchRef(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > MaxBranchRefBytes {
+		return fmt.Errorf("branch ref exceeds %d bytes", MaxBranchRefBytes)
+	}
+	if !utf8.ValidString(value) {
+		return errors.New("branch ref is not valid UTF-8")
+	}
+	if !strings.HasPrefix(value, "refs/heads/") || len(value) == len("refs/heads/") {
+		return errors.New("branch ref is not a local branch")
+	}
+	for _, char := range value {
+		if unicode.IsControl(char) {
+			return errors.New("branch ref contains a control character")
+		}
+	}
+	return nil
+}
+
+// CheckpointLaneID returns the stable ID for a newly created checkpoint lane.
+func CheckpointLaneID(seq uint64) string {
+	return checkpointLanePrefix + strconv.FormatUint(seq, 10)
+}
+
+// LegacyCheckpointLaneID returns the stable ID used by base-only records.
+func LegacyCheckpointLaneID(base string) string {
+	return legacyCheckpointLanePrefix + base
+}
+
+// IsLegacyCheckpointLaneID reports whether a lane keeps base-only matching.
+func IsLegacyCheckpointLaneID(value string) bool {
+	return strings.HasPrefix(value, legacyCheckpointLanePrefix)
+}
+
+// ValidateCheckpointLaneID validates a current or migrated lane identifier.
+func ValidateCheckpointLaneID(value string) error {
+	switch {
+	case strings.HasPrefix(value, checkpointLanePrefix):
+		seq, err := strconv.ParseUint(strings.TrimPrefix(value, checkpointLanePrefix), 10, 64)
+		if err != nil || seq == 0 {
+			return errors.New("checkpoint lane sequence is invalid")
+		}
+		return nil
+	case strings.HasPrefix(value, legacyCheckpointLanePrefix):
+		base := strings.TrimPrefix(value, legacyCheckpointLanePrefix)
+		if base != "" && !ValidObjectID(base) {
+			return errors.New("legacy checkpoint lane base is invalid")
+		}
+		return nil
+	default:
+		return errors.New("checkpoint lane ID is invalid")
+	}
 }
 
 // ValidObjectID reports whether value can be a Git object ID.
@@ -350,6 +424,6 @@ func NewState() State {
 		Pending: PendingState{
 			Files: map[string]PendingFile{},
 		},
-		Lanes: map[string]uint64{},
+		Lanes: map[string]map[string]uint64{},
 	}
 }

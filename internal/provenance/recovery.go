@@ -13,6 +13,7 @@ import (
 type RecoveryCheckpoint struct {
 	Seq           uint64   `json:"seq"`
 	BaseCommit    string   `json:"base_commit,omitempty"`
+	BranchRef     string   `json:"branch_ref,omitempty"`
 	ObjectPresent bool     `json:"object_present"`
 	Branches      []string `json:"branches,omitempty"`
 	Droppable     bool     `json:"droppable"`
@@ -57,16 +58,21 @@ func PreviewRecovery(repo *gitcmd.Repo) (RecoveryReport, error) {
 	if err != nil {
 		return RecoveryReport{}, err
 	}
+	branchRef, _, err := repo.CurrentBranchRef()
+	if err != nil {
+		return RecoveryReport{}, err
+	}
 	if err := held.Release(); err != nil {
 		return RecoveryReport{}, fmt.Errorf("release recovery snapshot lock: %w", err)
 	}
-	return previewRecovery(repo, records, state, head, warnings)
+	return previewRecovery(repo, records, state, branchRef, head, warnings)
 }
 
 func previewRecovery(
 	repo *gitcmd.Repo,
 	records []model.Checkpoint,
 	state model.State,
+	branchRef string,
 	head string,
 	warnings []string,
 ) (RecoveryReport, error) {
@@ -82,7 +88,7 @@ func previewRecovery(
 	cache := map[string]recoveryBaseClassification{}
 	scanner := repo.NewBranchScanner()
 	for _, record := range records {
-		if skipRecoveryRecord(record, state, parent, head) {
+		if skipRecoveryRecord(record, state, branchRef, parent, head) {
 			continue
 		}
 		classification, err := recoveryClassification(scanner, cache, record)
@@ -92,6 +98,7 @@ func previewRecovery(
 		addRecoveryCheckpoint(&report, RecoveryCheckpoint{
 			Seq:           record.Seq,
 			BaseCommit:    record.BaseCommit,
+			BranchRef:     record.BranchRef,
 			ObjectPresent: classification.objectPresent,
 			Branches:      classification.branches,
 			Droppable:     classification.droppable,
@@ -109,10 +116,10 @@ func recoveryParent(repo *gitcmd.Repo, head string) (string, error) {
 	return repo.Parent(head)
 }
 
-func skipRecoveryRecord(record model.Checkpoint, state model.State, parent, head string) bool {
+func skipRecoveryRecord(record model.Checkpoint, state model.State, branchRef, parent, head string) bool {
 	return checkpointConsumed(record, state) ||
-		record.BaseCommit == parent ||
-		record.BaseCommit == head
+		recordMatchesContext(record, branchRef, parent) ||
+		recordMatchesContext(record, branchRef, head)
 }
 
 func recoveryClassification(
@@ -153,7 +160,7 @@ func addRecoveryCheckpoint(report *RecoveryReport, checkpoint RecoveryCheckpoint
 func recoveryAction(report RecoveryReport) string {
 	switch {
 	case report.BlockedCheckpoints > 0:
-		return "return to the listed branches to consume these checkpoints, or delete them and run git-byline recover"
+		return "restore each checkpoint's recorded branch and base to consume it, or delete every listed branch and run git-byline recover"
 	case report.StrandedCheckpoints > 0:
 		return "git-byline recover --drop"
 	case report.AnnotationPending:

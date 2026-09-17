@@ -256,11 +256,57 @@ func TestAttributionLabel(t *testing.T) {
 
 func TestObjectIDAndNewState(t *testing.T) {
 	t.Parallel()
+	if !SupportedCheckpointVersion(CheckpointVersionV1) ||
+		!SupportedCheckpointVersion(CheckpointVersion) ||
+		SupportedCheckpointVersion(99) {
+		t.Fatal("SupportedCheckpointVersion returned an unexpected result")
+	}
+	if CheckpointLaneID(7) != "seq:7" ||
+		LegacyCheckpointLaneID("abcd1234") != "legacy:abcd1234" {
+		t.Fatal("checkpoint lane constructors returned unexpected IDs")
+	}
 	if !ValidObjectID("abcd1234") || ValidObjectID("xyz") || ValidObjectID("abc") {
 		t.Fatal("ValidObjectID returned an unexpected result")
 	}
 	state := NewState()
-	if state.Version != StateVersion || state.NotesVersion != NoteVersion || state.Pending.Files == nil {
+	if state.Version != StateVersion || state.NotesVersion != NoteVersion ||
+		state.Pending.Files == nil || state.Lanes == nil {
 		t.Fatalf("NewState() = %+v", state)
+	}
+	for _, test := range []struct {
+		value string
+		valid bool
+	}{
+		{"", true},
+		{"refs/heads/main", true},
+		{"main", false},
+		{"refs/remotes/origin/main", false},
+		{"refs/heads/bad\nname", false},
+		{strings.Repeat("x", MaxBranchRefBytes+1), false},
+		{string([]byte{'r', 'e', 'f', 's', '/', 'h', 'e', 'a', 'd', 's', '/', 0xff}), false},
+	} {
+		if err := ValidateBranchRef(test.value); (err == nil) != test.valid {
+			t.Fatalf("ValidateBranchRef(%q) = %v, valid %t", test.value, err, test.valid)
+		}
+	}
+	for _, test := range []struct {
+		value string
+		valid bool
+	}{
+		{"seq:1", true},
+		{"legacy:", true},
+		{"legacy:abcd1234", true},
+		{"seq:0", false},
+		{"seq:x", false},
+		{"legacy:bad", false},
+		{"other", false},
+	} {
+		if err := ValidateCheckpointLaneID(test.value); (err == nil) != test.valid {
+			t.Fatalf("ValidateCheckpointLaneID(%q) = %v, valid %t", test.value, err, test.valid)
+		}
+	}
+	if !IsLegacyCheckpointLaneID("legacy:abcd1234") ||
+		IsLegacyCheckpointLaneID("seq:1") {
+		t.Fatal("IsLegacyCheckpointLaneID returned an unexpected result")
 	}
 }

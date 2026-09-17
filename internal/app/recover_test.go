@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +17,26 @@ import (
 	"github.com/comarch/git-byline/internal/provenance"
 )
 
+func TestRecoveryRenderingLegacyContext(t *testing.T) {
+	t.Parallel()
+	report := provenance.RecoveryReport{
+		BlockedCheckpoints: 1,
+		Checkpoints: []provenance.RecoveryCheckpoint{
+			{Seq: 1, Droppable: true},
+			{Seq: 2, BaseCommit: "abcd1234", Branches: []string{"refs/heads/main"}},
+		},
+	}
+	var output bytes.Buffer
+	writeRecoveryPreview(&output, report)
+	if !strings.Contains(output.String(), "branch (legacy or detached)") ||
+		!strings.Contains(output.String(), "base (before first commit)") {
+		t.Fatalf("legacy preview = %q", output.String())
+	}
+	if err := blockedRecoveryError(report); !strings.Contains(err.Error(), "branch (legacy or detached)") {
+		t.Fatalf("legacy blocked error = %v", err)
+	}
+}
+
 func TestRecoverPreviewAndStatusExplainBlockedAttribution(t *testing.T) {
 	t.Parallel()
 	root, _ := setupAppStrandedRecovery(t)
@@ -24,7 +45,7 @@ func TestRecoverPreviewAndStatusExplainBlockedAttribution(t *testing.T) {
 	code, stdout, stderr, err := appRun(root, now, nil, "annotate")
 	if code != ExitSuccess || err != nil || stdout == "" ||
 		!strings.Contains(stdout, "annotated ") ||
-		!strings.Contains(stderr, "parked 1 checkpoints on 1 unrelated bases") {
+		!strings.Contains(stderr, "parked 1 checkpoints in 1 unrelated branch contexts") {
 		t.Fatalf("annotate = %d, %q, %q, %v (want parked success)", code, stdout, stderr, err)
 	}
 
@@ -32,7 +53,7 @@ func TestRecoverPreviewAndStatusExplainBlockedAttribution(t *testing.T) {
 	if code != ExitSuccess || err != nil || stderr != "" ||
 		!strings.Contains(stdout, "Blocked checkpoints: 1") ||
 		!strings.Contains(stdout, "Branch: refs/heads/feature") ||
-		!strings.Contains(stdout, "Recommended action: return to the listed branches") ||
+		!strings.Contains(stdout, "Recommended action: restore each checkpoint's recorded branch and base") ||
 		!strings.Contains(stdout, "No checkpoints changed.") {
 		t.Fatalf("recover preview = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
@@ -42,7 +63,7 @@ func TestRecoverPreviewAndStatusExplainBlockedAttribution(t *testing.T) {
 		!strings.Contains(stdout, "Annotation pending: false") ||
 		!strings.Contains(stdout, "Unrelated checkpoints: 1") ||
 		!strings.Contains(stdout, "Blocked checkpoints: 1") ||
-		!strings.Contains(stdout, "Recommended action: return to the listed branches") {
+		!strings.Contains(stdout, "Recommended action: restore each checkpoint's recorded branch and base") {
 		t.Fatalf("status = %d, %q, %q, %v", code, stdout, stderr, err)
 	}
 
@@ -92,7 +113,9 @@ func TestRecoverDropAnnotatesAfterBranchDeletion(t *testing.T) {
 	if dropped.DryRun ||
 		dropped.Annotation == nil ||
 		dropped.Annotation.DroppedCheckpoints != 1 ||
-		dropped.Annotation.Commit == "" {
+		dropped.Annotation.Commit == "" ||
+		dropped.Annotation.Noop ||
+		dropped.Annotation.Files == 0 {
 		t.Fatalf("recover JSON drop = %+v", dropped)
 	}
 

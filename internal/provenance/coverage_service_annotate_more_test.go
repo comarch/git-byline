@@ -836,7 +836,9 @@ func coverageAnnotateRecord(base, blob string) model.Checkpoint {
 		Version:    model.CheckpointVersion,
 		Kind:       model.CheckpointKindEdit,
 		Seq:        1,
+		LaneID:     model.CheckpointLaneID(1),
 		BaseCommit: base,
+		BranchRef:  "refs/heads/main",
 		TS:         "2026-01-02T03:04:05Z",
 		Type:       model.AuthorHuman,
 		Files: []model.Snapshot{{

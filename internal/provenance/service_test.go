@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1292,13 +1293,23 @@ func TestAnnotateKeepsMergedContentUntrackedAcrossCommits(t *testing.T) {
 func TestSelectRecords(t *testing.T) {
 	t.Parallel()
 	record := func(seq uint64, base string) model.Checkpoint {
-		return model.Checkpoint{Seq: seq, BaseCommit: base, Files: []model.Snapshot{}}
+		return model.Checkpoint{
+			Version: model.CheckpointVersionV1,
+			Seq:     seq, BaseCommit: base, Files: []model.Snapshot{},
+		}
+	}
+	branchRecord := func(seq uint64, branchRef, base string) model.Checkpoint {
+		return model.Checkpoint{
+			Version: model.CheckpointVersion,
+			Seq:     seq, BranchRef: branchRef, BaseCommit: base,
+			LaneID: model.CheckpointLaneID(seq), Files: []model.Snapshot{},
+		}
 	}
 	tests := []struct {
 		name      string
 		records   []model.Checkpoint
 		consumed  uint64
-		lanes     map[string]uint64
+		lanes     map[string]map[string]uint64
 		errText   string
 		active    int
 		carry     int
@@ -1314,7 +1325,9 @@ func TestSelectRecords(t *testing.T) {
 		{
 			name:    "skips lane-consumed records",
 			records: []model.Checkpoint{record(1, "other")},
-			lanes:   map[string]uint64{"other": 1},
+			lanes: map[string]map[string]uint64{
+				"": {model.LegacyCheckpointLaneID("other"): 1},
+			},
 		},
 		{
 			name:      "selects parent and head records",
@@ -1334,7 +1347,14 @@ func TestSelectRecords(t *testing.T) {
 		{
 			name:    "consumes a lane while another lane parks",
 			records: []model.Checkpoint{record(1, "parent"), record(2, "other"), record(3, "parent")},
-			lanes:   map[string]uint64{"parent": 3},
+			lanes: map[string]map[string]uint64{
+				"": {model.LegacyCheckpointLaneID("parent"): 3},
+			},
+			parked: 1,
+		},
+		{
+			name:    "parks sibling branch sharing parent",
+			records: []model.Checkpoint{branchRecord(1, "refs/heads/feature", "parent")},
 			parked:  1,
 		},
 		{
@@ -1351,7 +1371,13 @@ func TestSelectRecords(t *testing.T) {
 				LastCheckpointSeq: test.consumed,
 				Lanes:             test.lanes,
 			}
-			selection, err := selectRecords(test.records, state, "parent", "head")
+			selection, err := selectRecords(
+				test.records,
+				state,
+				"refs/heads/main",
+				"parent",
+				"head",
+			)
 			if test.errText != "" {
 				if err == nil || !strings.Contains(err.Error(), test.errText) {
 					t.Fatalf("selectRecords error = %v, want %q", err, test.errText)
@@ -1362,8 +1388,8 @@ func TestSelectRecords(t *testing.T) {
 				t.Fatal(err)
 			}
 			parked := 0
-			for _, laneRecords := range selection.Parked {
-				parked += len(laneRecords)
+			for _, count := range selection.Parked {
+				parked += count
 			}
 			if len(selection.Active) != test.active || len(selection.Carry) != test.carry ||
 				parked != test.parked || selection.ActiveSeq != test.activeSeq ||
@@ -1377,11 +1403,126 @@ func TestSelectRecords(t *testing.T) {
 	}
 }
 
+func TestAdvanceLanesKeepsConvergedContextsIndependent(t *testing.T) {
+	t.Parallel()
+	first := laneContext{BranchRef: "refs/heads/feature", LaneID: "seq:1"}
+	second := laneContext{BranchRef: "refs/heads/feature", LaneID: "seq:2"}
+	got := advanceLanes(nil, laneSelection{
+		Consumed: map[laneContext]uint64{
+			first:  7,
+			second: 4,
+		},
+	})
+	if got[first.BranchRef][first.LaneID] != 7 ||
+		got[second.BranchRef][second.LaneID] != 4 {
+		t.Fatalf("advanceLanes() = %+v", got)
+	}
+}
+
+func TestCheckpointConsumedKeepsLegacyLaneAcrossBaseRewrite(t *testing.T) {
+	t.Parallel()
+	laneID := model.LegacyCheckpointLaneID("aaaa")
+	state := model.NewState()
+	state.Lanes[""] = map[string]uint64{laneID: 7}
+	record := model.Checkpoint{
+		Version:    model.CheckpointVersion,
+		Seq:        7,
+		BaseCommit: "bbbb",
+		LaneID:     laneID,
+	}
+	if !checkpointConsumed(record, state) {
+		t.Fatal("rewritten legacy checkpoint lost its consumed watermark")
+	}
+}
+
+func TestWithoutParkedWarnings(t *testing.T) {
+	t.Parallel()
+	got := withoutParkedWarnings([]string{"parked one", "keep", "parked two"})
+	if !reflect.DeepEqual(got, []string{"keep"}) {
+		t.Fatalf("withoutParkedWarnings() = %v", got)
+	}
+}
+
 func TestAnnotateHandlesStrandedBranchEvidence(t *testing.T) {
 	t.Parallel()
 	t.Run("parks evidence and drops it after branch deletion", testAnnotateParksThenDropsStrandedBranchEvidence)
 	t.Run("refuses to drop while a branch reaches the base", testAnnotateRefusesDroppingReachableBase)
 	t.Run("parks pre-root evidence and drops it explicitly", testAnnotateParksThenDropsPreRootEvidence)
+}
+
+func TestAnnotateDropValidatesBeforeDeletingCheckpoints(t *testing.T) {
+	t.Parallel()
+	repo, root := setupStrandedBranchEvidence(t, true)
+	write(t, root, "file.txt", "base\nmainline\n")
+	commit(t, root, "mainline")
+	state, err := store.New(repo.GitDir).ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteNoteRef("refs/notes/byline", state.LastAnnotatedCommit); err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := store.New(repo.GitDir).ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AnnotateDroppingStranded(repo); err == nil ||
+		!strings.Contains(err.Error(), "attribution note is missing") {
+		t.Fatalf("AnnotateDroppingStranded() error = %v", err)
+	}
+	after, _, err := store.New(repo.GitDir).ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("failed annotation changed checkpoints: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestAnnotateParksSiblingBranchWithSharedBase(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "base.txt", "base\n")
+	base := commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "checkout", "-b", "feature-a", base)
+	write(t, root, "a.txt", "ai\n")
+	if _, err := Capture(repo, presetAI("sibling", "a.txt"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "stash", "push", "--include-untracked")
+	git(t, root, "checkout", "-b", "feature-b", base)
+	write(t, root, "b.txt", "human\n")
+	commit(t, root, "feature b")
+	result, err := Annotate(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ParkedCheckpoints != 1 {
+		t.Fatalf("Annotate(feature-b) = %+v, want sibling checkpoint parked", result)
+	}
+	git(t, root, "checkout", "feature-a")
+	if _, err := HandlePostCheckout(repo, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "stash", "pop")
+	commit(t, root, "feature a")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	blame, err := Blame(repo, "a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blame.Lines) != 1 || blame.Lines[0].Attribution.Author != model.AuthorAI {
+		t.Fatalf("Blame(feature-a) = %+v, want AI sibling evidence", blame.Lines)
+	}
 }
 
 func testAnnotateParksThenDropsPreRootEvidence(t *testing.T) {
@@ -1393,7 +1534,7 @@ func testAnnotateParksThenDropsPreRootEvidence(t *testing.T) {
 	if result.ParkedCheckpoints != 1 {
 		t.Fatalf("strict Annotate parked = %d, want 1 (no error)", result.ParkedCheckpoints)
 	}
-	if _, ok := resultWarnings(result, "parked 1 checkpoints on 1 unrelated bases"); !ok {
+	if _, ok := resultWarnings(result, "parked 1 checkpoints in 1 unrelated branch contexts"); !ok {
 		t.Fatalf("Annotate warnings = %v, want a parked checkpoint warning", result.Warnings)
 	}
 	result, err = AnnotateDroppingStranded(repo)
@@ -1516,7 +1657,7 @@ func setupStrandedBranchEvidence(t *testing.T, deleteBranch bool) (*gitcmd.Repo,
 // TestAnnotateParksAndResumesForeignLane walks the issue #30 scenario:
 // evidence captured on one branch must not block annotation on another,
 // must keep its retention protection while parked, and must be consumed
-// when its branch returns. The on-disk state starts as version 1 so the
+// when its branch and base return. The on-disk state starts as version 1 so the
 // in-memory migration is exercised end to end.
 func TestAnnotateParksAndResumesForeignLane(t *testing.T) {
 	t.Parallel()
@@ -1552,6 +1693,13 @@ func TestAnnotateParksAndResumesForeignLane(t *testing.T) {
 	}, now); err != nil {
 		t.Fatal(err)
 	}
+	migrated, err := os.ReadFile(stateStore.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(migrated), `"version":3`) {
+		t.Fatalf("Capture persisted state %q, want version 3 fence", migrated)
+	}
 	git(t, root, "stash")
 	git(t, root, "checkout", "main")
 	if _, err := HandlePostCheckout(repo, "", ""); err != nil {
@@ -1568,7 +1716,7 @@ func TestAnnotateParksAndResumesForeignLane(t *testing.T) {
 	if result.Files != 1 || result.ParkedCheckpoints != 1 {
 		t.Fatalf("Annotate(mainline) = %+v, want 1 file and 1 parked checkpoint", result)
 	}
-	if _, ok := resultWarnings(result, "parked 1 checkpoints on 1 unrelated bases"); !ok {
+	if _, ok := resultWarnings(result, "parked 1 checkpoints in 1 unrelated branch contexts"); !ok {
 		t.Fatalf("Annotate warnings = %v, want a parked checkpoint warning", result.Warnings)
 	}
 	status, err := Status(repo)
@@ -1591,7 +1739,7 @@ func TestAnnotateParksAndResumesForeignLane(t *testing.T) {
 		t.Fatal(err)
 	}
 	if state.Version != model.StateVersion || state.LastCheckpointSeq != 0 || len(state.Lanes) != 0 {
-		t.Fatalf("migrated state = %+v, want version 2 with the frozen floor", state)
+		t.Fatalf("migrated state = %+v, want current version with the frozen floor", state)
 	}
 
 	// Returning to feature resumes the parked lane and consumes its evidence.
@@ -1612,7 +1760,7 @@ func TestAnnotateParksAndResumesForeignLane(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if consumed := state.Lanes[featureBase]; consumed != 1 {
+	if consumed := state.Lanes["refs/heads/feature"][model.CheckpointLaneID(1)]; consumed != 1 {
 		t.Fatalf("lane %s consumed = %d, want 1", featureBase, consumed)
 	}
 	if state.LastCheckpointSeq != 0 {

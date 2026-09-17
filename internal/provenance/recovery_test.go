@@ -10,6 +10,15 @@ import (
 	"github.com/comarch/git-byline/internal/preset"
 )
 
+func TestPreviewRecoveryHandlesUnbornSnapshot(t *testing.T) {
+	t.Parallel()
+	report, err := previewRecovery(nil, nil, model.NewState(), "", "", nil)
+	if err != nil || report.Version != model.StateVersion ||
+		report.AnnotationPending || report.RecommendedAction != "" {
+		t.Fatalf("previewRecovery(unborn) = %+v, %v", report, err)
+	}
+}
+
 func TestPreviewRecoveryReportsBlockedAndStrandedCheckpoints(t *testing.T) {
 	t.Parallel()
 	repo, root := setupStrandedBranchEvidence(t, false)
@@ -24,7 +33,7 @@ func TestPreviewRecoveryReportsBlockedAndStrandedCheckpoints(t *testing.T) {
 		blocked.UnrelatedCheckpoints != 2 ||
 		blocked.StrandedCheckpoints != 0 ||
 		blocked.BlockedCheckpoints != 2 ||
-		blocked.RecommendedAction != "return to the listed branches to consume these checkpoints, or delete them and run git-byline recover" {
+		blocked.RecommendedAction != "restore each checkpoint's recorded branch and base to consume it, or delete every listed branch and run git-byline recover" {
 		t.Fatalf("blocked preview = %+v", blocked)
 	}
 	for _, checkpoint := range blocked.Checkpoints {

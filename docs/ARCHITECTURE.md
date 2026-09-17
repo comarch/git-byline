@@ -71,26 +71,21 @@ attached directly to `HEAD`, with limits of 16 MiB for the note, 500 files,
 10. State advances atomically, then the retention ref is compacted.
 11. Unless installed with `--local-notes`, a managed `pre-push` hook
     publishes the notes ref before an ordinary branch push.
-6. After commit, `annotate` replays snapshots against the first parent.
-7. Committed lines receive complete, ordered, non-overlapping ranges.
-8. Canonical note JSON is written to `refs/notes/byline`.
-9. State advances atomically, then the retention ref is compacted.
-10. Unless installed with `--local-notes`, a managed `pre-push` hook
-    publishes the notes ref before an ordinary branch push.
 
 If annotation starts after new edits already happened on the new `HEAD`,
 checkpoints based on that `HEAD` are carried into pending state for the next
-commit. A checkpoint from an unrelated base commit parks with a warning
-instead of blocking annotation; its lane resumes when its base becomes
-current again. `recover` previews each parked checkpoint, object
-availability, and branches that still reach its base without changing
-state. `recover --drop` rechecks reachability, drops only parked
-checkpoints whose base no local or remote-tracking branch can reach, and
-retries annotation. Every unrelated checkpoint must be stranded; one
-blocked checkpoint refuses the whole cleanup without dropping records or
-retrying annotation. Hook-driven annotation never selects this destructive
-mode. `annotate --drop-stranded` performs the same destructive removal
-without a preview, so users should run `recover` first.
+commit. A checkpoint from another branch or base parks with a warning instead
+of blocking annotation; its lane resumes only when both branch ref and base
+match again. Post-rewrite handling remaps checkpoint and lane bases for the
+rewritten branch. `recover` previews each parked checkpoint, its recorded
+branch context, object availability, and branches that still reach its base
+without changing state. `recover --drop` first validates ordinary annotation,
+then rechecks reachability, drops only parked checkpoints whose base no local
+or remote-tracking branch can reach, and retries annotation. Every unrelated
+checkpoint must be stranded; one blocked checkpoint refuses the whole cleanup
+without dropping records or retrying annotation. Hook-driven annotation never
+selects this destructive mode. `annotate --drop-stranded` performs the same
+destructive removal without a preview, so users should run `recover` first.
 
 ## Checkpoint log
 
@@ -99,7 +94,7 @@ Path: worktree-specific Git directory plus `byline/checkpoints.jsonl`.
 One JSON object per line:
 
 ```json
-{"version":1,"kind":"edit","seq":2,"base_commit":"abc123","ts":"2026-01-02T03:04:05Z","type":"ai","session":"session-1","agent":"droid","model":"model-name","files":[{"path":"src/example.go","exists":true,"blob":"def456"}]}
+{"version":2,"kind":"edit","seq":2,"base_commit":"abc123","branch_ref":"refs/heads/feature","lane_id":"seq:2","ts":"2026-01-02T03:04:05Z","type":"ai","session":"session-1","agent":"droid","model":"model-name","files":[{"path":"src/example.go","exists":true,"blob":"def456"}]}
 ```
 
 Properties:
@@ -110,6 +105,10 @@ Properties:
 - one truncated final line is ignored with a warning;
 - the next append removes that truncated tail before writing a record;
 - malformed interior lines fail;
+- readers accept versions 1 and 2; writers emit version 2;
+- version 1 records have no branch context and use compatible base-only
+  matching; rewrite upgrades them to version 2 with a stable `legacy:<base>`
+  lane ID before changing their base;
 - unknown record versions are skipped with a warning;
 - raw hook input and file content are not embedded.
 
@@ -120,7 +119,7 @@ Properties:
 Path: worktree-specific Git directory plus `byline/state.json`.
 
 ```json
-{"version":2,"last_annotated_commit":"def456","last_checkpoint_seq":42,"notes_version":3,"pending":{"base_commit":"def456","files":{}},"lanes":{"abc123":41}}
+{"version":3,"last_annotated_commit":"def456","last_checkpoint_seq":42,"notes_version":3,"pending":{"base_commit":"def456","files":{}},"lanes":{"refs/heads/feature":{"seq:2":41}}}
 ```
 
 State uses a temporary file, file sync, and atomic rename. It advances only
@@ -131,24 +130,29 @@ remain reachable through `refs/worktree/byline/checkpoints`.
 
 ### Checkpoint lanes
 
-Version 2 keys each checkpoint base commit to a lane in `lanes`, holding
-the highest sequence an annotation consumed for that base. Annotation
-selects the lane matching the current HEAD or its first parent: records
-based on the parent replay into the commit, records based on HEAD carry as
-pending worktree provenance, and every other unconsumed record parks with a
-warning instead of blocking annotation. Parked lanes stay protected by the
-retention ref, are never deleted automatically, and resume when their base
-becomes current again. `annotate --drop-stranded` and `recover --drop` are
-the only paths that remove records, and both refuse while any branch still
-reaches a parked base.
+Version 3 nests stable lane IDs below their attached local branch ref in
+`lanes`. Each lane stores the highest sequence annotation consumed in that
+branch context. Base commits remain on checkpoint records and may change when
+history is rewritten; lane IDs do not. This prevents squash or split rewrites
+from merging independent consumption watermarks. Annotation selects records
+whose branch matches the current branch and whose base matches `HEAD` or its
+first parent. Records based on the parent replay into the commit, records based
+on `HEAD` carry as pending worktree provenance, and every other unconsumed
+record parks with a warning. This keeps sibling branches created from one base
+independent. Parked lanes stay protected by the retention ref, are never
+deleted automatically, and resume only when branch and base match again.
+`annotate --drop-stranded` and `recover --drop` are the only paths that remove
+records, and both refuse while any branch still reaches a parked base.
 
 `last_checkpoint_seq` is the version 1 scalar watermark, kept as a frozen
 consumption floor. Version 1 could only consume an unbroken journal prefix,
 so every sequence at or below the floor is already consumed and the floor
 never advances; new consumption is recorded per lane only. Version 1 state
-files migrate deterministically in memory on read and persist as version 2
-on the next state write. Binaries older than this version reject version 2
-state instead of guessing.
+files migrate with empty lanes. Version 2 base-only lanes migrate to stable
+`legacy:<base>` IDs under the empty branch context. Migration is deterministic
+in memory and persists as version 3 on the next state write. Before writing a
+version 2 checkpoint, capture persists version 3 state so older binaries fail
+closed instead of skipping new evidence.
 
 ## Notes
 

@@ -113,6 +113,7 @@ func applyRewriteMapping(repo *gitcmd.Repo, mapping rewrite.Mapping) (RewriteRes
 	if err != nil {
 		return RewriteResult{}, err
 	}
+	originalState := state
 	result := RewriteResult{Mapped: len(mapping.Pairs)}
 	sources := make(map[string]map[string][]engine.Snapshot)
 	sessions := make(map[string]map[string]model.NoteSession)
@@ -409,10 +410,107 @@ func applyRewriteMapping(repo *gitcmd.Repo, mapping rewrite.Mapping) (RewriteRes
 			}
 		}
 	}
+	branchRef, _, err := repo.CurrentBranchRef()
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	relevantBases, err := checkpointLaneBases(dataStore, branchRef)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	baseRemaps, err := checkpointBaseRemaps(repo, mapping, relevantBases)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	// Lane IDs stay stable across rewrites, so state can advance before the
+	// journal base rewrite without merging independent consumption watermarks.
 	if err := writeRewriteState(repo, dataStore, state); err != nil {
 		return RewriteResult{}, fmt.Errorf("write remapped state: %w", err)
 	}
+	if err := dataStore.RewriteCheckpointBases(branchRef, baseRemaps); err != nil {
+		remapErr := fmt.Errorf("remap checkpoint bases: %w", err)
+		if rollbackErr := writeRewriteState(repo, dataStore, originalState); rollbackErr != nil {
+			return RewriteResult{}, fmt.Errorf("%w; rollback state: %v", remapErr, rollbackErr)
+		}
+		return RewriteResult{}, remapErr
+	}
 	return result, nil
+}
+
+func checkpointLaneBases(
+	dataStore store.Store,
+	branchRef string,
+) (map[string]bool, error) {
+	result := map[string]bool{}
+	records, _, err := dataStore.ReadCheckpoints()
+	if err != nil {
+		return nil, err
+	}
+	for _, record := range records {
+		if recordUsesLegacyContext(record) || record.BranchRef == branchRef {
+			result[record.BaseCommit] = true
+		}
+	}
+	return result, nil
+}
+
+func checkpointBaseRemaps(
+	repo *gitcmd.Repo,
+	mapping rewrite.Mapping,
+	relevant map[string]bool,
+) (map[string]string, error) {
+	result := map[string]string{}
+	for _, pair := range mapping.Pairs {
+		if !relevant[pair.Old] {
+			continue
+		}
+		if _, exists := result[pair.Old]; exists {
+			continue
+		}
+		target, found := mapping.Remap(pair.Old)
+		if !found {
+			continue
+		}
+		target, err := resolveCheckpointBase(repo, mapping, pair.Old, target)
+		if err != nil {
+			return nil, err
+		}
+		result[pair.Old] = target
+	}
+	return result, nil
+}
+
+func resolveCheckpointBase(
+	repo *gitcmd.Repo,
+	mapping rewrite.Mapping,
+	source, target string,
+) (string, error) {
+	seen := map[string]bool{source: true}
+	for {
+		if isZero(target) {
+			parent, err := repo.Parent(source)
+			if err != nil {
+				return "", fmt.Errorf("read dropped checkpoint base parent %s: %w", source, err)
+			}
+			target = parent
+		}
+		if target == "" {
+			return "", nil
+		}
+		if target == source {
+			return source, nil
+		}
+		if seen[target] {
+			return "", fmt.Errorf("checkpoint base rewrite cycle at %s", target)
+		}
+		seen[target] = true
+		source = target
+		next, found := mapping.Remap(source)
+		if !found {
+			return source, nil
+		}
+		target = next
+	}
 }
 
 // HandlePostMerge handles merge and cherry-pick commits after Git updates HEAD.

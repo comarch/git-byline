@@ -17,6 +17,7 @@ func validCheckpoint(seq uint64) model.Checkpoint {
 		Version: model.CheckpointVersion,
 		Kind:    "edit",
 		Seq:     seq,
+		LaneID:  model.CheckpointLaneID(seq),
 		TS:      "2026-01-01T00:00:00Z",
 		Type:    model.AuthorHuman,
 		Files:   []model.Snapshot{{Path: "file.go", Exists: true, Blob: "abcd1234"}},
@@ -45,6 +46,96 @@ func TestCheckpointRoundTrip(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("checkpoint mode = %o", info.Mode().Perm())
+	}
+}
+
+func TestCheckpointRoundTripReadsVersionOneAndBranchContext(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	legacy := validCheckpoint(1)
+	legacy.Version = model.CheckpointVersionV1
+	legacy.LaneID = ""
+	current := validCheckpoint(2)
+	current.BranchRef = "refs/heads/feature"
+	if err := value.AppendCheckpoint(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := value.AppendCheckpoint(current); err != nil {
+		t.Fatal(err)
+	}
+	records, warnings, err := value.ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 || len(records) != 2 ||
+		records[0].BranchRef != "" ||
+		records[1].BranchRef != "refs/heads/feature" {
+		t.Fatalf("ReadCheckpoints() = %+v, %v", records, warnings)
+	}
+	legacy.BranchRef = "refs/heads/main"
+	if err := value.CheckCheckpointAppend(legacy, len(records)); err == nil {
+		t.Fatal("version 1 checkpoint accepted branch context")
+	}
+	invalidBase := validCheckpoint(3)
+	invalidBase.BaseCommit = "main"
+	if err := value.CheckCheckpointAppend(invalidBase, len(records)); err == nil {
+		t.Fatal("checkpoint accepted symbolic base")
+	}
+}
+
+func TestRewriteCheckpointBasesUsesBranchContext(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	for _, record := range []model.Checkpoint{
+		func() model.Checkpoint {
+			record := validCheckpoint(1)
+			record.Version = model.CheckpointVersionV1
+			record.LaneID = ""
+			record.BaseCommit = "aaaa"
+			return record
+		}(),
+		func() model.Checkpoint {
+			record := validCheckpoint(2)
+			record.BaseCommit = "aaaa"
+			record.BranchRef = "refs/heads/feature"
+			return record
+		}(),
+		func() model.Checkpoint {
+			record := validCheckpoint(3)
+			record.BaseCommit = "aaaa"
+			record.BranchRef = "refs/heads/main"
+			return record
+		}(),
+		func() model.Checkpoint {
+			record := validCheckpoint(4)
+			record.BaseCommit = "cccc"
+			record.BranchRef = "refs/heads/feature"
+			return record
+		}(),
+	} {
+		if err := value.AppendCheckpoint(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := value.RewriteCheckpointBases(
+		"refs/heads/feature",
+		map[string]string{"aaaa": "bbbb", "cccc": "bbbb"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	records, _, err := value.ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records[0].BaseCommit != "bbbb" ||
+		records[0].Version != model.CheckpointVersion ||
+		records[0].LaneID != model.LegacyCheckpointLaneID("aaaa") ||
+		records[1].BaseCommit != "bbbb" ||
+		records[1].LaneID != model.CheckpointLaneID(2) ||
+		records[2].BaseCommit != "aaaa" ||
+		records[3].BaseCommit != "bbbb" ||
+		records[3].LaneID != model.CheckpointLaneID(4) {
+		t.Fatalf("rewritten records = %+v", records)
 	}
 }
 
@@ -434,8 +525,10 @@ func TestStateRoundTripKeepsLanes(t *testing.T) {
 	}
 	state.LastAnnotatedCommit = "abcd1234"
 	state.Pending.BaseCommit = state.LastAnnotatedCommit
-	state.Lanes["a000000000000000000000000000000000000000"] = 4
-	state.Lanes["b000000000000000000000000000000000000000"] = 7
+	state.Lanes["refs/heads/main"] = map[string]uint64{
+		"seq:1": 4,
+		"seq:2": 7,
+	}
 	if err := value.WriteState(state); err != nil {
 		t.Fatal(err)
 	}
@@ -443,17 +536,17 @@ func TestStateRoundTripKeepsLanes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Lanes) != 2 ||
-		got.Lanes["a000000000000000000000000000000000000000"] != 4 ||
-		got.Lanes["b000000000000000000000000000000000000000"] != 7 {
+	if len(got.Lanes) != 1 ||
+		got.Lanes["refs/heads/main"]["seq:1"] != 4 ||
+		got.Lanes["refs/heads/main"]["seq:2"] != 7 {
 		t.Fatalf("ReadState() lanes = %+v", got.Lanes)
 	}
 	data, err := os.ReadFile(value.StatePath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := strings.Index(string(data), `"a000`)
-	second := strings.Index(string(data), `"b000`)
+	first := strings.Index(string(data), `"seq:1"`)
+	second := strings.Index(string(data), `"seq:2"`)
 	if first < 0 || second < 0 || first > second {
 		t.Fatalf("state lanes are not serialized in sorted order: %s", data)
 	}
@@ -476,7 +569,7 @@ func TestStateMigratesVersionOneInMemory(t *testing.T) {
 	}
 	if state.Version != model.StateVersion || state.LastCheckpointSeq != 42 ||
 		state.LastAnnotatedCommit != "abcd1234" || len(state.Lanes) != 0 {
-		t.Fatalf("ReadState() = %+v, want migrated version 2 with the frozen floor", state)
+		t.Fatalf("ReadState() = %+v, want current version with the frozen floor", state)
 	}
 	onDisk, err := os.ReadFile(value.StatePath())
 	if err != nil {
@@ -492,8 +585,46 @@ func TestStateMigratesVersionOneInMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(onDisk), `"version":2`) {
-		t.Fatalf("WriteState persisted %q, want version 2", onDisk)
+	if !strings.Contains(string(onDisk), `"version":3`) {
+		t.Fatalf("WriteState persisted %q, want version 3", onDisk)
+	}
+}
+
+func TestStateMigratesVersionTwoLanes(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	if err := os.MkdirAll(value.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"version":2,"last_checkpoint_seq":0,"notes_version":3,` +
+		`"pending":{"files":{}},"lanes":{"abcd1234":7}}` + "\n"
+	if err := os.WriteFile(value.StatePath(), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, migrated, err := value.ReadStateForUpdate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !migrated || state.Version != model.StateVersion ||
+		state.Lanes[""][model.LegacyCheckpointLaneID("abcd1234")] != 7 {
+		t.Fatalf("ReadStateForUpdate() = %+v, %t", state, migrated)
+	}
+}
+
+func TestStateRejectsLanesInVersionOne(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	if err := os.MkdirAll(value.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	invalid := `{"version":1,"last_checkpoint_seq":0,"notes_version":3,` +
+		`"pending":{"files":{}},"lanes":{"abcd1234":7}}` + "\n"
+	if err := os.WriteFile(value.StatePath(), []byte(invalid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := value.ReadState(); err == nil ||
+		!strings.Contains(err.Error(), "version 1 state contains lanes") {
+		t.Fatalf("ReadState() error = %v", err)
 	}
 }
 
@@ -502,12 +633,22 @@ func TestStateRejectsInvalidLanes(t *testing.T) {
 	for _, state := range []model.State{
 		func() model.State {
 			value := model.NewState()
-			value.Lanes["not-an-object-id"] = 4
+			value.Lanes["refs/heads/main"] = map[string]uint64{"not-a-lane": 4}
 			return value
 		}(),
 		func() model.State {
 			value := model.NewState()
-			value.Lanes["abcd1234"] = 0
+			value.Lanes["refs/heads/main"] = map[string]uint64{"seq:1": 0}
+			return value
+		}(),
+		func() model.State {
+			value := model.NewState()
+			value.Lanes["not-a-branch"] = map[string]uint64{"seq:1": 4}
+			return value
+		}(),
+		func() model.State {
+			value := model.NewState()
+			value.Lanes["refs/heads/main"] = map[string]uint64{"legacy:abcd1234": 4}
 			return value
 		}(),
 	} {
