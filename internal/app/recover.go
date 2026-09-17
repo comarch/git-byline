@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/provenance"
 )
@@ -44,15 +45,35 @@ func runRecover(env *Env, command *command, args []string) (int, error) {
 		Preview: preview,
 	}
 	if !*drop {
-		if *jsonOutput {
-			if err := writeJSON(env, commandResult); err != nil {
-				return operationalError(env, command.name, err)
-			}
-		} else {
-			writeRecoveryPreview(env.Stdout, preview)
-		}
-		return ExitSuccess, nil
+		return writeRecoverPreviewResult(env, command, commandResult, *jsonOutput)
 	}
+	return runRecoverDrop(env, command, repo, commandResult, *jsonOutput)
+}
+
+func writeRecoverPreviewResult(
+	env *Env,
+	command *command,
+	result recoverCommandResult,
+	jsonOutput bool,
+) (int, error) {
+	if jsonOutput {
+		if err := writeJSON(env, result); err != nil {
+			return operationalError(env, command.name, err)
+		}
+	} else {
+		writeRecoveryPreview(env.Stdout, result.Preview)
+	}
+	return ExitSuccess, nil
+}
+
+func runRecoverDrop(
+	env *Env,
+	command *command,
+	repo *gitcmd.Repo,
+	result recoverCommandResult,
+	jsonOutput bool,
+) (int, error) {
+	preview := result.Preview
 	if preview.BlockedCheckpoints > 0 {
 		return operationalError(env, command.name, blockedRecoveryError(preview))
 	}
@@ -60,9 +81,9 @@ func runRecover(env *Env, command *command, args []string) (int, error) {
 	if err != nil {
 		return annotateOperationalError(env, command.name, repo, err)
 	}
-	commandResult.Annotation = &annotation
-	if *jsonOutput {
-		if err := writeJSON(env, commandResult); err != nil {
+	result.Annotation = &annotation
+	if jsonOutput {
+		if err := writeJSON(env, result); err != nil {
 			return operationalError(env, command.name, err)
 		}
 		return ExitSuccess, nil

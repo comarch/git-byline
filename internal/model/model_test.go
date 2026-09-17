@@ -256,6 +256,18 @@ func TestAttributionLabel(t *testing.T) {
 
 func TestObjectIDAndNewState(t *testing.T) {
 	t.Parallel()
+	if !ValidObjectID("abcd1234") || ValidObjectID("xyz") || ValidObjectID("abc") {
+		t.Fatal("ValidObjectID returned an unexpected result")
+	}
+	state := NewState()
+	if state.Version != StateVersion || state.NotesVersion != NoteVersion ||
+		state.Pending.Files == nil || state.Lanes == nil {
+		t.Fatalf("NewState() = %+v", state)
+	}
+}
+
+func TestCheckpointVersionsAndLaneIDs(t *testing.T) {
+	t.Parallel()
 	if !SupportedCheckpointVersion(CheckpointVersionV1) ||
 		!SupportedCheckpointVersion(CheckpointVersion) ||
 		SupportedCheckpointVersion(99) {
@@ -265,14 +277,10 @@ func TestObjectIDAndNewState(t *testing.T) {
 		LegacyCheckpointLaneID("abcd1234") != "legacy:abcd1234" {
 		t.Fatal("checkpoint lane constructors returned unexpected IDs")
 	}
-	if !ValidObjectID("abcd1234") || ValidObjectID("xyz") || ValidObjectID("abc") {
-		t.Fatal("ValidObjectID returned an unexpected result")
-	}
-	state := NewState()
-	if state.Version != StateVersion || state.NotesVersion != NoteVersion ||
-		state.Pending.Files == nil || state.Lanes == nil {
-		t.Fatalf("NewState() = %+v", state)
-	}
+}
+
+func TestValidateBranchRef(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		value string
 		valid bool
@@ -289,6 +297,10 @@ func TestObjectIDAndNewState(t *testing.T) {
 			t.Fatalf("ValidateBranchRef(%q) = %v, valid %t", test.value, err, test.valid)
 		}
 	}
+}
+
+func TestValidateCheckpointLaneID(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		value string
 		valid bool

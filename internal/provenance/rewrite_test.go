@@ -1,6 +1,8 @@
 package provenance
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,17 @@ import (
 	"github.com/comarch/git-byline/internal/rewrite"
 	"github.com/comarch/git-byline/internal/store"
 )
+
+func TestCheckpointLaneBasesReadError(t *testing.T) {
+	t.Parallel()
+	parent := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(parent, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checkpointLaneBases(store.Store{Dir: parent}, ""); err == nil {
+		t.Fatal("checkpointLaneBases accepted an invalid store")
+	}
+}
 
 func TestPostRewriteAmendPreservesAttributionAndRemapsState(t *testing.T) {
 	t.Parallel()

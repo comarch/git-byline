@@ -1290,6 +1290,19 @@ func TestAnnotateKeepsMergedContentUntrackedAcrossCommits(t *testing.T) {
 	}
 }
 
+type selectRecordsTestCase struct {
+	name      string
+	records   []model.Checkpoint
+	consumed  uint64
+	lanes     map[string]map[string]uint64
+	errText   string
+	active    int
+	carry     int
+	parked    int
+	activeSeq uint64
+	carrySeq  uint64
+}
+
 func TestSelectRecords(t *testing.T) {
 	t.Parallel()
 	record := func(seq uint64, base string) model.Checkpoint {
@@ -1305,18 +1318,7 @@ func TestSelectRecords(t *testing.T) {
 			LaneID: model.CheckpointLaneID(seq), Files: []model.Snapshot{},
 		}
 	}
-	tests := []struct {
-		name      string
-		records   []model.Checkpoint
-		consumed  uint64
-		lanes     map[string]map[string]uint64
-		errText   string
-		active    int
-		carry     int
-		parked    int
-		activeSeq uint64
-		carrySeq  uint64
-	}{
+	tests := []selectRecordsTestCase{
 		{
 			name:     "skips floor-consumed records",
 			records:  []model.Checkpoint{record(1, "other")},
@@ -1364,42 +1366,48 @@ func TestSelectRecords(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
+		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			state := model.State{
-				Version:           model.StateVersion,
-				LastCheckpointSeq: test.consumed,
-				Lanes:             test.lanes,
-			}
-			selection, err := selectRecords(
-				test.records,
-				state,
-				"refs/heads/main",
-				"parent",
-				"head",
-			)
-			if test.errText != "" {
-				if err == nil || !strings.Contains(err.Error(), test.errText) {
-					t.Fatalf("selectRecords error = %v, want %q", err, test.errText)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			parked := 0
-			for _, count := range selection.Parked {
-				parked += count
-			}
-			if len(selection.Active) != test.active || len(selection.Carry) != test.carry ||
-				parked != test.parked || selection.ActiveSeq != test.activeSeq ||
-				selection.CarrySeq != test.carrySeq {
-				t.Fatalf("selectRecords = %d active, %d carry, %d parked, seqs %d/%d; want %d, %d, %d, %d/%d",
-					len(selection.Active), len(selection.Carry), parked, selection.ActiveSeq,
-					selection.CarrySeq, test.active, test.carry, test.parked, test.activeSeq,
-					test.carrySeq)
-			}
+			assertSelectRecords(t, test)
 		})
+	}
+}
+
+func assertSelectRecords(t *testing.T, test selectRecordsTestCase) {
+	t.Helper()
+	state := model.State{
+		Version:           model.StateVersion,
+		LastCheckpointSeq: test.consumed,
+		Lanes:             test.lanes,
+	}
+	selection, err := selectRecords(
+		test.records,
+		state,
+		"refs/heads/main",
+		"parent",
+		"head",
+	)
+	if test.errText != "" {
+		if err == nil || !strings.Contains(err.Error(), test.errText) {
+			t.Fatalf("selectRecords error = %v, want %q", err, test.errText)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked := 0
+	for _, count := range selection.Parked {
+		parked += count
+	}
+	if len(selection.Active) != test.active || len(selection.Carry) != test.carry ||
+		parked != test.parked || selection.ActiveSeq != test.activeSeq ||
+		selection.CarrySeq != test.carrySeq {
+		t.Fatalf("selectRecords = %d active, %d carry, %d parked, seqs %d/%d; want %d, %d, %d, %d/%d",
+			len(selection.Active), len(selection.Carry), parked, selection.ActiveSeq,
+			selection.CarrySeq, test.active, test.carry, test.parked, test.activeSeq,
+			test.carrySeq)
 	}
 }
 
@@ -1719,6 +1727,51 @@ func TestAnnotateParksAndResumesForeignLane(t *testing.T) {
 	if _, ok := resultWarnings(result, "parked 1 checkpoints in 1 unrelated branch contexts"); !ok {
 		t.Fatalf("Annotate warnings = %v, want a parked checkpoint warning", result.Warnings)
 	}
+	assertParkedLaneState(t, repo, stateStore)
+
+	// Returning to feature resumes the parked lane and consumes its evidence.
+	git(t, root, "checkout", "feature")
+	if _, err := HandlePostCheckout(repo, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "stash", "pop")
+	commit(t, root, "resume feature")
+	result, err = Annotate(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ParkedCheckpoints != 0 {
+		t.Fatalf("Annotate(resume) parked = %d, want 0", result.ParkedCheckpoints)
+	}
+	state, err := stateStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumed := state.Lanes["refs/heads/feature"][model.CheckpointLaneID(1)]; consumed != 1 {
+		t.Fatalf("lane %s consumed = %d, want 1", featureBase, consumed)
+	}
+	if state.LastCheckpointSeq != 0 {
+		t.Fatalf("LastCheckpointSeq = %d, want the frozen version 1 floor 0", state.LastCheckpointSeq)
+	}
+	blame, err := Blame(repo, "feat.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blame.Lines) != 2 || blame.Lines[1].Attribution.Author != model.AuthorAI ||
+		blame.Lines[1].Attribution.Agent != "droid" {
+		t.Fatalf("Blame(resumed) = %+v, want the parked AI line attributed", blame.Lines)
+	}
+	status, err := Status(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.PendingCheckpoints != 0 || status.RetainedSnapshots != 0 {
+		t.Fatalf("Status(resumed) = %+v", status)
+	}
+}
+
+func assertParkedLaneState(t *testing.T, repo *gitcmd.Repo, stateStore store.Store) {
+	t.Helper()
 	status, err := Status(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -1740,46 +1793,6 @@ func TestAnnotateParksAndResumesForeignLane(t *testing.T) {
 	}
 	if state.Version != model.StateVersion || state.LastCheckpointSeq != 0 || len(state.Lanes) != 0 {
 		t.Fatalf("migrated state = %+v, want current version with the frozen floor", state)
-	}
-
-	// Returning to feature resumes the parked lane and consumes its evidence.
-	git(t, root, "checkout", "feature")
-	if _, err := HandlePostCheckout(repo, "", ""); err != nil {
-		t.Fatal(err)
-	}
-	git(t, root, "stash", "pop")
-	commit(t, root, "resume feature")
-	result, err = Annotate(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.ParkedCheckpoints != 0 {
-		t.Fatalf("Annotate(resume) parked = %d, want 0", result.ParkedCheckpoints)
-	}
-	state, err = stateStore.ReadState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if consumed := state.Lanes["refs/heads/feature"][model.CheckpointLaneID(1)]; consumed != 1 {
-		t.Fatalf("lane %s consumed = %d, want 1", featureBase, consumed)
-	}
-	if state.LastCheckpointSeq != 0 {
-		t.Fatalf("LastCheckpointSeq = %d, want the frozen version 1 floor 0", state.LastCheckpointSeq)
-	}
-	blame, err := Blame(repo, "feat.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(blame.Lines) != 2 || blame.Lines[1].Attribution.Author != model.AuthorAI ||
-		blame.Lines[1].Attribution.Agent != "droid" {
-		t.Fatalf("Blame(resumed) = %+v, want the parked AI line attributed", blame.Lines)
-	}
-	status, err = Status(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.PendingCheckpoints != 0 || status.RetainedSnapshots != 0 {
-		t.Fatalf("Status(resumed) = %+v", status)
 	}
 }
 

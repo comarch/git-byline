@@ -114,41 +114,12 @@ func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]str
 		if len(raw) == 0 && errors.Is(readErr, io.EOF) {
 			break
 		}
-		line := bytes.TrimSuffix(raw, []byte{'\n'})
-		var header struct {
-			Version int `json:"version"`
+		next, lineChanged, err := rewriteCheckpointBaseLine(raw, branchRef, bases)
+		if err != nil {
+			return err
 		}
-		if err := json.Unmarshal(line, &header); err != nil ||
-			!model.SupportedCheckpointVersion(header.Version) {
-			rewritten.Write(raw)
-		} else {
-			var record model.Checkpoint
-			if err := decodeStrict(line, &record); err != nil {
-				return fmt.Errorf("decode checkpoint for base rewrite: %w", err)
-			}
-			target, mapped := bases[record.BaseCommit]
-			if mapped &&
-				(record.Version == model.CheckpointVersionV1 ||
-					model.IsLegacyCheckpointLaneID(record.LaneID) ||
-					record.BranchRef == branchRef) {
-				if record.Version == model.CheckpointVersionV1 {
-					record.Version = model.CheckpointVersion
-					record.LaneID = model.LegacyCheckpointLaneID(record.BaseCommit)
-				}
-				record.BaseCommit = target
-				encoded, err := json.Marshal(record)
-				if err != nil {
-					return fmt.Errorf("encode checkpoint for base rewrite: %w", err)
-				}
-				rewritten.Write(encoded)
-				if bytes.HasSuffix(raw, []byte{'\n'}) {
-					rewritten.WriteByte('\n')
-				}
-				changed = true
-			} else {
-				rewritten.Write(raw)
-			}
-		}
+		rewritten.Write(next)
+		changed = changed || lineChanged
 		if errors.Is(readErr, io.EOF) {
 			break
 		}
@@ -166,6 +137,48 @@ func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]str
 		return err
 	}
 	return nil
+}
+
+func rewriteCheckpointBaseLine(
+	raw []byte,
+	branchRef string,
+	bases map[string]string,
+) ([]byte, bool, error) {
+	line := bytes.TrimSuffix(raw, []byte{'\n'})
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(line, &header); err != nil ||
+		!model.SupportedCheckpointVersion(header.Version) {
+		return raw, false, nil
+	}
+	var record model.Checkpoint
+	if err := decodeStrict(line, &record); err != nil {
+		return nil, false, fmt.Errorf("decode checkpoint for base rewrite: %w", err)
+	}
+	target, mapped := bases[record.BaseCommit]
+	if !mapped || !checkpointMatchesRewriteBranch(record, branchRef) {
+		return raw, false, nil
+	}
+	if record.Version == model.CheckpointVersionV1 {
+		record.Version = model.CheckpointVersion
+		record.LaneID = model.LegacyCheckpointLaneID(record.BaseCommit)
+	}
+	record.BaseCommit = target
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode checkpoint for base rewrite: %w", err)
+	}
+	if bytes.HasSuffix(raw, []byte{'\n'}) {
+		encoded = append(encoded, '\n')
+	}
+	return encoded, true, nil
+}
+
+func checkpointMatchesRewriteBranch(record model.Checkpoint, branchRef string) bool {
+	return record.Version == model.CheckpointVersionV1 ||
+		model.IsLegacyCheckpointLaneID(record.LaneID) ||
+		record.BranchRef == branchRef
 }
 
 // StatePath returns the state file path.

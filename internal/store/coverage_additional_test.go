@@ -211,6 +211,17 @@ func TestRewriteCheckpointBasesAdditional(t *testing.T) {
 	}
 }
 
+func TestRewriteCheckpointBaseLineRejectsInvalidCurrentRecord(t *testing.T) {
+	t.Parallel()
+	if _, _, err := rewriteCheckpointBaseLine(
+		[]byte(`{"version":2,"unknown":true}`),
+		"refs/heads/main",
+		map[string]string{"aaaa": "bbbb"},
+	); err == nil {
+		t.Fatal("rewriteCheckpointBaseLine accepted an invalid current record")
+	}
+}
+
 func TestCheckpointValidationAdditional(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -481,6 +492,12 @@ func TestAppendCheckpointFailureBranches(t *testing.T) {
 		})
 		if _, err := value.DropCheckpointRecords(map[uint64]bool{1: true}); err == nil {
 			t.Fatal("DropCheckpointRecords wrote through a read-only directory")
+		}
+		if err := value.RewriteCheckpointBases(
+			"",
+			map[string]string{"": "aaaa"},
+		); err == nil {
+			t.Fatal("RewriteCheckpointBases wrote through a read-only directory")
 		}
 	})
 }
