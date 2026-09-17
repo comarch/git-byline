@@ -78,6 +78,19 @@ func TestRecoverPreviewAndStatusExplainBlockedAttribution(t *testing.T) {
 	}
 }
 
+func TestAnnotateDropStrandedExplainsBlockedAttribution(t *testing.T) {
+	t.Parallel()
+	root, _ := setupAppStrandedRecovery(t)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	code, stdout, stderr, err := appRun(root, now, nil, "annotate", "--drop-stranded")
+	if code != ExitFailure || err == nil || stdout != "" ||
+		!strings.Contains(stderr, "attribution pending for") ||
+		!strings.Contains(stderr, "run: git-byline recover") {
+		t.Fatalf("strict annotate = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+}
+
 func TestRecoverDropAnnotatesAfterBranchDeletion(t *testing.T) {
 	t.Parallel()
 	root, _ := setupAppStrandedRecovery(t)
