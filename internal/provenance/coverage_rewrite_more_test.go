@@ -39,6 +39,11 @@ func TestCoverageApplyRewriteMoreBranches(t *testing.T) {
 	t.Run("zero boundary parent", coverageApplyZeroBoundaryParentError)
 	t.Run("ancestor parent", coverageApplyAncestorParentError)
 	t.Run("state write", coverageApplyStateWriteError)
+	t.Run("current branch", coverageApplyBranchError)
+	t.Run("checkpoint log", coverageApplyCheckpointLogError)
+	t.Run("checkpoint parent", coverageApplyCheckpointParentError)
+	t.Run("checkpoint rewrite", coverageApplyCheckpointRewriteError)
+	t.Run("checkpoint rewrite rollback", coverageApplyCheckpointRewriteRollbackError)
 }
 
 func TestCoveragePostMergeAndCherryPickBranches(t *testing.T) {
@@ -1920,6 +1925,129 @@ func coverageApplyStateWriteError(t *testing.T) {
 	assertCoverageError(t, err, "write remapped state")
 }
 
+func coverageApplyBranchError(t *testing.T) {
+	repo := branchErrorCoverageRepo(t)
+	if _, err := applyRewriteMapping(repo, rewrite.Mapping{}); err == nil {
+		t.Fatal("applyRewriteMapping accepted a current branch failure")
+	}
+}
+
+func coverageApplyCheckpointLogError(t *testing.T) {
+	root := testRepo(t)
+	write(t, root, coverageFile, "content\n")
+	commit(t, root, "content")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataStore := store.New(repo.GitDir)
+	if err := os.MkdirAll(dataStore.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dataStore.CheckpointPath(), []byte("{bad}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyRewriteMapping(repo, rewrite.Mapping{}); err == nil {
+		t.Fatal("applyRewriteMapping accepted an invalid checkpoint log")
+	}
+}
+
+func coverageApplyCheckpointParentError(t *testing.T) {
+	root, base, _ := checkpointRewriteCoverageRepo(t)
+	mapping := coverageMapping(t, base, strings.Repeat("0", 40))
+	fake := fakeRewriteRepo(t, root, "parents-error", "")
+	if _, err := applyRewriteMapping(fake, mapping); err == nil {
+		t.Fatal("applyRewriteMapping accepted a checkpoint parent failure")
+	}
+}
+
+func coverageApplyCheckpointRewriteError(t *testing.T) {
+	skipIfUnsupportedPermissions(t)
+	root, base, head := checkpointRewriteCoverageRepo(t)
+	fake := fakeRewriteRepo(t, root, "checkpoint-rewrite-write-error", "")
+	dataStore := store.New(fake.GitDir)
+	seedCheckpointRewriteState(t, fake, dataStore, base)
+	t.Setenv("FAKE_GIT_STORE_DIR", dataStore.Dir)
+	defer os.Chmod(dataStore.Dir, 0o700)
+	if _, err := applyRewriteMapping(fake, coverageMapping(t, base, head)); err == nil ||
+		!strings.Contains(err.Error(), "remap checkpoint bases") ||
+		strings.Contains(err.Error(), "rollback state") {
+		t.Fatalf("checkpoint rewrite error = %v", err)
+	}
+	restored, err := dataStore.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.LastAnnotatedCommit != base || restored.Pending.BaseCommit != base {
+		t.Fatalf("checkpoint rewrite rollback state = %+v", restored)
+	}
+}
+
+func coverageApplyCheckpointRewriteRollbackError(t *testing.T) {
+	root, base, head := checkpointRewriteCoverageRepo(t)
+	fake := fakeRewriteRepo(t, root, "checkpoint-rewrite-error", "")
+	dataStore := store.New(fake.GitDir)
+	seedCheckpointRewriteState(t, fake, dataStore, base)
+	t.Setenv("FAKE_GIT_CHECKPOINT_PATH", dataStore.CheckpointPath())
+	if _, err := applyRewriteMapping(fake, coverageMapping(t, base, head)); err == nil ||
+		!strings.Contains(err.Error(), "rollback state") {
+		t.Fatalf("checkpoint rollback error = %v", err)
+	}
+}
+
+func checkpointRewriteCoverageRepo(t *testing.T) (string, string, string) {
+	t.Helper()
+	root := testRepo(t)
+	write(t, root, coverageFile, "base\n")
+	base := commit(t, root, "base")
+	write(t, root, coverageFile, "head\n")
+	head := commit(t, root, "head")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := repo.HashBytes([]byte("checkpoint\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.New(repo.GitDir).AppendCheckpoint(
+		coverageAnnotateRecord(base, blob),
+	); err != nil {
+		t.Fatal(err)
+	}
+	return root, base, head
+}
+
+func seedCheckpointRewriteState(
+	t *testing.T,
+	repo *gitcmd.Repo,
+	dataStore store.Store,
+	base string,
+) {
+	t.Helper()
+	blob := mustBlob(t, repo, base, coverageFile)
+	if err := repo.WriteNote(
+		base,
+		encodeCoverageNote(t, makeCoverageNote(blob)),
+	); err != nil {
+		t.Fatal(err)
+	}
+	state := model.NewState()
+	state.LastAnnotatedCommit = base
+	state.Pending.BaseCommit = base
+	if err := dataStore.WriteState(state); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func branchErrorCoverageRepo(t *testing.T) *gitcmd.Repo {
+	t.Helper()
+	root := testRepo(t)
+	write(t, root, coverageFile, "content\n")
+	commit(t, root, "content")
+	return fakeRewriteRepo(t, root, "branch-error", "")
+}
+
 func largeRewriteNote(size int) []byte {
 	base := []byte(`{"version":3,"files":{},"sessions":{}}`)
 	if size <= len(base) {
@@ -2102,6 +2230,12 @@ if [ "$FAKE_GIT_MODE" = "hash-error" ] &&
   printf '%s\n' 'forced hash failure' >&2
   exit 2
 fi
+if [ "$FAKE_GIT_MODE" = "capture-migration-write-error" ] &&
+   [ "$1" = "hash-object" ] &&
+   [ -n "$FAKE_GIT_STATE_PATH" ]; then
+  rm -f "$FAKE_GIT_STATE_PATH"
+  mkdir "$FAKE_GIT_STATE_PATH"
+fi
 if [ "$FAKE_GIT_MODE" = "read-blob-error" ] &&
    [ "$1" = "cat-file" ] && [ "$2" = "blob" ]; then
   printf '%s\n' 'forced blob read failure' >&2
@@ -2142,6 +2276,12 @@ if [ "$FAKE_GIT_MODE" = "branch-error" ] &&
   printf '%s\n' 'forced branch failure' >&2
   exit 2
 fi
+if [ "$FAKE_GIT_MODE" = "after-branch-scan-head-error" ] &&
+   [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ] &&
+   [ "$3" = "HEAD" ] && [ -f "$FAKE_GIT_COUNTER" ]; then
+  printf '%s\n' 'forced post-scan HEAD failure' >&2
+  exit 2
+fi
 if [ "$FAKE_GIT_MODE" = "ref-error" ] &&
    [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ] &&
    [ "$3" = "refs/stash" ]; then
@@ -2166,6 +2306,33 @@ if [ "$FAKE_GIT_MODE" = "update-ref-second-error" ] &&
     exit 2
   fi
   : > "$FAKE_GIT_COUNTER"
+fi
+if [ "$FAKE_GIT_MODE" = "checkpoint-rewrite-error" ] &&
+   [ "$1" = "update-ref" ] &&
+   [ "$2" = "refs/worktree/byline/checkpoints" ] &&
+   [ -n "$FAKE_GIT_CHECKPOINT_PATH" ]; then
+  if [ -f "$FAKE_GIT_COUNTER" ]; then
+    rm -f "$FAKE_GIT_CHECKPOINT_PATH"
+    mkdir "$FAKE_GIT_CHECKPOINT_PATH"
+  else
+    : > "$FAKE_GIT_COUNTER"
+  fi
+fi
+if [ "$FAKE_GIT_MODE" = "checkpoint-rewrite-write-error" ] &&
+   [ "$1" = "update-ref" ] &&
+   [ "$2" = "refs/worktree/byline/checkpoints" ] &&
+   [ -n "$FAKE_GIT_STORE_DIR" ]; then
+  count=0
+  if [ -f "$FAKE_GIT_COUNTER" ]; then
+    count=$(cat "$FAKE_GIT_COUNTER")
+  fi
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$FAKE_GIT_COUNTER"
+  if [ "$count" -eq 2 ]; then
+    chmod 0500 "$FAKE_GIT_STORE_DIR"
+  elif [ "$count" -eq 3 ]; then
+    chmod 0700 "$FAKE_GIT_STORE_DIR"
+  fi
 fi
 if [ "$FAKE_GIT_MODE" = "state-write-error" ] &&
    [ "$1" = "diff-tree" ] &&
@@ -2203,6 +2370,10 @@ if [ "$FAKE_GIT_MODE" = "any-branch-error" ] &&
    [ "$1" = "for-each-ref" ]; then
   printf '%s\n' 'forced branch containment failure' >&2
   exit 2
+fi
+if [ "$FAKE_GIT_MODE" = "after-branch-scan-head-error" ] &&
+   [ "$1" = "for-each-ref" ]; then
+  : > "$FAKE_GIT_COUNTER"
 fi
 if [ "$FAKE_GIT_MODE" = "drop-write-error" ] &&
    [ "$1" = "for-each-ref" ] &&

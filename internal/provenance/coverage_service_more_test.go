@@ -16,10 +16,42 @@ import (
 
 func TestCoverageCaptureErrorBranches(t *testing.T) {
 	t.Run("edit lock", coverageCaptureLockError)
+	t.Run("current branch", coverageCaptureBranchError)
+	t.Run("migration state write", coverageCaptureMigrationWriteError)
 	t.Run("shell pre paths", coverageCaptureShellPrePathError)
 	t.Run("shell post paths", coverageCaptureShellPostPathError)
 	t.Run("shell previous snapshot", coverageCaptureShellPreviousError)
 	t.Run("dirty helper", coverageCaptureDirtyHelperError)
+}
+
+func coverageCaptureBranchError(t *testing.T) {
+	repo := branchErrorCoverageRepo(t)
+	if _, err := Capture(repo, preset.Event{
+		Type: model.AuthorHuman, Paths: []string{coverageFile},
+	}, time.Now()); err == nil {
+		t.Fatal("Capture accepted a current branch failure")
+	}
+}
+
+func coverageCaptureMigrationWriteError(t *testing.T) {
+	root := testRepo(t)
+	write(t, root, coverageFile, "content\n")
+	commit(t, root, "content")
+	repo := fakeRewriteRepo(t, root, "capture-migration-write-error", "")
+	dataStore := store.New(repo.GitDir)
+	if err := os.MkdirAll(dataStore.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"version":1,"notes_version":3,"pending":{"files":{}}}` + "\n")
+	if err := os.WriteFile(dataStore.StatePath(), legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_GIT_STATE_PATH", dataStore.StatePath())
+	if _, err := Capture(repo, preset.Event{
+		Type: model.AuthorHuman, Paths: []string{coverageFile},
+	}, time.Now()); err == nil || !strings.Contains(err.Error(), "persist state migration") {
+		t.Fatalf("Capture migration write error = %v", err)
+	}
 }
 
 func coverageCaptureLockError(t *testing.T) {
@@ -275,6 +307,7 @@ func TestCoverageBlameAndStatusErrorBranches(t *testing.T) {
 	t.Run("status state", coverageStatusStateError)
 	t.Run("status log", coverageStatusLogError)
 	t.Run("status head", coverageStatusHeadError)
+	t.Run("status branch", coverageStatusBranchError)
 	t.Run("status protected", coverageStatusProtectedError)
 }
 
@@ -500,6 +533,13 @@ func coverageStatusHeadError(t *testing.T) {
 	repo := fakeRewriteRepo(t, root, "head-error", "")
 	if _, err := Status(repo); err == nil {
 		t.Fatal("Status accepted a HEAD failure")
+	}
+}
+
+func coverageStatusBranchError(t *testing.T) {
+	repo := branchErrorCoverageRepo(t)
+	if _, err := Status(repo); err == nil {
+		t.Fatal("Status accepted a current branch failure")
 	}
 }
 

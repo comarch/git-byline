@@ -19,6 +19,7 @@ func TestCoverageAnnotateBranches(t *testing.T) {
 	t.Run("operation lock", coverageAnnotateOperationLock)
 	t.Run("common lock", coverageAnnotateCommonLock)
 	t.Run("HEAD error", coverageAnnotateHeadError)
+	t.Run("current branch error", coverageAnnotateBranchError)
 	t.Run("unborn", coverageAnnotateUnborn)
 	t.Run("reflog error", coverageAnnotateReflogError)
 	t.Run("state error", coverageAnnotateStateError)
@@ -44,6 +45,7 @@ func TestCoverageAnnotateBranches(t *testing.T) {
 	t.Run("drop checkpoint error", coverageDropCheckpointError)
 	t.Run("drop state error", coverageDropStateError)
 	t.Run("drop HEAD error", coverageDropHeadError)
+	t.Run("drop branch error", coverageDropBranchError)
 	t.Run("drop parent error", coverageDropParentError)
 	t.Run("drop reachability error", coverageDropReachabilityError)
 	t.Run("drop skipped record", coverageDropSkippedRecord)
@@ -434,6 +436,13 @@ func coverageAnnotateHeadError(t *testing.T) {
 	}
 }
 
+func coverageAnnotateBranchError(t *testing.T) {
+	repo := branchErrorCoverageRepo(t)
+	if _, err := Annotate(repo); err == nil {
+		t.Fatal("Annotate accepted a current branch failure")
+	}
+}
+
 func coverageAnnotateUnborn(t *testing.T) {
 	root := testRepo(t)
 	repo, err := gitcmd.Discover(root)
@@ -744,6 +753,13 @@ func coverageDropHeadError(t *testing.T) {
 	}
 }
 
+func coverageDropBranchError(t *testing.T) {
+	repo := branchErrorCoverageRepo(t)
+	if _, err := dropStrandedCheckpoints(repo); err == nil {
+		t.Fatal("dropStrandedCheckpoints accepted a current branch failure")
+	}
+}
+
 func coverageDropParentError(t *testing.T) {
 	root, _, _, _ := annotateCoverageRepo(t)
 	repo := fakeRewriteRepo(t, root, "parents-error", "")
@@ -759,7 +775,9 @@ func coverageDropReachabilityError(t *testing.T) {
 	stranded := commit(t, root, "stranded")
 	git(t, root, "checkout", "-q", "main")
 	git(t, root, "branch", "-D", "stranded")
-	if err := store.New(repo.GitDir).AppendCheckpoint(coverageAnnotateRecord(stranded, strings.Repeat("a", 40))); err != nil {
+	if err := store.New(repo.GitDir).AppendCheckpoint(
+		coverageAnnotateRecord(stranded, strings.Repeat("a", 40)),
+	); err != nil {
 		t.Fatal(err)
 	}
 	fake := fakeRewriteRepo(t, root, "any-branch-error", "")
@@ -791,12 +809,14 @@ func coverageDropRetryError(t *testing.T) {
 	stranded := commit(t, root, "stranded")
 	git(t, root, "checkout", "-q", "main")
 	git(t, root, "branch", "-D", "stranded")
-	if err := store.New(repo.GitDir).AppendCheckpoint(coverageAnnotateRecord(stranded, strings.Repeat("a", 40))); err != nil {
+	blob := mustBlob(t, repo, stranded, coverageFile)
+	if err := store.New(repo.GitDir).AppendCheckpoint(coverageAnnotateRecord(stranded, blob)); err != nil {
 		t.Fatal(err)
 	}
-	fake := fakeRewriteRepo(t, root, "changes-error", "")
-	if _, err := AnnotateDroppingStranded(fake); err == nil {
-		t.Fatal("AnnotateDroppingStranded accepted retry failure")
+	fake := fakeRewriteRepo(t, root, "after-branch-scan-head-error", "")
+	if _, err := AnnotateDroppingStranded(fake); err == nil ||
+		!strings.Contains(err.Error(), "post-scan HEAD") {
+		t.Fatalf("AnnotateDroppingStranded retry error = %v", err)
 	}
 }
 

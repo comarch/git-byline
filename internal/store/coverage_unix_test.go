@@ -84,6 +84,19 @@ func TestWriteAtomicFileWriteError(t *testing.T) {
 	runFileSizeLimitTest(t, "atomic", 1)
 }
 
+func TestRewriteCheckpointBasesReadError(t *testing.T) {
+	value := New(t.TempDir())
+	if err := os.MkdirAll(value.CheckpointPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := value.RewriteCheckpointBases(
+		"refs/heads/main",
+		map[string]string{"aaaa": "bbbb"},
+	); err == nil {
+		t.Fatal("RewriteCheckpointBases accepted an unreadable checkpoint path")
+	}
+}
+
 func TestReadBoundedFileSpecialFiles(t *testing.T) {
 	if _, err := readBoundedFile("/dev/zero", 1); err == nil {
 		t.Fatal("readBoundedFile accepted an unbounded special file")

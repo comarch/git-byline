@@ -211,10 +211,73 @@ func TestRewriteCheckpointBasesAdditional(t *testing.T) {
 	}
 }
 
+func TestRewriteCheckpointBasesRejectsInvalidLogs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{
+			name: "invalid supported record",
+			data: checkpointJSON(t, validCheckpoint(0)),
+		},
+		{
+			name: "non-increasing sequences",
+			data: bytes.Join([][]byte{
+				checkpointJSON(t, validCheckpoint(1)),
+				checkpointJSON(t, validCheckpoint(1)),
+			}, nil),
+		},
+		{
+			name: "too many records",
+			data: bytes.Repeat(
+				[]byte(`{"version":9}`+"\n"),
+				maxCheckpointRecords+1,
+			),
+		},
+		{
+			name: "oversized record",
+			data: bytes.Repeat([]byte("x"), maxRecordBytes+1),
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			value := New(t.TempDir())
+			writeStoreFile(t, value.CheckpointPath(), test.data)
+			if err := value.RewriteCheckpointBases(
+				"refs/heads/main",
+				map[string]string{"aaaa": "bbbb"},
+			); err == nil {
+				t.Fatal("rewrite accepted an invalid checkpoint log")
+			}
+		})
+	}
+}
+
+func TestRewriteCheckpointBasesPreservesTruncatedTail(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	data := []byte(`{"version":2`)
+	writeStoreFile(t, value.CheckpointPath(), data)
+	if err := value.RewriteCheckpointBases(
+		"refs/heads/main",
+		map[string]string{"aaaa": "bbbb"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(value.CheckpointPath()); err != nil ||
+		!bytes.Equal(got, data) {
+		t.Fatalf("truncated rewrite = %q, %v", got, err)
+	}
+}
+
 func TestRewriteCheckpointBaseLineRejectsInvalidCurrentRecord(t *testing.T) {
 	t.Parallel()
-	if _, _, err := rewriteCheckpointBaseLine(
+	if _, err := rewriteCheckpointBaseLine(
 		[]byte(`{"version":2,"unknown":true}`),
+		false,
 		"refs/heads/main",
 		map[string]string{"aaaa": "bbbb"},
 	); err == nil {

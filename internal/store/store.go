@@ -96,9 +96,6 @@ func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]str
 	if err := model.ValidateBranchRef(branchRef); err != nil {
 		return err
 	}
-	if _, _, err := store.ReadCheckpoints(); err != nil {
-		return err
-	}
 	data, err := readBoundedFile(store.CheckpointPath(), maxCheckpointBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -106,23 +103,9 @@ func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]str
 	if err != nil {
 		return fmt.Errorf("read checkpoint log for base rewrite: %w", err)
 	}
-	reader := bufio.NewReaderSize(bytes.NewReader(data), checkpointBufferBytes)
-	var rewritten bytes.Buffer
-	changed := false
-	for {
-		raw, readErr := readCheckpointLine(reader)
-		if len(raw) == 0 && errors.Is(readErr, io.EOF) {
-			break
-		}
-		next, lineChanged, err := rewriteCheckpointBaseLine(raw, branchRef, bases)
-		if err != nil {
-			return err
-		}
-		rewritten.Write(next)
-		changed = changed || lineChanged
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
+	rewritten, changed, err := rewriteCheckpointBaseData(data, branchRef, bases)
+	if err != nil {
+		return err
 	}
 	if !changed {
 		return nil
@@ -132,47 +115,141 @@ func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]str
 		store.CheckpointPath(),
 		"checkpoints-*.tmp",
 		"checkpoint log",
-		rewritten.Bytes(),
+		rewritten,
 	); err != nil {
 		return err
 	}
 	return nil
 }
 
-func rewriteCheckpointBaseLine(
-	raw []byte,
+func rewriteCheckpointBaseData(
+	data []byte,
 	branchRef string,
 	bases map[string]string,
 ) ([]byte, bool, error) {
+	reader := bufio.NewReaderSize(bytes.NewReader(data), checkpointBufferBytes)
+	var rewritten bytes.Buffer
+	changed := false
+	line := 0
+	var lastSequence uint64
+	for {
+		raw, readErr := readCheckpointLine(reader)
+		if checkpointBaseDataDone(raw, readErr) {
+			break
+		}
+		line++
+		if err := validateCheckpointBaseRaw(raw, readErr, line); err != nil {
+			return nil, false, err
+		}
+		next, err := rewriteCheckpointBaseLine(
+			raw,
+			errors.Is(readErr, io.EOF) && !bytes.HasSuffix(raw, []byte{'\n'}),
+			branchRef,
+			bases,
+		)
+		if err != nil {
+			return nil, false, err
+		}
+		if err := validateCheckpointBaseSequence(next, lastSequence, line); err != nil {
+			return nil, false, err
+		}
+		if next.supported {
+			lastSequence = next.sequence
+		}
+		rewritten.Write(next.data)
+		changed = changed || next.changed
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+	}
+	return rewritten.Bytes(), changed, nil
+}
+
+func checkpointBaseDataDone(raw []byte, readErr error) bool {
+	return len(raw) == 0 && errors.Is(readErr, io.EOF)
+}
+
+func validateCheckpointBaseRaw(raw []byte, readErr error, line int) error {
+	if errors.Is(readErr, errCheckpointRecordLimit) ||
+		len(bytes.TrimSuffix(raw, []byte{'\n'})) > maxRecordBytes {
+		return fmt.Errorf("checkpoint line %d exceeds %d bytes", line, maxRecordBytes)
+	}
+	if line > maxCheckpointRecords {
+		return fmt.Errorf("checkpoint log exceeds %d records", maxCheckpointRecords)
+	}
+	return nil
+}
+
+func validateCheckpointBaseSequence(
+	line checkpointBaseRewriteLine,
+	lastSequence uint64,
+	lineNumber int,
+) error {
+	if line.supported && line.sequence <= lastSequence {
+		return fmt.Errorf(
+			"checkpoint line %d sequence %d is not increasing",
+			lineNumber,
+			line.sequence,
+		)
+	}
+	return nil
+}
+
+type checkpointBaseRewriteLine struct {
+	data      []byte
+	changed   bool
+	sequence  uint64
+	supported bool
+}
+
+func rewriteCheckpointBaseLine(
+	raw []byte,
+	finalTruncated bool,
+	branchRef string,
+	bases map[string]string,
+) (checkpointBaseRewriteLine, error) {
 	line := bytes.TrimSuffix(raw, []byte{'\n'})
 	var header struct {
 		Version int `json:"version"`
 	}
-	if err := json.Unmarshal(line, &header); err != nil ||
-		!model.SupportedCheckpointVersion(header.Version) {
-		return raw, false, nil
+	if err := json.Unmarshal(line, &header); err != nil {
+		if finalTruncated && isIncompleteJSON(err) {
+			return checkpointBaseRewriteLine{data: raw}, nil
+		}
+		return checkpointBaseRewriteLine{}, fmt.Errorf("decode checkpoint header for base rewrite: %w", err)
+	}
+	if !model.SupportedCheckpointVersion(header.Version) {
+		return checkpointBaseRewriteLine{data: raw}, nil
 	}
 	var record model.Checkpoint
 	if err := decodeStrict(line, &record); err != nil {
-		return nil, false, fmt.Errorf("decode checkpoint for base rewrite: %w", err)
+		return checkpointBaseRewriteLine{}, fmt.Errorf("decode checkpoint for base rewrite: %w", err)
+	}
+	if err := validateCheckpoint(record); err != nil {
+		return checkpointBaseRewriteLine{}, fmt.Errorf("validate checkpoint for base rewrite: %w", err)
+	}
+	result := checkpointBaseRewriteLine{
+		data:      raw,
+		sequence:  record.Seq,
+		supported: true,
 	}
 	target, mapped := bases[record.BaseCommit]
 	if !mapped || !checkpointMatchesRewriteBranch(record, branchRef) {
-		return raw, false, nil
+		return result, nil
 	}
 	if record.Version == model.CheckpointVersionV1 {
 		record.Version = model.CheckpointVersion
 		record.LaneID = model.LegacyCheckpointLaneID(record.BaseCommit)
 	}
 	record.BaseCommit = target
-	encoded, err := json.Marshal(record)
-	if err != nil {
-		return nil, false, fmt.Errorf("encode checkpoint for base rewrite: %w", err)
-	}
+	// Checkpoint contains only JSON-safe scalar and slice fields.
+	encoded, _ := json.Marshal(record)
 	if bytes.HasSuffix(raw, []byte{'\n'}) {
 		encoded = append(encoded, '\n')
 	}
-	return encoded, true, nil
+	result.data = encoded
+	result.changed = true
+	return result, nil
 }
 
 func checkpointMatchesRewriteBranch(record model.Checkpoint, branchRef string) bool {
@@ -608,9 +685,6 @@ func (store Store) ReadStateForUpdate() (model.State, bool, error) {
 	}
 	if state.Pending.Files == nil {
 		state.Pending.Files = map[string]model.PendingFile{}
-	}
-	if state.Lanes == nil {
-		state.Lanes = map[string]map[string]uint64{}
 	}
 	if err := validateState(state); err != nil {
 		return model.State{}, false, fmt.Errorf("validate state: %w", err)
