@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.0](https://github.com/comarch/git-byline/compare/v1.1.1...v1.2.0) (2026-09-18)
+
+
+### Features
+
+* **provenance:** add guided checkpoint recovery ([#31](https://github.com/comarch/git-byline/issues/31)) ([5a53e50](https://github.com/comarch/git-byline/commit/5a53e501b861c1cf38cbe569b1604505c7740224))
+* **provenance:** park checkpoints in branch lanes ([#32](https://github.com/comarch/git-byline/issues/32)) ([7247c0b](https://github.com/comarch/git-byline/commit/7247c0b19cfe66305767bb53995754bde3549581))
+* **validate:** gate merged child binary coverage at 97.8% ([#29](https://github.com/comarch/git-byline/issues/29)) ([ea11733](https://github.com/comarch/git-byline/commit/ea117337f8e97855cc6a4b174fdd37de3ee74354))
+
+
+### Bug Fixes
+
+* **gitcmd:** resolve worktree path aliases ([#26](https://github.com/comarch/git-byline/issues/26)) ([9d6306f](https://github.com/comarch/git-byline/commit/9d6306f98de0637bd039bf01890b89f5a2f05eb5))
+* **provenance:** recover pre-root and unreadable stranded bases ([#28](https://github.com/comarch/git-byline/issues/28)) ([9225cf0](https://github.com/comarch/git-byline/commit/9225cf0baa1bf4733960487e719fe2bcec006ed5))
+
 ## [1.1.1](https://github.com/comarch/git-byline/compare/v1.1.0...v1.1.1) (2026-09-15)
 
 
