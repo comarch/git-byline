@@ -140,24 +140,27 @@ echo "git-byline $FAKE_RELEASE_VERSION"
 // as a table: after a real swap the new binary receives the project
 // install-hooks pass, and a dry run neither swaps nor refreshes hooks.
 func TestRunFetchUpdateHookRefreshModes(t *testing.T) {
+	const projectRefresh = "install-hooks --agent none --git --project"
 	cases := []struct {
-		name     string
-		dryRun   bool
-		wantLog  bool
-		wantOut  string
-		wantBody string
+		name        string
+		dryRun      bool
+		wantNoCalls bool
+		wantCalls   []string
+		wantOut     string
+		wantBody    string
 	}{
 		{
-			name:     "swap refreshes hooks through the new binary",
-			wantLog:  true,
-			wantOut:  "Updated git-byline to v9.9.9 at ",
-			wantBody: loggingBinary,
+			name:      "swap refreshes hooks through the new binary",
+			wantCalls: []string{projectRefresh},
+			wantOut:   "Updated git-byline to v9.9.9 at ",
+			wantBody:  loggingBinary,
 		},
 		{
-			name:     "dry run verifies without swapping or refreshing",
-			dryRun:   true,
-			wantOut:  "Dry run: verified",
-			wantBody: "old binary",
+			name:        "dry run verifies without swapping or refreshing",
+			dryRun:      true,
+			wantNoCalls: true,
+			wantOut:     "Dry run: verified",
+			wantBody:    "old binary",
 		},
 	}
 	for _, c := range cases {
@@ -184,14 +187,18 @@ func TestRunFetchUpdateHookRefreshModes(t *testing.T) {
 			}
 			assertTarget(t, target, c.wantBody)
 			calls := readTargetLog(t, log)
-			if c.wantLog {
-				if len(calls) == 0 || calls[0] != "install-hooks --agent none --git --project" {
-					t.Fatalf("calls = %v, want the project refresh first", calls)
+			if c.wantNoCalls {
+				if len(calls) != 0 {
+					t.Fatalf("calls = %v, want no hook refresh on dry run", calls)
 				}
-				return
-			}
-			if len(calls) != 0 {
-				t.Fatalf("calls = %v, want no hook refresh on dry run", calls)
+			} else if len(calls) < len(c.wantCalls) {
+				t.Fatalf("calls = %v, want them to start with %v", calls, c.wantCalls)
+			} else {
+				for index, want := range c.wantCalls {
+					if calls[index] != want {
+						t.Fatalf("calls = %v, want them to start with %v", calls, c.wantCalls)
+					}
+				}
 			}
 		})
 	}
@@ -694,6 +701,36 @@ func TestRunFetchUpdateSameVersionRefreshesHooks(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "git-byline v9.9.9 is already up to date at ") {
 		t.Fatalf("stdout = %q, want up-to-date message", stdout.String())
+	}
+	calls := readTargetLog(t, log)
+	if len(calls) == 0 || calls[0] != "install-hooks --agent none --git --project" {
+		t.Fatalf("calls = %v, want the project refresh first", calls)
+	}
+}
+
+// TestRunFetchUpdateNewerReleaseRefreshesHooks verifies that a running
+// release newer than the latest-release pointer still converges managed
+// hooks, matching the equal-release path.
+func TestRunFetchUpdateNewerReleaseRefreshesHooks(t *testing.T) {
+	isolateHookEnv(t)
+	root := appRepo(t)
+	log := filepath.Join(t.TempDir(), "target.log")
+	t.Setenv("FAKE_TARGET_LOG", log)
+	newFakeRelease(t, "v8.8.8", loggingBinary)
+	target := writeFakeTarget(t, log)
+	previous := version.Version
+	version.Version = "v9.9.9"
+	defer func() { version.Version = previous }()
+	var stdout, stderr bytes.Buffer
+	env := testEnv(&stdout)
+	env.Stderr = &stderr
+	env.Dir = root
+	code, err := runFetchUpdate(env, &command{name: "update"}, target, "latest", false, false)
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("runFetchUpdate(newer release, hooks) = %d, %v; stderr %q", code, err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "git-byline v9.9.9 is newer than the latest release v8.8.8; not updating automatically") {
+		t.Fatalf("stdout = %q, want newer-release message", stdout.String())
 	}
 	calls := readTargetLog(t, log)
 	if len(calls) == 0 || calls[0] != "install-hooks --agent none --git --project" {

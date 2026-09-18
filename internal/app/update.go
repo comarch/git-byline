@@ -147,6 +147,9 @@ func runFetchUpdate(env *Env, command *command, target, tag string, dryRun, noHo
 				// The automatic path never rolls the running binary back
 				// to an older latest-release pointer.
 				fmt.Fprintf(env.Stdout, "git-byline %s is newer than the latest release %s; not updating automatically\n", version.Version, tag)
+				if !noHooks && !dryRun {
+					refreshHooks(env, target, runner.Detect)
+				}
 				return ExitSuccess, nil
 			}
 		}
