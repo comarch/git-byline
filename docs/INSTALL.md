@@ -311,11 +311,13 @@ Linux and macOS, weekly with cron (the installer places the binary at
 17 8 * * 1 "$HOME/.local/bin/git-byline" update >/dev/null
 ```
 
-Windows, weekly with Task Scheduler (use the full path when the binary is
-not on the system PATH):
+Windows, weekly with Task Scheduler (the installer places the binary at
+`$HOME\bin` by default; PowerShell expands `$env:USERPROFILE` before schtasks
+sees the full path, which Task Scheduler resolves without the interactive
+PATH):
 
 ```powershell
-schtasks /Create /TN "git-byline update" /SC WEEKLY /ST 08:17 /TR 'git-byline update'
+schtasks /Create /TN "git-byline update" /SC WEEKLY /ST 08:17 /TR "$env:USERPROFILE\bin\git-byline.exe update"
 ```
 
 ## Go toolchain
