@@ -295,7 +295,7 @@ func useFakeGo(t *testing.T, mode string) {
 		"    imports-error) printf '%s\\n' 'list failed' >&2; exit 1;;\n" +
 		"    imports-unparsable) printf '%s\\n' 'malformed listing'; exit 0;;\n" +
 		"    imports-forbidden) printf '%s\\n' 'example.com/fixture/cmd: C os/exec'; exit 0;;\n" +
-		"    imports-exec-helper) printf '%s\\n' 'example.com/fixture/internal/runnerhelper: os/exec'; exit 0;;\n" +
+		"    imports-exec-helper) echo 'example.com/fixture/internal/runnerhelper: os/exec'; exit 0;;\n" +
 		"  esac\n" +
 		"fi\n" +
 		"if [ \"$1\" = \"tool\" ] && [ \"$2\" = \"cover\" ] && [ \"$3\" = \"-func\" ]; then\n" +
