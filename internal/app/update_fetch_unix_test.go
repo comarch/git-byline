@@ -541,6 +541,180 @@ func TestRefreshHooksRefreshStepFailure(t *testing.T) {
 	}
 }
 
+// TestRunFetchUpdateProbeFailure verifies that an unreachable release
+// page fails the download path as an operational error.
+func TestRunFetchUpdateProbeFailure(t *testing.T) {
+	rel := newFakeRelease(t, "v9.9.9", goodBinary)
+	curlBin := filepath.Join(rel.dir, "curl")
+	if err := os.WriteFile(curlBin, []byte("#!/bin/sh\necho 'curl: (7) connect failed' >&2\nexit 7\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr, err, target := rel.runFakeUpdate(t, "latest", false, true)
+	if code != ExitFailure || err == nil {
+		t.Fatalf("runFetchUpdate(probe failure) = %d, %v", code, err)
+	}
+	if !strings.Contains(stderr.String(), "resolve latest release") {
+		t.Fatalf("stderr = %q, want probe failure", stderr.String())
+	}
+	assertTarget(t, target, "old binary")
+}
+
+// TestRunFetchUpdateDownloadFailures verifies that a download failing on
+// either file aborts the update and leaves the target unchanged.
+func TestRunFetchUpdateDownloadFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		failURL string
+	}{
+		{name: "checksums download fails", failURL: "checksums.txt"},
+		{name: "archive download fails", failURL: "git-byline_"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rel := newFakeRelease(t, "v9.9.9", goodBinary)
+			t.Setenv("FAKE_FAIL", c.failURL)
+			curlBin := filepath.Join(rel.dir, "curl")
+			body := strings.Join([]string{
+				`for arg in "$@"; do`,
+				`  [ "$arg" = "%{url_effective}" ] && { echo "$FAKE_REDIRECT"; exit 0; }`,
+				`done`,
+				`prev=""`,
+				`for arg in "$@"; do`,
+				`  [ "$prev" = "-o" ] && dest="$arg"`,
+				`  prev="$arg"`,
+				`done`,
+				`for arg in "$@"; do url="$arg"; done`,
+				`case "$url" in`,
+				`  *"$FAKE_FAIL"*) echo "curl: (22) HTTP error" >&2; exit 22;;`,
+				`esac`,
+				`cp "$FAKE_DIR/${url##*/}" "$dest"`,
+			}, "\n")
+			if err := os.WriteFile(curlBin, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			code, _, stderr, err, target := rel.runFakeUpdate(t, "latest", false, true)
+			if code != ExitFailure || err == nil {
+				t.Fatalf("runFetchUpdate(download failure) = %d, %v", code, err)
+			}
+			if !strings.Contains(stderr.String(), "curl: (22) HTTP error") {
+				t.Fatalf("stderr = %q, want the download failure", stderr.String())
+			}
+			assertTarget(t, target, "old binary")
+		})
+	}
+}
+
+// TestRunFetchUpdateDownloadDirFailure verifies the operational error when
+// the private download directory cannot be created.
+func TestRunFetchUpdateDownloadDirFailure(t *testing.T) {
+	rel := newFakeRelease(t, "v9.9.9", goodBinary)
+	_ = rel
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	code, _, stderr, err, _ := rel.runFakeUpdate(t, "latest", false, true)
+	if code != ExitFailure || err == nil {
+		t.Fatalf("runFetchUpdate(download dir failure) = %d, %v", code, err)
+	}
+	if !strings.Contains(stderr.String(), "create download directory") {
+		t.Fatalf("stderr = %q, want download directory failure", stderr.String())
+	}
+}
+
+// TestRunOfflineUpdateVerifyFailure verifies that the offline path
+// refuses a checksum mismatch and leaves the target and hooks alone.
+func TestRunOfflineUpdateVerifyFailure(t *testing.T) {
+	isolateHookEnv(t)
+	root := appRepo(t)
+	log := filepath.Join(t.TempDir(), "target.log")
+	t.Setenv("FAKE_TARGET_LOG", log)
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, "release.tar.gz")
+	buildTarGZ(t, archivePath, releaseTarEntries(loggingBinary))
+	if err := os.WriteFile(filepath.Join(dir, "checksums.txt"),
+		[]byte(strings.Repeat("0", 64)+"  "+filepath.Base(archivePath)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := writeFakeTarget(t, log)
+	var stdout, stderr bytes.Buffer
+	env := testEnv(&stdout)
+	env.Stderr = &stderr
+	env.Dir = root
+	code, err := runOfflineUpdate(env, &command{name: "update"}, target, archivePath, filepath.Join(dir, "checksums.txt"), false, false)
+	if code != ExitFailure || err == nil {
+		t.Fatalf("runOfflineUpdate(bad checksums) = %d, %v", code, err)
+	}
+	if !strings.Contains(stderr.String(), "checksum mismatch") {
+		t.Fatalf("stderr = %q, want checksum mismatch", stderr.String())
+	}
+	if calls := readTargetLog(t, log); len(calls) != 0 {
+		t.Fatalf("calls = %v, want no hook refresh after a failed verify", calls)
+	}
+}
+
+// TestRefreshStepPassesStderr verifies that warnings the refreshed hooks
+// write to stderr reach the user, not just the swallowed buffer.
+func TestRefreshStepPassesStderr(t *testing.T) {
+	isolateHookEnv(t)
+	root := appRepo(t)
+	target := filepath.Join(t.TempDir(), "git-byline")
+	if err := os.WriteFile(target, []byte("#!/bin/sh\necho 'hook warning' >&2\necho refreshed\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	env := testEnv(&stdout)
+	env.Stderr = &stderr
+	env.Dir = root
+	refreshHooks(env, target, func(string, string) bool { return false })
+	if !strings.Contains(stdout.String(), "refreshed") {
+		t.Fatalf("stdout = %q, want hook output", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "hook warning") {
+		t.Fatalf("stderr = %q, want the hook warning passed through", stderr.String())
+	}
+}
+
+// TestRunFetchUpdateSameVersionRefreshesHooks verifies that the no-op
+// path still converges managed hooks when hooks are not skipped.
+func TestRunFetchUpdateSameVersionRefreshesHooks(t *testing.T) {
+	isolateHookEnv(t)
+	root := appRepo(t)
+	log := filepath.Join(t.TempDir(), "target.log")
+	t.Setenv("FAKE_TARGET_LOG", log)
+	newFakeRelease(t, "v9.9.9", loggingBinary)
+	target := writeFakeTarget(t, log)
+	previous := version.Version
+	version.Version = "v9.9.9"
+	defer func() { version.Version = previous }()
+	var stdout, stderr bytes.Buffer
+	env := testEnv(&stdout)
+	env.Stderr = &stderr
+	env.Dir = root
+	code, err := runFetchUpdate(env, &command{name: "update"}, target, "latest", false, false)
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("runFetchUpdate(same version, hooks) = %d, %v; stderr %q", code, err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "git-byline v9.9.9 is already up to date at ") {
+		t.Fatalf("stdout = %q, want up-to-date message", stdout.String())
+	}
+	calls := readTargetLog(t, log)
+	if len(calls) == 0 || calls[0] != "install-hooks --agent none --git --project" {
+		t.Fatalf("calls = %v, want the project refresh first", calls)
+	}
+}
+
+// TestRunFetchUpdateStagedRunFails verifies the abort when the staged
+// binary cannot run at all.
+func TestRunFetchUpdateStagedRunFails(t *testing.T) {
+	rel := newFakeRelease(t, "v9.9.9", "#!/bin/sh\nexit 1\n")
+	code, _, stderr, err, target := rel.runFakeUpdate(t, "latest", false, true)
+	if code != ExitFailure || err == nil {
+		t.Fatalf("runFetchUpdate(staged run fails) = %d, %v", code, err)
+	}
+	if !strings.Contains(stderr.String(), "git-byline update: run ") {
+		t.Fatalf("stderr = %q, want the staged run failure", stderr.String())
+	}
+	assertTarget(t, target, "old binary")
+}
+
 // TestRunOfflineUpdateRefreshesHooks verifies that the offline
 // --archive --checksums path refreshes managed hooks after the swap,
 // unless --no-hooks asks otherwise.

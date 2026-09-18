@@ -25,10 +25,28 @@ func TestCompareReleaseTags(t *testing.T) {
 		{"v1.3.0", "v1.2.9", 1},
 		{"v2.0.0", "v10.0.0", -1},
 		{"v1.0.0", "v1.0.0", 0},
+		// Malformed tags compare as all zeros, so callers never crash on
+		// input that skipped tag validation.
+		{"1.2", "v0.0.0", 0},
+		{"vX.Y.Z", "v0.0.0", 0},
 	}
 	for _, c := range cases {
 		if got := CompareReleaseTags(c.a, c.b); got != c.want {
 			t.Fatalf("CompareReleaseTags(%s, %s) = %d, want %d", c.a, c.b, got, c.want)
 		}
+	}
+}
+
+// TestIsRelease verifies the release-build predicate for the dev default
+// and for a stamped release version.
+func TestIsRelease(t *testing.T) {
+	if IsRelease() {
+		t.Fatal("IsRelease(dev default) = true, want false")
+	}
+	previous := Version
+	Version = "v1.2.3"
+	defer func() { Version = previous }()
+	if !IsRelease() {
+		t.Fatal("IsRelease(v1.2.3) = false, want true")
 	}
 }

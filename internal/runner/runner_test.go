@@ -277,6 +277,87 @@ func TestRunTimesOut(t *testing.T) {
 	}
 }
 
+// TestLatestTagEmptyRedirect verifies the failure when the probe answers
+// without a redirect URL.
+func TestLatestTagEmptyRedirect(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "curl")
+	writeScript(t, bin, `echo ""`)
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	r, err := New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.LatestTag("https://github.com/comarch/git-byline")
+	if err == nil || !strings.Contains(err.Error(), "resolve latest release: no redirect URL") {
+		t.Fatalf("LatestTag(empty redirect) = %v, want no-redirect error", err)
+	}
+}
+
+// TestFetchReportsCurlFailureWithoutStderr verifies the error shape when
+// curl fails with no stderr at all.
+func TestFetchReportsCurlFailureWithoutStderr(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "curl")
+	writeScript(t, bin, `exit 56`)
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	r, err := New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = r.Fetch("https://example.com/archive.tar.gz", filepath.Join(dir, "dest"))
+	if err == nil ||
+		!strings.Contains(err.Error(), "fetch https://example.com/archive.tar.gz: exit status 56") {
+		t.Fatalf("Fetch(silent failure) = %v, want operation and status", err)
+	}
+}
+
+// TestRunTruncatesStderrExcerpt verifies that a large subprocess stderr is
+// trimmed in the formatted error.
+func TestRunTruncatesStderrExcerpt(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "noisy-failure")
+	writeScript(t, bin, `yes boom | head -c 20000 >&2; exit 3`)
+	_, _, err := Run(bin, "version")
+	if err == nil {
+		t.Fatal("Run(noisy failure) = nil, want error")
+	}
+	if !strings.HasSuffix(err.Error(), "...") {
+		t.Fatalf("error tail = %q, want the truncation marker", err.Error()[len(err.Error())-20:])
+	}
+	if len(err.Error()) > outputMax {
+		t.Fatalf("error length = %d, want a bounded excerpt", len(err.Error()))
+	}
+}
+
+// TestLimitWriterPartialAndDiscard verifies the capture cap at the Write
+// level: one overlong write is trimmed, and later writes are discarded.
+func TestLimitWriterPartialAndDiscard(t *testing.T) {
+	w := &limitWriter{max: 10}
+	if n, err := w.Write([]byte("hello world more")); err != nil || n != 16 {
+		t.Fatalf("Write(overlong) = %d, %v; want all bytes consumed", n, err)
+	}
+	if w.String() != "hello worl" {
+		t.Fatalf("captured = %q, want the first 10 bytes", w.String())
+	}
+	if n, err := w.Write([]byte("x")); err != nil || n != 1 {
+		t.Fatalf("Write(after cap) = %d, %v", n, err)
+	}
+	if w.String() != "hello worl" {
+		t.Fatalf("captured changed after cap: %q", w.String())
+	}
+}
+
+// TestDetectWithoutHome verifies the fallback when no home directory can
+// be resolved at all.
+func TestDetectWithoutHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	if Detect("no-such-command-anywhere", ".nothing-here") {
+		t.Fatal("Detect(no home) = true, want false")
+	}
+}
+
 // TestValidTag verifies the release tag shape.
 func TestValidTag(t *testing.T) {
 	cases := []struct {
