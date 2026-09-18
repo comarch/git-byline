@@ -95,10 +95,34 @@ var runCases = []runCase{
 		stdout: "Usage: git-byline update", noStderr: true,
 	},
 	{
-		name:   "update without flags exits 2",
-		args:   []string{"update"},
+		name:   "update with only --archive exits 2",
+		args:   []string{"update", "--archive", "a.tar.gz"},
 		code:   ExitUsage,
-		stderr: "--archive and --checksums are required", noStdout: true,
+		stderr: "--archive and --checksums are required together", noStdout: true,
+	},
+	{
+		name:   "update with only --checksums exits 2",
+		args:   []string{"update", "--checksums", "c.txt"},
+		code:   ExitUsage,
+		stderr: "--archive and --checksums are required together", noStdout: true,
+	},
+	{
+		name:   "update with --version and --archive exits 2",
+		args:   []string{"update", "--version", "v1.2.0", "--archive", "a.tar.gz", "--checksums", "c.txt"},
+		code:   ExitUsage,
+		stderr: "--version cannot be combined with --archive and --checksums", noStdout: true,
+	},
+	{
+		name:   "update with an invalid --version exits 2",
+		args:   []string{"update", "--version", "1.2.0"},
+		code:   ExitUsage,
+		stderr: "unsupported release version: 1.2.0", noStdout: true,
+	},
+	{
+		name:   "version with --json and --check exits 2",
+		args:   []string{"version", "--json", "--check"},
+		code:   ExitUsage,
+		stderr: "--check cannot be combined with --json", noStdout: true,
 	},
 	{
 		name:   "update with an unsupported archive exits 2",

@@ -43,8 +43,9 @@ git commit -m "feat: add example"
 git byline blame src/example.go
 ```
 
-Nothing leaves your machine. No account, no daemon, no telemetry, and the
-binary opens no network connection.
+Nothing leaves your machine. No account, no daemon, no telemetry, and no
+background network: only `update` and `version --check` fetch, and only a
+checksum-verified release.
 
 Prefer your agent's own package manager, or no agent at all? See
 [step 1](#step-1-pick-an-install-path). Not convinced yet? Keep reading.
@@ -149,7 +150,7 @@ recorded, so a commit never claims work it did not introduce.
 | Keep review effort where the risk is | Reviewers jump straight to agent-edited ranges instead of treating a mixed commit as one opaque change |
 | Enforce a policy instead of a guideline | `git byline check` fails a build on an AI or untracked share limit, with a stable exit code and JSON output |
 | Produce something an auditor accepts | Machine-readable disclosure documents plus `verify --deep`, which proves the artifact against the actual blobs |
-| Work in a regulated or air-gapped estate | No cloud, account, daemon, telemetry, or update check. The binary opens no network connection at all |
+| Work in a regulated or air-gapped estate | No cloud, account, daemon, or telemetry. Every command works offline; air-gapped updates stay manual with `--archive` and `--checksums` |
 | Avoid another vendor in the data path | Prompts and transcripts are never stored. Metadata travels only through Git, to the remote you already trust |
 | Survive real Git workflows | Rebase, amend, cherry-pick, reset, branch switch, stash, squash merges, and forge merges are covered |
 
@@ -410,9 +411,12 @@ git byline stats --json HEAD~10..HEAD
 
 ## Update
 
-Re-run the install one-liner. The installer compares the release with the
-installed binary, skips with one line when it is already current, and
-otherwise replaces the binary and refreshes the managed hooks.
+Run `git-byline update`. It downloads the newest release from the pinned
+GitHub repository, verifies it against `checksums.txt`, swaps the binary,
+and refreshes the managed hooks. `--version vX.Y.Z` pins a specific
+release, `--no-hooks` skips the hook refresh, and `--dry-run` verifies
+without replacing anything. To check for a new release without updating,
+run `git-byline version --check`.
 
 Air-gapped machines download the release archive and `checksums.txt`
 themselves and let the binary swap itself, with no network access:
@@ -422,9 +426,8 @@ git-byline update --archive git-byline_1.0.0_linux_amd64.tar.gz \
   --checksums checksums.txt
 ```
 
-For automatic updates, schedule the installer; it is a no-op when current.
-The binary itself never checks for updates. Details:
-[Update](docs/INSTALL.md#update).
+For automatic updates, schedule `git-byline update`; it is a no-op when
+current. Details: [Update](docs/INSTALL.md#update).
 
 ## Uninstall
 
@@ -643,8 +646,9 @@ What makes it different:
 - **Git-native.** Checkpoint blobs and retention refs stay local.
   `refs/notes/byline` follows ordinary pushes after Git hooks are installed.
 - **Narrow trust boundary.** No account, cloud service, daemon, telemetry,
-  prompt storage, or transcript storage. The binary opens no network
-  connection; the managed pre-push hook invokes Git to publish notes.
+  prompt storage, or transcript storage. All commands run offline; `update`
+  and `version --check` fetch only the pinned release repository, and the
+  managed pre-push hook invokes Git to publish notes.
 - **Built for real Git behavior.** Partial commits, renames, linked worktrees,
   restarts, history rewrites, and Git garbage collection are covered.
 - **Portable.** One pure Go binary, no CGo or language runtime, six release
@@ -655,7 +659,7 @@ The closest category peer is
 checkpoints, line-level provenance, and Git notes. Git AI adds prompt-linked
 provenance and lifecycle observability; git-byline intentionally excludes
 prompts, transcripts, cloud sync, hosted analytics, accounts, daemons, and
-binary network calls, and instead covers history rewrites, shell-written
+background network calls, and instead covers history rewrites, shell-written
 files, interop, forge merges, policy gates, and disclosure output. Choose the
 broader model when prompt context is required. Choose git-byline when local
 operation, prompt exclusion, and a small trust boundary matter more.

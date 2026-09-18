@@ -32,10 +32,12 @@ regulated change processes, and AI adoption experiments.
 
 ### Smaller data boundary
 
-The production binary opens no network connection. It needs no account, API
-key, service, daemon, or telemetry endpoint. Prompts and transcripts stay
-outside the data model. A managed pre-push hook uses Git to publish attribution
-notes by default; `--local-notes` disables that sharing.
+Every command runs offline: only `update` and `version --check` fetch, and
+only the pinned GitHub release repository, over HTTPS, with the update
+checksum-verified. There is no account, API key, service, daemon, or telemetry
+endpoint. Prompts and transcripts stay outside the data model. A managed
+pre-push hook uses Git to publish attribution notes by default;
+`--local-notes` disables that sharing.
 
 ### Tool choice without one analytics vendor
 
@@ -63,7 +65,7 @@ provenance, and Git notes. Their product boundaries differ.
 
 Git AI presents prompt-linked provenance and prompt-to-production
 observability. git-byline intentionally excludes prompts, transcripts, cloud
-sync, hosted analytics, accounts, daemons, and binary network calls. Choose
+sync, hosted analytics, accounts, daemons, and background network calls. Choose
 the broader model when prompt context and lifecycle analytics are required.
 Choose git-byline when local operation, prompt exclusion, and a small trust
 boundary matter more.

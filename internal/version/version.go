@@ -8,5 +8,11 @@
 package version
 
 // Version is the git-byline version. Release builds inject the validated
-// git tag; local and CI builds keep the dev default.
+// git tag, with its v prefix; local and CI builds keep the dev default.
 var Version = "dev"
+
+// IsRelease reports whether Version was stamped by a release build, so
+// callers can compare it against release tags only when it is meaningful.
+func IsRelease() bool {
+	return Version != "dev"
+}

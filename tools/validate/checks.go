@@ -421,9 +421,11 @@ func productionPatterns(root string) []string {
 }
 
 // checkForbiddenImports rejects direct imports that production packages
-// (cmd and internal) must never use. The binary must never dial out, so
-// the net package tree is forbidden there; os/exec is only allowed later
-// inside internal/gitcmd, which wraps all git access.
+// (cmd and internal) must never use. The binary has no in-process network
+// stack, so the net package tree is forbidden there; os/exec is only
+// allowed inside internal/gitcmd, which wraps all git access, and
+// internal/runner, which wraps the update command's curl and self-exec
+// subprocesses.
 func checkForbiddenImports(root string) error {
 	module, err := modulePathOf(root)
 	if err != nil {
@@ -455,8 +457,8 @@ func checkForbiddenImports(root string) error {
 				problems = append(problems, fmt.Sprintf("%s imports C: CGo is forbidden", pkg))
 			case imp == "net" || strings.HasPrefix(imp, "net/"):
 				problems = append(problems, fmt.Sprintf("%s imports %s: production code must not dial out", pkg, imp))
-			case imp == "os/exec" && !strings.HasPrefix(pkg, module+"/internal/gitcmd"):
-				problems = append(problems, fmt.Sprintf("%s imports os/exec: only internal/gitcmd may run subprocesses", pkg))
+			case imp == "os/exec" && !strings.HasPrefix(pkg, module+"/internal/gitcmd") && !strings.HasPrefix(pkg, module+"/internal/runner"):
+				problems = append(problems, fmt.Sprintf("%s imports os/exec: only internal/gitcmd and internal/runner may run subprocesses", pkg))
 			}
 		}
 	}

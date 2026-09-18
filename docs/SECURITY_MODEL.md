@@ -19,10 +19,15 @@ Hook input, paths, patch text, Git configuration, repository content, issue
 text, pull request code, dependencies, downloaded tools, and release files are
 untrusted.
 
-The production binary does not open network connections. Network packages are
-forbidden in production code and checked by validation. The managed
-`pre-push` hook invokes Git to publish attribution notes to the selected
-remote unless installation used `--local-notes`.
+The production binary opens no background network connections. Production
+code imports no network packages; the only network access is the curl
+subprocess that `update` and `version --check` run through `internal/runner`
+against the pinned GitHub release repository, HTTPS-only, with `-q` so a
+local curlrc cannot weaken the flags. The update path verifies the download
+against `checksums.txt`, then checks the staged binary's reported version
+before the swap. The managed `pre-push` hook invokes Git to publish
+attribution notes to the selected remote unless installation used
+`--local-notes`.
 
 Droid and Claude Code hook payloads do not name a model. When an AI checkpoint
 would carry the unknown model, the binary reads the session transcript named
@@ -146,6 +151,8 @@ published by managed hooks.
   attribution metadata.
 - A compromised maintainer token can alter public source or releases until
   repository controls contain it.
+- The update fetch trusts GitHub TLS for `checksums.txt` and the archive, like
+  the installer does; a compromised release source can offer a matching pair.
 
-Changes to storage, notes, hooks, releases, or the no-network rule require
+Changes to storage, notes, hooks, releases, or the network-access rule require
 security review.
