@@ -74,3 +74,16 @@ func TestRunFetchUpdateMissingCurl(t *testing.T) {
 		t.Fatalf("stderr = %q, want needs-curl error", stderr.String())
 	}
 }
+
+// TestVersionCheckNeedsCurl verifies that version --check fails as an
+// operational error when curl cannot be resolved.
+func TestVersionCheckNeedsCurl(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	code, _, stderr, err := appRun(t.TempDir(), zeroTime(), nil, "version", "--check")
+	if code != ExitFailure || err == nil {
+		t.Fatalf("version --check(missing curl) = %d, %v", code, err)
+	}
+	if !strings.Contains(stderr, "update needs curl") {
+		t.Fatalf("stderr = %q, want needs-curl error", stderr)
+	}
+}
