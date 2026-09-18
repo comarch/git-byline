@@ -29,6 +29,11 @@ func TestCompareReleaseTags(t *testing.T) {
 		// input that skipped tag validation.
 		{"1.2", "v0.0.0", 0},
 		{"vX.Y.Z", "v0.0.0", 0},
+		// Fields beyond any int range still order numerically, and leading
+		// zeros never change the order.
+		{"v99999999999999999999.0.0", "v9.0.0", 1},
+		{"v1.0.0", "v99999999999999999999.0.0", -1},
+		{"v01.002.0000", "v1.2.0", 0},
 	}
 	for _, c := range cases {
 		if got := CompareReleaseTags(c.a, c.b); got != c.want {
