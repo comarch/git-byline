@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -8,7 +9,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // copyFixture copies the pristine fixture module to a temporary directory
@@ -174,7 +177,7 @@ func TestRunCoveredBinary(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := runCoveredBinary("", tc.bin, nil, nil, tc.wantCode)
+			err := retryCoveredBinary("", tc.bin, nil, nil, tc.wantCode)
 			if tc.wantErr && err == nil {
 				t.Fatalf("runCoveredBinary(%s) = nil error, want failure", tc.bin)
 			}
@@ -183,6 +186,31 @@ func TestRunCoveredBinary(t *testing.T) {
 			}
 		})
 	}
+}
+
+// etxtbsy is ETXTBSY as a raw errno. syscall.ETXTBSY does not exist on
+// windows, where TestRunCoveredBinary skips, and 26 matches Linux and
+// macOS.
+const etxtbsy = syscall.Errno(26)
+
+// retryCoveredBinary reruns runCoveredBinary when the process never
+// started because the binary was still being written back (ETXTBSY,
+// observed on loaded CI runners). A failed start keeps exit codes
+// meaningful, so only that errno is retried: missing binaries and
+// exit-code mismatches stay single-shot.
+func retryCoveredBinary(dir, bin string, args []string, extraEnv []string, wantCode int) error {
+	for attempt := 0; ; attempt++ {
+		err := runCoveredBinary(dir, bin, args, extraEnv, wantCode)
+		if err == nil || attempt >= 2 || !isTextFileBusy(err) {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+	}
+}
+
+func isTextFileBusy(err error) bool {
+	var execErr *exec.Error
+	return errors.As(err, &execErr) && errors.Is(execErr.Err, etxtbsy)
 }
 
 // TestBuildCoveredBinary pins the build contract: a covered binary

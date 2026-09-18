@@ -1827,7 +1827,27 @@ func testRepo(t *testing.T) string {
 	git(t, root, "init", "-b", "main")
 	git(t, root, "config", "user.name", "Test User")
 	git(t, root, "config", "user.email", "test@example.invalid")
+	// Commits must never spawn a detached auto-gc that keeps writing
+	// into .git while the test framework cleans the directory up.
+	git(t, root, "config", "gc.auto", "0")
+	t.Cleanup(func() { removeAllRetrying(root) })
 	return root
+}
+
+// removeAllRetrying removes a test repository before the one-shot
+// t.TempDir cleanup runs (cleanup functions are LIFO). Git can still be
+// writing into .git/objects/pack at that moment on loaded runners, and
+// a single RemoveAll then fails with "directory not empty". The later
+// t.TempDir cleanup stays silent once the directory is already gone and
+// still reports an error if every retry failed.
+func removeAllRetrying(dir string) {
+	for attempt := 0; ; attempt++ {
+		err := os.RemoveAll(dir)
+		if err == nil || attempt >= 4 {
+			return
+		}
+		time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+	}
 }
 
 func write(t *testing.T, root, path, content string) {
