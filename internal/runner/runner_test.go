@@ -246,9 +246,13 @@ func TestFetchTimesOut(t *testing.T) {
 	writeScript(t, bin, `sleep 5`)
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	r := &Runner{curlPath: bin, probeTimeout: 50 * time.Millisecond, fetchTimeout: 50 * time.Millisecond}
+	start := time.Now()
 	err := r.Fetch("https://example.com/archive.tar.gz", filepath.Join(dir, "dest"))
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Fetch(deadline) = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > waitGrace+2*time.Second {
+		t.Fatalf("Fetch returned after %v, want it bounded by the deadline plus waitGrace", elapsed)
 	}
 }
 
@@ -259,9 +263,13 @@ func TestLatestTagTimesOut(t *testing.T) {
 	writeScript(t, bin, `sleep 5`)
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	r := &Runner{curlPath: bin, probeTimeout: 50 * time.Millisecond, fetchTimeout: 50 * time.Millisecond}
+	start := time.Now()
 	_, err := r.LatestTag("https://github.com/comarch/git-byline")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("LatestTag(deadline) = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > waitGrace+2*time.Second {
+		t.Fatalf("LatestTag returned after %v, want it bounded by the deadline plus waitGrace", elapsed)
 	}
 }
 
@@ -271,9 +279,31 @@ func TestRunTimesOut(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "slow")
 	writeScript(t, bin, `sleep 5`)
+	start := time.Now()
 	_, _, err := runBinary(50*time.Millisecond, bin, "version")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("runBinary(deadline) = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > waitGrace+2*time.Second {
+		t.Fatalf("runBinary returned after %v, want it bounded by the deadline plus waitGrace", elapsed)
+	}
+}
+
+// TestRunTimesOutWithPipeHoldingDescendant verifies that a descendant
+// keeping the output pipe open cannot block the caller past the
+// deadline: WaitDelay bounds the wait and the timeout sentinel stays
+// reachable.
+func TestRunTimesOutWithPipeHoldingDescendant(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "slow")
+	writeScript(t, bin, "sleep 5 &\nsleep 5")
+	start := time.Now()
+	_, _, err := runBinary(50*time.Millisecond, bin, "version")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runBinary(deadline, pipe holder) = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > waitGrace+2*time.Second {
+		t.Fatalf("runBinary returned after %v, want it bounded by the deadline plus waitGrace", elapsed)
 	}
 }
 

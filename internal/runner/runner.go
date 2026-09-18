@@ -30,6 +30,11 @@ const (
 	runTimeout    = 30 * time.Second
 	curlStderrMax = 8 << 10
 	outputMax     = 1 << 20
+	// waitGrace bounds how long a killed subprocess may keep its output
+	// pipes open. CommandContext kills only the direct process, so a
+	// descendant holding a pipe could otherwise block Run past the
+	// deadline; WaitDelay turns that wait into a bounded one.
+	waitGrace = 5 * time.Second
 )
 
 // tagPattern accepts exactly the release tags the installers accept.
@@ -116,6 +121,7 @@ func (r *Runner) curl(timeout time.Duration, operation string, args []string, st
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.curlPath, args...)
+	cmd.WaitDelay = waitGrace
 	if stdout == nil {
 		cmd.Stdout = nil
 	} else {
@@ -162,6 +168,7 @@ func runBinary(timeout time.Duration, path string, args ...string) (string, stri
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.WaitDelay = waitGrace
 	stdout := &limitWriter{max: outputMax}
 	stderr := &limitWriter{max: outputMax}
 	cmd.Stdout = stdout
