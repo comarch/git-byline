@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -208,9 +209,47 @@ func retryCoveredBinary(dir, bin string, args []string, extraEnv []string, wantC
 	}
 }
 
+// isTextFileBusy reports whether err wraps ETXTBSY. The start error for
+// a busy executable is the raw fork/exec fs.PathError from os/exec, not
+// *exec.Error, so the errno is matched through the whole wrap chain.
 func isTextFileBusy(err error) bool {
-	var execErr *exec.Error
-	return errors.As(err, &execErr) && errors.Is(execErr.Err, etxtbsy)
+	return errors.Is(err, etxtbsy)
+}
+
+// TestIsTextFileBusy pins the matcher against the raw start error shape:
+// a wrapped fork/exec fs.PathError carries ETXTBSY, other errnos and
+// nil must not retry.
+func TestIsTextFileBusy(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "busy start error retries",
+			err:  fmt.Errorf("run covered: %w", &fs.PathError{Op: "fork/exec", Path: "/tmp/false", Err: etxtbsy}),
+			want: true,
+		},
+		{
+			name: "missing binary does not retry",
+			err:  fmt.Errorf("run covered: %w", &fs.PathError{Op: "fork/exec", Path: "/tmp/gone", Err: syscall.ENOENT}),
+			want: false,
+		},
+		{
+			name: "nil does not retry",
+			err:  nil,
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isTextFileBusy(tc.err); got != tc.want {
+				t.Fatalf("isTextFileBusy(%v) = %t, want %t", tc.err, got, tc.want)
+			}
+		})
+	}
 }
 
 // TestBuildCoveredBinary pins the build contract: a covered binary
