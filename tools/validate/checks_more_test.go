@@ -216,6 +216,7 @@ func TestValidateForbiddenImportFailures(t *testing.T) {
 		{name: "package listing fails", mode: "imports-error", want: "list failure"},
 		{name: "unparsable package listing", mode: "imports-unparsable", want: "parse failure"},
 		{name: "C and os exec imports", mode: "imports-forbidden", want: "forbidden import failure"},
+		{name: "os exec in a boundary-lookalike package", mode: "imports-exec-helper", want: "forbidden import failure"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := fixtureWithCommand(t)
@@ -294,6 +295,7 @@ func useFakeGo(t *testing.T, mode string) {
 		"    imports-error) printf '%s\\n' 'list failed' >&2; exit 1;;\n" +
 		"    imports-unparsable) printf '%s\\n' 'malformed listing'; exit 0;;\n" +
 		"    imports-forbidden) printf '%s\\n' 'example.com/fixture/cmd: C os/exec'; exit 0;;\n" +
+		"    imports-exec-helper) printf '%s\\n' 'example.com/fixture/internal/runnerhelper: os/exec'; exit 0;;\n" +
 		"  esac\n" +
 		"fi\n" +
 		"if [ \"$1\" = \"tool\" ] && [ \"$2\" = \"cover\" ] && [ \"$3\" = \"-func\" ]; then\n" +

@@ -23,12 +23,13 @@ type fakeRelease struct {
 	tagName string
 }
 
-// newFakeRelease builds a release directory with the checksums and the
-// archive for the current POSIX platform, plus a fake curl on PATH.
-func newFakeRelease(t *testing.T, binaryScript string) *fakeRelease {
+// newFakeRelease builds a release directory for the given tag, with the
+// checksums and the archive for the current POSIX platform, plus a fake
+// curl on PATH.
+func newFakeRelease(t *testing.T, latest, binaryScript string) *fakeRelease {
 	t.Helper()
 	dir := t.TempDir()
-	rel := &fakeRelease{dir: dir, latest: "v9.9.9"}
+	rel := &fakeRelease{dir: dir, latest: latest}
 	rel.buildArchive(t, binaryScript)
 	bin := filepath.Join(dir, "curl")
 	body := strings.Join([]string{
@@ -48,6 +49,7 @@ func newFakeRelease(t *testing.T, binaryScript string) *fakeRelease {
 	}
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_DIR", dir)
+	t.Setenv("FAKE_RELEASE_VERSION", latest)
 	t.Setenv("FAKE_REDIRECT", "https://github.com/comarch/git-byline/releases/tag/"+rel.latest)
 	return rel
 }
@@ -96,9 +98,9 @@ func (r *fakeRelease) runFakeUpdateTarget(t *testing.T, target, tag string, dryR
 }
 
 // goodBinary is a stand-in release binary that reports the fake release
-// version, satisfying the staged version sanity check.
+// version from the environment, satisfying the staged version sanity check.
 const goodBinary = `#!/bin/sh
-echo "git-byline v9.9.9"
+echo "git-byline $FAKE_RELEASE_VERSION"
 `
 
 // isolateHookEnv points HOME and XDG_CONFIG_HOME at fresh directories,
@@ -124,13 +126,14 @@ func fakeCurlProbe(t *testing.T, redirect string) {
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// loggingBinary reports the fake release version and additionally records
-// install-hooks invocations, so end-to-end tests observe the hook refresh.
+// loggingBinary reports the fake release version from the environment and
+// additionally records install-hooks invocations, so end-to-end tests
+// observe the hook refresh.
 const loggingBinary = `#!/bin/sh
 if [ "$1" = "install-hooks" ]; then
   echo "$@" >> "$FAKE_TARGET_LOG"
 fi
-echo "git-byline v9.9.9"
+echo "git-byline $FAKE_RELEASE_VERSION"
 `
 
 // TestRunFetchUpdateRefreshesHooks covers the end-to-end flow with the
@@ -141,7 +144,7 @@ func TestRunFetchUpdateRefreshesHooks(t *testing.T) {
 	root := appRepo(t)
 	log := filepath.Join(t.TempDir(), "target.log")
 	t.Setenv("FAKE_TARGET_LOG", log)
-	newFakeRelease(t, loggingBinary)
+	newFakeRelease(t, "v9.9.9", loggingBinary)
 	target := filepath.Join(t.TempDir(), "git-byline")
 	if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
 		t.Fatal(err)
@@ -171,7 +174,7 @@ func TestRunFetchUpdateDryRunSkipsHooks(t *testing.T) {
 	root := appRepo(t)
 	log := filepath.Join(t.TempDir(), "target.log")
 	t.Setenv("FAKE_TARGET_LOG", log)
-	newFakeRelease(t, loggingBinary)
+	newFakeRelease(t, "v9.9.9", loggingBinary)
 	target := filepath.Join(t.TempDir(), "git-byline")
 	if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
 		t.Fatal(err)
@@ -194,7 +197,7 @@ func TestRunFetchUpdateDryRunSkipsHooks(t *testing.T) {
 // probe, checksums fetch, archive fetch, checksum verify, staged version
 // check, and the swap.
 func TestRunFetchUpdateDownloadsAndSwaps(t *testing.T) {
-	rel := newFakeRelease(t, goodBinary)
+	rel := newFakeRelease(t, "v9.9.9", goodBinary)
 	code, out, stderr, err, target := rel.runFakeUpdate(t, "latest", false, true)
 	if code != ExitSuccess || err != nil {
 		t.Fatalf("runFetchUpdate = %d, %v; stderr %q", code, err, stderr.String())
@@ -210,7 +213,7 @@ func TestRunFetchUpdateDownloadsAndSwaps(t *testing.T) {
 // TestRunFetchUpdatePinnedTag skips the probe when --version names the
 // release directly.
 func TestRunFetchUpdatePinnedTag(t *testing.T) {
-	rel := newFakeRelease(t, goodBinary)
+	rel := newFakeRelease(t, "v9.9.9", goodBinary)
 	code, out, stderr, err, _ := rel.runFakeUpdate(t, "v9.9.9", false, true)
 	if code != ExitSuccess || err != nil {
 		t.Fatalf("runFetchUpdate(pinned) = %d, %v; stderr %q", code, err, stderr.String())
@@ -250,7 +253,7 @@ func TestRunFetchUpdateSameVersion(t *testing.T) {
 	previous := version.Version
 	version.Version = "v9.9.9"
 	defer func() { version.Version = previous }()
-	rel := newFakeRelease(t, goodBinary)
+	rel := newFakeRelease(t, "v9.9.9", goodBinary)
 	code, out, stderr, err, target := rel.runFakeUpdate(t, "latest", false, true)
 	if code != ExitSuccess || err != nil {
 		t.Fatalf("runFetchUpdate(same version) = %d, %v; stderr %q", code, err, stderr.String())
@@ -264,7 +267,7 @@ func TestRunFetchUpdateSameVersion(t *testing.T) {
 // TestRunFetchUpdateDryRun verifies that a dry run verifies the download
 // but leaves the target unchanged.
 func TestRunFetchUpdateDryRun(t *testing.T) {
-	rel := newFakeRelease(t, goodBinary)
+	rel := newFakeRelease(t, "v9.9.9", goodBinary)
 	code, out, stderr, err, target := rel.runFakeUpdate(t, "latest", true, true)
 	if code != ExitSuccess || err != nil {
 		t.Fatalf("runFetchUpdate(dry) = %d, %v; stderr %q", code, err, stderr.String())
@@ -278,7 +281,7 @@ func TestRunFetchUpdateDryRun(t *testing.T) {
 // TestRunFetchUpdateChecksumMismatch verifies that a tampered download
 // fails and the target stays unchanged.
 func TestRunFetchUpdateChecksumMismatch(t *testing.T) {
-	rel := newFakeRelease(t, goodBinary)
+	rel := newFakeRelease(t, "v9.9.9", goodBinary)
 	archiveBytes, err := os.ReadFile(filepath.Join(rel.dir, rel.tagName))
 	if err != nil {
 		t.Fatal(err)
@@ -300,7 +303,7 @@ func TestRunFetchUpdateChecksumMismatch(t *testing.T) {
 // archive whose binary reports a different release fails before the
 // swap.
 func TestRunFetchUpdateWrongStagedVersion(t *testing.T) {
-	rel := newFakeRelease(t, "#!/bin/sh\necho \"git-byline v0.0.1\"\n")
+	rel := newFakeRelease(t, "v9.9.9", "#!/bin/sh\necho \"git-byline v0.0.1\"\n")
 	code, _, stderr, err, target := rel.runFakeUpdate(t, "latest", false, true)
 	if code != ExitFailure || err == nil {
 		t.Fatalf("runFetchUpdate(wrong version) = %d, %v", code, err)
@@ -493,6 +496,126 @@ func TestRefreshHooksRefreshStepFailure(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "boom") {
 		t.Fatalf("stderr = %q, want subprocess stderr", stderr.String())
+	}
+}
+
+// TestRunFetchUpdateRefusesOlderLatest verifies that the automatic path
+// never rolls the running binary back when the latest-release pointer
+// names an older release.
+func TestRunFetchUpdateRefusesOlderLatest(t *testing.T) {
+	previous := version.Version
+	version.Version = "v9.9.9"
+	defer func() { version.Version = previous }()
+	rel := newFakeRelease(t, "v8.8.8", goodBinary)
+	code, out, stderr, err, target := rel.runFakeUpdate(t, "latest", false, true)
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("runFetchUpdate(older latest) = %d, %v; stderr %q", code, err, stderr.String())
+	}
+	if !strings.Contains(out.String(), "git-byline v9.9.9 is newer than the latest release v8.8.8; not updating automatically") {
+		t.Fatalf("stdout = %q, want refuse message", out.String())
+	}
+	assertTarget(t, target, "old binary")
+}
+
+// TestRunFetchUpdatePinnedDowngrade verifies that an explicit --version
+// below the running release still installs, because the pin is a
+// documented deliberate choice.
+func TestRunFetchUpdatePinnedDowngrade(t *testing.T) {
+	previous := version.Version
+	version.Version = "v9.9.9"
+	defer func() { version.Version = previous }()
+	rel := newFakeRelease(t, "v8.8.8", goodBinary)
+	code, out, stderr, err, target := rel.runFakeUpdate(t, "v8.8.8", false, true)
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("runFetchUpdate(pinned downgrade) = %d, %v; stderr %q", code, err, stderr.String())
+	}
+	if !strings.Contains(out.String(), "Updated git-byline to v8.8.8 at ") {
+		t.Fatalf("stdout = %q, want downgrade message", out.String())
+	}
+	assertTarget(t, target, goodBinary)
+}
+
+// TestRunOfflineUpdateRefreshesHooks verifies that the offline
+// --archive --checksums path refreshes managed hooks after the swap,
+// unless --no-hooks asks otherwise.
+func TestRunOfflineUpdateRefreshesHooks(t *testing.T) {
+	isolateHookEnv(t)
+	root := appRepo(t)
+	log := filepath.Join(t.TempDir(), "target.log")
+	t.Setenv("FAKE_TARGET_LOG", log)
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, "release.tar.gz")
+	buildTarGZ(t, archivePath, releaseTarEntries(loggingBinary))
+	archiveData, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksumsPath := writeChecksums(t, dir, filepath.Base(archivePath), archiveData)
+	target := writeFakeTarget(t, log)
+	var stdout, stderr bytes.Buffer
+	env := testEnv(&stdout)
+	env.Stderr = &stderr
+	env.Dir = root
+	code, err := runOfflineUpdate(env, &command{name: "update"}, target, archivePath, checksumsPath, false, false)
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("runOfflineUpdate(hooks) = %d, %v; stderr %q", code, err, stderr.String())
+	}
+	calls := readTargetLog(t, log)
+	if len(calls) == 0 || calls[0] != "install-hooks --agent none --git --project" {
+		t.Fatalf("calls = %v, want the project refresh first", calls)
+	}
+	_ = os.Remove(log)
+	if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	code, err = runOfflineUpdate(env, &command{name: "update"}, target, archivePath, checksumsPath, false, true)
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("runOfflineUpdate(no hooks) = %d, %v", code, err)
+	}
+	if calls := readTargetLog(t, log); len(calls) != 0 {
+		t.Fatalf("calls = %v, want no refresh with --no-hooks", calls)
+	}
+}
+
+// TestRefreshHooksTemplateConfigError verifies that a Git template
+// configuration read failure warns and continues the refresh instead of
+// silently skipping it.
+func TestRefreshHooksTemplateConfigError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", "relative-path")
+	log := filepath.Join(t.TempDir(), "target.log")
+	target := writeFakeTarget(t, log)
+	var stdout, stderr bytes.Buffer
+	env := testEnv(&stdout)
+	env.Stderr = &stderr
+	refreshHooks(env, target, func(command, _ string) bool { return command == "claude" })
+	if !strings.Contains(stderr.String(), "git-byline could not read the Git template configuration:") {
+		t.Fatalf("stderr = %q, want template configuration warning", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "XDG_CONFIG_HOME is not an absolute path") {
+		t.Fatalf("stderr = %q, want the underlying error", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Installed the claude hook for every repository.") {
+		t.Fatalf("stdout = %q, want the refresh to continue", stdout.String())
+	}
+}
+
+// TestVersionCheckRunningNewer verifies the report when the running
+// release is newer than the latest-release pointer.
+func TestVersionCheckRunningNewer(t *testing.T) {
+	fakeCurlProbe(t, "https://github.com/comarch/git-byline/releases/tag/v8.8.8")
+	previous := version.Version
+	version.Version = "v9.9.9"
+	defer func() { version.Version = previous }()
+	code, out, stderr, err := appRun(t.TempDir(), zeroTime(), nil, "version", "--check")
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("version --check = %d, %v; stderr %q", code, err, stderr)
+	}
+	if !strings.Contains(out, "git-byline v9.9.9 is newer than the latest release v8.8.8.") {
+		t.Fatalf("stdout = %q, want newer-than-latest message", out)
 	}
 }
 

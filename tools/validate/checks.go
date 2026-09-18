@@ -457,7 +457,7 @@ func checkForbiddenImports(root string) error {
 				problems = append(problems, fmt.Sprintf("%s imports C: CGo is forbidden", pkg))
 			case imp == "net" || strings.HasPrefix(imp, "net/"):
 				problems = append(problems, fmt.Sprintf("%s imports %s: production code must not dial out", pkg, imp))
-			case imp == "os/exec" && !strings.HasPrefix(pkg, module+"/internal/gitcmd") && !strings.HasPrefix(pkg, module+"/internal/runner"):
+			case imp == "os/exec" && pkg != module+"/internal/gitcmd" && pkg != module+"/internal/runner":
 				problems = append(problems, fmt.Sprintf("%s imports os/exec: only internal/gitcmd and internal/runner may run subprocesses", pkg))
 			}
 		}

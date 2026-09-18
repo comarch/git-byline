@@ -45,7 +45,9 @@ git byline blame src/example.go
 
 Nothing leaves your machine. No account, no daemon, no telemetry, and no
 background network: only `update` and `version --check` fetch, and only a
-checksum-verified release.
+checksum-verified release. Attribution notes stay local until the managed
+`pre-push` hook shares them with your remote on ordinary pushes; install
+with `--local-notes` to keep notes local.
 
 Prefer your agent's own package manager, or no agent at all? See
 [step 1](#step-1-pick-an-install-path). Not convinced yet? Keep reading.
@@ -150,7 +152,7 @@ recorded, so a commit never claims work it did not introduce.
 | Keep review effort where the risk is | Reviewers jump straight to agent-edited ranges instead of treating a mixed commit as one opaque change |
 | Enforce a policy instead of a guideline | `git byline check` fails a build on an AI or untracked share limit, with a stable exit code and JSON output |
 | Produce something an auditor accepts | Machine-readable disclosure documents plus `verify --deep`, which proves the artifact against the actual blobs |
-| Work in a regulated or air-gapped estate | No cloud, account, daemon, or telemetry. Every command works offline; air-gapped updates stay manual with `--archive` and `--checksums` |
+| Work in a regulated or air-gapped estate | No cloud, account, daemon, or telemetry. Every command runs offline; `update` and `version --check` fetch only a checksum-verified release, and air-gapped updates stay manual with `--archive` and `--checksums` |
 | Avoid another vendor in the data path | Prompts and transcripts are never stored. Metadata travels only through Git, to the remote you already trust |
 | Survive real Git workflows | Rebase, amend, cherry-pick, reset, branch switch, stash, squash merges, and forge merges are covered |
 
@@ -413,10 +415,11 @@ git byline stats --json HEAD~10..HEAD
 
 Run `git-byline update`. It downloads the newest release from the pinned
 GitHub repository, verifies it against `checksums.txt`, swaps the binary,
-and refreshes the managed hooks. `--version vX.Y.Z` pins a specific
-release, `--no-hooks` skips the hook refresh, and `--dry-run` verifies
-without replacing anything. To check for a new release without updating,
-run `git-byline version --check`.
+and refreshes the managed hooks. The automatic path never installs an
+older release; pin an explicit `--version vX.Y.Z` to downgrade
+deliberately. `--no-hooks` skips the hook refresh, and `--dry-run`
+verifies without replacing anything. To check for a new release without
+updating, run `git-byline version --check`.
 
 Air-gapped machines download the release archive and `checksums.txt`
 themselves and let the binary swap itself, with no network access:
@@ -426,8 +429,9 @@ git-byline update --archive git-byline_1.0.0_linux_amd64.tar.gz \
   --checksums checksums.txt
 ```
 
-For automatic updates, schedule `git-byline update`; it is a no-op when
-current. Details: [Update](docs/INSTALL.md#update).
+For automatic updates, schedule `git-byline update`; it replaces nothing
+when the version is current, but still refreshes hooks. Details:
+[Update](docs/INSTALL.md#update).
 
 ## Uninstall
 

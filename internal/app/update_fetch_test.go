@@ -30,6 +30,21 @@ func TestReleaseArchiveNameFor(t *testing.T) {
 	}
 }
 
+// TestStagedUpdatePattern verifies the platform staging pattern that
+// lets the staged version check run the extracted binary on Windows.
+func TestStagedUpdatePattern(t *testing.T) {
+	t.Parallel()
+	if got := stagedUpdatePattern("windows"); got != ".git-byline-update-*.exe" {
+		t.Fatalf("stagedUpdatePattern(windows) = %q, want .exe suffix", got)
+	}
+	if got := stagedUpdatePattern("linux"); got != ".git-byline-update-*" {
+		t.Fatalf("stagedUpdatePattern(linux) = %q", got)
+	}
+	if got := stagedUpdatePattern("darwin"); got != ".git-byline-update-*" {
+		t.Fatalf("stagedUpdatePattern(darwin) = %q", got)
+	}
+}
+
 // TestRunFetchUpdateRejectsInvalidTag verifies that a malformed --version
 // fails as a usage error before any network access happens.
 func TestRunFetchUpdateRejectsInvalidTag(t *testing.T) {

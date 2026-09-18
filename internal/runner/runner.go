@@ -42,9 +42,12 @@ func ValidTag(tag string) bool {
 
 // Runner executes curl for update downloads. The curl executable is
 // resolved once, so a missing curl fails the command before any file is
-// touched.
+// touched. Timeouts are fields so tests can exercise the deadline paths
+// without waiting for the production values.
 type Runner struct {
-	curlPath string
+	curlPath     string
+	probeTimeout time.Duration
+	fetchTimeout time.Duration
 }
 
 // New returns a Runner that invokes the curl at curlPath. An empty path
@@ -57,7 +60,7 @@ func New(curlPath string) (*Runner, error) {
 		}
 		curlPath = resolved
 	}
-	return &Runner{curlPath: curlPath}, nil
+	return &Runner{curlPath: curlPath, probeTimeout: probeTimeout, fetchTimeout: fetchTimeout}, nil
 }
 
 // Fetch downloads url into dest with the installer's HTTPS-only curl
@@ -69,7 +72,7 @@ func (r *Runner) Fetch(url, dest string) error {
 		return fmt.Errorf("fetch %s: only https URLs are allowed", url)
 	}
 	args := append(curlBase(), "-o", dest, url)
-	if err := r.curl(fetchTimeout, "fetch "+url, args, nil); err != nil {
+	if err := r.curl(r.fetchTimeout, "fetch "+url, args, nil); err != nil {
 		return err
 	}
 	return nil
@@ -82,7 +85,7 @@ func (r *Runner) Fetch(url, dest string) error {
 func (r *Runner) LatestTag(repository string) (string, error) {
 	args := append(curlBase(), "-I", "-o", os.DevNull, "-w", "%{url_effective}", repository+"/releases/latest")
 	stdout := &limitWriter{max: outputMax}
-	if err := r.curl(probeTimeout, "resolve latest release", args, stdout); err != nil {
+	if err := r.curl(r.probeTimeout, "resolve latest release", args, stdout); err != nil {
 		return "", err
 	}
 	effective := strings.TrimSpace(stdout.String())
@@ -122,7 +125,9 @@ func (r *Runner) curl(timeout time.Duration, operation string, args []string, st
 	cmd.Stderr = stderr
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("%s: timed out", operation)
+		// Keep the context sentinel reachable so callers can tell a
+		// timeout from any other curl failure.
+		return fmt.Errorf("%s: timed out: %w", operation, context.DeadlineExceeded)
 	}
 	if err != nil {
 		if reason := strings.TrimSpace(stderr.String()); reason != "" {
@@ -148,7 +153,13 @@ func truncate(text string) string {
 // error, so callers can pass subprocess output through and still tell a
 // failed hook refresh from a successful one.
 func Run(path string, args ...string) (string, string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+	return runBinary(runTimeout, path, args...)
+}
+
+// runBinary is Run with an injectable timeout, so tests can cover the
+// deadline path without waiting for the production value.
+func runBinary(timeout time.Duration, path string, args ...string) (string, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, args...)
 	stdout := &limitWriter{max: outputMax}
@@ -157,7 +168,9 @@ func Run(path string, args ...string) (string, string, error) {
 	cmd.Stderr = stderr
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		return "", "", fmt.Errorf("run %s: timed out", path)
+		// Keep the context sentinel reachable so callers can tell a
+		// timeout from any other exec failure.
+		return "", "", fmt.Errorf("run %s: timed out: %w", path, context.DeadlineExceeded)
 	}
 	if err != nil {
 		if reason := strings.TrimSpace(stderr.String()); reason != "" {

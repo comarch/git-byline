@@ -263,7 +263,9 @@ to confirm its version, replaces the installed binary, and re-runs the hook
 installs, so managed hook blocks refresh to the new version. When the release
 already matches the running binary it refreshes hooks, prints one line, and
 exits. `--version vX.Y.Z` pins a specific release, `--no-hooks` skips the
-hook refresh, and `--dry-run` verifies without replacing anything. No backup
+hook refresh, and `--dry-run` verifies without replacing anything. The
+automatic path never installs an older release; a pinned `--version` is
+the deliberate way to downgrade. No backup
 file is kept; the command reports the version it replaced.
 
 Go installs update through the toolchain:
@@ -296,15 +298,21 @@ exits. After any update, confirm with `git-byline version`.
 ### Automatic updates
 
 git-byline ships no daemon, so an automatic update is a scheduled run of
-`git-byline update`, which is a no-op when the version is current.
+`git-byline update`, which replaces nothing when the version is current but
+still refreshes hooks. The automatic path never installs an older release;
+pin an explicit `--version` to downgrade deliberately. Cron and Task
+Scheduler may not carry the interactive PATH, so the scheduled entry names
+the installed binary by its full path.
 
-Linux and macOS, weekly with cron:
+Linux and macOS, weekly with cron (the installer places the binary at
+`$HOME/.local/bin` by default):
 
 ```text
-17 8 * * 1 git-byline update >/dev/null
+17 8 * * 1 "$HOME/.local/bin/git-byline" update >/dev/null
 ```
 
-Windows, weekly with Task Scheduler:
+Windows, weekly with Task Scheduler (use the full path when the binary is
+not on the system PATH):
 
 ```powershell
 schtasks /Create /TN "git-byline update" /SC WEEKLY /ST 08:17 /TR 'git-byline update'

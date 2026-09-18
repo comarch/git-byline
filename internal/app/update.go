@@ -87,20 +87,31 @@ func runUpdate(env *Env, command *command, args []string) (int, error) {
 		if *targetTag != "latest" {
 			return commandUsageError(env, command, errors.New("--version cannot be combined with --archive and --checksums"))
 		}
-		if !supportedUpdateArchive(archivePath, runtime.GOOS) {
-			return commandUsageError(env, command, errors.New("unsupported archive: expected .tar.gz on Linux and macOS, .zip on Windows"))
-		}
-		if err := applyUpdate(env, updateOptions{
-			archivePath:   archivePath,
-			checksumsPath: checksumsPath,
-			targetPath:    target,
-			dryRun:        *dryRun,
-		}); err != nil {
-			return operationalError(env, command.name, err)
-		}
-		return ExitSuccess, nil
+		return runOfflineUpdate(env, command, target, archivePath, checksumsPath, *dryRun, *noHooks)
 	}
 	return runFetchUpdate(env, command, target, *targetTag, *dryRun, *noHooks)
+}
+
+// runOfflineUpdate is the --archive --checksums path of update: verify the
+// staged files and swap the binary, then refresh managed hooks the same
+// way the download path does. The target path is passed in so tests can
+// point at a stand-in file instead of the test binary.
+func runOfflineUpdate(env *Env, command *command, target, archivePath, checksumsPath string, dryRun, noHooks bool) (int, error) {
+	if !supportedUpdateArchive(archivePath, runtime.GOOS) {
+		return commandUsageError(env, command, errors.New("unsupported archive: expected .tar.gz on Linux and macOS, .zip on Windows"))
+	}
+	if err := applyUpdate(env, updateOptions{
+		archivePath:   archivePath,
+		checksumsPath: checksumsPath,
+		targetPath:    target,
+		dryRun:        dryRun,
+	}); err != nil {
+		return operationalError(env, command.name, err)
+	}
+	if !noHooks && !dryRun {
+		refreshHooks(env, target, runner.Detect)
+	}
+	return ExitSuccess, nil
 }
 
 // runFetchUpdate is the download path of update: resolve the release
@@ -114,7 +125,9 @@ func runFetchUpdate(env *Env, command *command, target, tag string, dryRun, noHo
 	}
 	// A pinned current release needs no curl at all, so the no-op path
 	// works on machines without network access too. Release builds stamp
-	// version.Version with the v prefix, so the tag compares directly.
+	// version.Version with the v prefix, so the tag compares directly. A
+	// pinned different release proceeds, even below the running one,
+	// because the pin is an explicit choice.
 	if tag != updateLatestTag && version.IsRelease() && version.Version == tag {
 		return reportCurrentRelease(env, target, tag, noHooks, dryRun)
 	}
@@ -126,9 +139,17 @@ func runFetchUpdate(env *Env, command *command, target, tag string, dryRun, noHo
 		if tag, err = rn.LatestTag(updateRepository); err != nil {
 			return operationalError(env, command.name, err)
 		}
-	}
-	if version.IsRelease() && version.Version == tag {
-		return reportCurrentRelease(env, target, tag, noHooks, dryRun)
+		if version.IsRelease() {
+			switch version.CompareReleaseTags(version.Version, tag) {
+			case 0:
+				return reportCurrentRelease(env, target, tag, noHooks, dryRun)
+			case 1:
+				// The automatic path never rolls the running binary back
+				// to an older latest-release pointer.
+				fmt.Fprintf(env.Stdout, "git-byline %s is newer than the latest release %s; not updating automatically\n", version.Version, tag)
+				return ExitSuccess, nil
+			}
+		}
 	}
 	archiveName := releaseArchiveName(tag)
 	tmp, err := os.MkdirTemp("", "git-byline-update-")
@@ -410,11 +431,7 @@ func hashFile(path string) (string, error) {
 // allowlist the installers enforce. On Windows the staging file keeps the
 // .exe suffix so the staged version check can run it.
 func extractUpdateBinary(archivePath, targetDir string) (string, error) {
-	pattern := ".git-byline-update-*"
-	if runtime.GOOS == "windows" {
-		pattern += ".exe"
-	}
-	staged, err := os.CreateTemp(targetDir, pattern)
+	staged, err := os.CreateTemp(targetDir, stagedUpdatePattern(runtime.GOOS))
 	if err != nil {
 		return "", fmt.Errorf("create staging file: %w", err)
 	}
@@ -461,6 +478,16 @@ func extractUpdateBinary(archivePath, targetDir string) (string, error) {
 // layout instead of the POSIX tar.gz one.
 func updateIsZip(archivePath string) bool {
 	return strings.HasSuffix(strings.ToLower(archivePath), ".zip")
+}
+
+// stagedUpdatePattern returns the staging file pattern for one platform.
+// On Windows the pattern keeps the .exe suffix, because the staged version
+// check can only run a file Windows recognizes as executable.
+func stagedUpdatePattern(goos string) string {
+	if goos == "windows" {
+		return ".git-byline-update-*.exe"
+	}
+	return ".git-byline-update-*"
 }
 
 func readUpdateTar(archivePath, binaryName string, staged *os.File) ([]string, error) {
@@ -605,6 +632,13 @@ func swapBinary(staged, target string) (string, error) {
 	return swapBinaryFunc(runtime.GOOS, os.Rename, os.Remove, staged, target)
 }
 
+// installHooksCommand and agentFlag name the CLI surface the post-swap
+// hook refresh invokes on the installed binary.
+const (
+	installHooksCommand = "install-hooks"
+	agentFlag           = "--agent"
+)
+
 // userAgent is one agent git-byline configures itself at user level, so
 // the update refresh matches the installer's detection.
 type userAgent struct {
@@ -648,16 +682,20 @@ var manualAgents = []manualAgent{
 // update.
 func refreshHooks(env *Env, target string, detect func(command, configDir string) bool) {
 	if _, err := discoverForEnv(env); err == nil {
-		refreshStep(env, target, "install-hooks", "--agent", "none", "--git", "--project")
+		refreshStep(env, target, installHooksCommand, agentFlag, "none", "--git", "--project")
 	}
-	if configured, err := hooks.ManagedTemplateConfigured(); err == nil && configured {
-		refreshStep(env, target, "install-hooks", "--agent", "none", "--git", "--template")
+	if configured, err := hooks.ManagedTemplateConfigured(); err != nil {
+		// A configuration read failure must warn and continue the
+		// remaining refresh steps, never roll the update back.
+		fmt.Fprintf(env.Stderr, "git-byline could not read the Git template configuration: %v\n", err)
+	} else if configured {
+		refreshStep(env, target, installHooksCommand, agentFlag, "none", "--git", "--template")
 	}
 	for _, agent := range userAgents {
 		if !detect(agent.command, agent.configDir) {
 			continue
 		}
-		if _, _, err := runner.Run(target, "install-hooks", "--agent", agent.name, "--user"); err != nil {
+		if _, _, err := runner.Run(target, installHooksCommand, agentFlag, agent.name, "--user"); err != nil {
 			fmt.Fprintf(env.Stderr, "Could not install the %s hook. Run: git-byline install-hooks --agent %s --user\n", agent.name, agent.name)
 			continue
 		}

@@ -218,8 +218,8 @@ func commands() []*command {
 				"release tag; local builds report dev. --json prints the version,\n" +
 				"the highest supported attribution note version, and the state\n" +
 				"format version. --check asks the GitHub release page for the\n" +
-				"newest release and prints the update command when it differs\n" +
-				"from the running one. It is one of the two commands that touch\n" +
+				"newest release and prints the update command when it is newer\n" +
+				"than the running one. It is one of the two commands that touch\n" +
 				"the network, and it only reads.",
 			run: runVersion,
 		},
@@ -387,9 +387,15 @@ func runVersion(env *Env, c *command, args []string) (int, error) {
 	if err != nil {
 		return operationalError(env, c.name, err)
 	}
-	if version.IsRelease() && version.Version == tag {
-		fmt.Fprintf(env.Stdout, "git-byline %s is up to date with the latest release.\n", version.Version)
-		return ExitSuccess, nil
+	if version.IsRelease() {
+		switch version.CompareReleaseTags(version.Version, tag) {
+		case 0:
+			fmt.Fprintf(env.Stdout, "git-byline %s is up to date with the latest release.\n", version.Version)
+			return ExitSuccess, nil
+		case 1:
+			fmt.Fprintf(env.Stdout, "git-byline %s is newer than the latest release %s.\n", version.Version, tag)
+			return ExitSuccess, nil
+		}
 	}
 	fmt.Fprintf(env.Stdout, "New release %s is available. Run 'git-byline update' to install it.\n", tag)
 	return ExitSuccess, nil

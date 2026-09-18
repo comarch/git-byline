@@ -1,11 +1,14 @@
 package runner
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeScript installs a POSIX shell script at path and returns its
@@ -214,10 +217,12 @@ func TestRunMissingPath(t *testing.T) {
 
 // TestDetectByCommandConfigDirAndNone verifies the installer's agent
 // detection rule: command on PATH, or configuration directory under
-// home.
+// home. HOME and USERPROFILE are both set because os.UserHomeDir reads
+// USERPROFILE on Windows.
 func TestDetectByCommandConfigDirAndNone(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	if !Detect("git", ".definitely-not-here") {
 		t.Fatal("Detect(existing command) = false, want true")
 	}
@@ -229,6 +234,46 @@ func TestDetectByCommandConfigDirAndNone(t *testing.T) {
 	}
 	if Detect("no-such-command-anywhere", ".nothing-here") {
 		t.Fatal("Detect(nothing) = true, want false")
+	}
+}
+
+// TestFetchTimesOut verifies that a download exceeding its deadline
+// fails with the context timeout sentinel, without waiting for the
+// production timeout.
+func TestFetchTimesOut(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "curl")
+	writeScript(t, bin, `sleep 5`)
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	r := &Runner{curlPath: bin, probeTimeout: 50 * time.Millisecond, fetchTimeout: 50 * time.Millisecond}
+	err := r.Fetch("https://example.com/archive.tar.gz", filepath.Join(dir, "dest"))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Fetch(deadline) = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+// TestLatestTagTimesOut verifies the probe deadline the same way.
+func TestLatestTagTimesOut(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "curl")
+	writeScript(t, bin, `sleep 5`)
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	r := &Runner{curlPath: bin, probeTimeout: 50 * time.Millisecond, fetchTimeout: 50 * time.Millisecond}
+	_, err := r.LatestTag("https://github.com/comarch/git-byline")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("LatestTag(deadline) = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+// TestRunTimesOut verifies the self-exec deadline through the injectable
+// timeout seam.
+func TestRunTimesOut(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "slow")
+	writeScript(t, bin, `sleep 5`)
+	_, _, err := runBinary(50*time.Millisecond, bin, "version")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runBinary(deadline) = %v, want context.DeadlineExceeded", err)
 	}
 }
 
