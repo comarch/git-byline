@@ -136,19 +136,66 @@ fi
 echo "git-byline $FAKE_RELEASE_VERSION"
 `
 
+// hookRefreshCase is one end-to-end hook refresh mode: the update's
+// first install-hooks invocation and the target state it must produce.
+type hookRefreshCase struct {
+	name        string
+	dryRun      bool
+	wantNoCalls bool
+	wantCalls   []string
+	wantOut     string
+	wantBody    string
+}
+
+// runHookRefreshCase drives one hook refresh mode end to end. The
+// asserted calls are a prefix, because user-level agent refreshes
+// depend on the machine's PATH and are not part of this contract.
+func runHookRefreshCase(t *testing.T, c hookRefreshCase) {
+	t.Helper()
+	isolateHookEnv(t)
+	root := appRepo(t)
+	log := filepath.Join(t.TempDir(), "target.log")
+	t.Setenv("FAKE_TARGET_LOG", log)
+	newFakeRelease(t, "v9.9.9", loggingBinary)
+	target := filepath.Join(t.TempDir(), "git-byline")
+	if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	env := testEnv(&stdout)
+	env.Stderr = &stderr
+	env.Dir = root
+	code, err := runFetchUpdate(env, &command{name: "update"}, target, "latest", c.dryRun, false)
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("runFetchUpdate = %d, %v; stderr %q", code, err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), c.wantOut) {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), c.wantOut)
+	}
+	assertTarget(t, target, c.wantBody)
+	calls := readTargetLog(t, log)
+	if c.wantNoCalls {
+		if len(calls) != 0 {
+			t.Fatalf("calls = %v, want no hook refresh on dry run", calls)
+		}
+		return
+	}
+	if len(calls) < len(c.wantCalls) {
+		t.Fatalf("calls = %v, want them to start with %v", calls, c.wantCalls)
+	}
+	for index, want := range c.wantCalls {
+		if calls[index] != want {
+			t.Fatalf("calls = %v, want them to start with %v", calls, c.wantCalls)
+		}
+	}
+}
+
 // TestRunFetchUpdateHookRefreshModes covers the end-to-end hook refresh
 // as a table: after a real swap the new binary receives the project
 // install-hooks pass, and a dry run neither swaps nor refreshes hooks.
 func TestRunFetchUpdateHookRefreshModes(t *testing.T) {
 	const projectRefresh = "install-hooks --agent none --git --project"
-	cases := []struct {
-		name        string
-		dryRun      bool
-		wantNoCalls bool
-		wantCalls   []string
-		wantOut     string
-		wantBody    string
-	}{
+	cases := []hookRefreshCase{
 		{
 			name:      "swap refreshes hooks through the new binary",
 			wantCalls: []string{projectRefresh},
@@ -165,41 +212,7 @@ func TestRunFetchUpdateHookRefreshModes(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			isolateHookEnv(t)
-			root := appRepo(t)
-			log := filepath.Join(t.TempDir(), "target.log")
-			t.Setenv("FAKE_TARGET_LOG", log)
-			newFakeRelease(t, "v9.9.9", loggingBinary)
-			target := filepath.Join(t.TempDir(), "git-byline")
-			if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			var stdout, stderr bytes.Buffer
-			env := testEnv(&stdout)
-			env.Stderr = &stderr
-			env.Dir = root
-			code, err := runFetchUpdate(env, &command{name: "update"}, target, "latest", c.dryRun, false)
-			if code != ExitSuccess || err != nil {
-				t.Fatalf("runFetchUpdate = %d, %v; stderr %q", code, err, stderr.String())
-			}
-			if !strings.Contains(stdout.String(), c.wantOut) {
-				t.Fatalf("stdout = %q, want %q", stdout.String(), c.wantOut)
-			}
-			assertTarget(t, target, c.wantBody)
-			calls := readTargetLog(t, log)
-			if c.wantNoCalls {
-				if len(calls) != 0 {
-					t.Fatalf("calls = %v, want no hook refresh on dry run", calls)
-				}
-			} else if len(calls) < len(c.wantCalls) {
-				t.Fatalf("calls = %v, want them to start with %v", calls, c.wantCalls)
-			} else {
-				for index, want := range c.wantCalls {
-					if calls[index] != want {
-						t.Fatalf("calls = %v, want them to start with %v", calls, c.wantCalls)
-					}
-				}
-			}
+			runHookRefreshCase(t, c)
 		})
 	}
 }
@@ -270,6 +283,14 @@ func TestRunFetchUpdateVersionSelection(t *testing.T) {
 		wantOut  string
 		wantBody string
 	}{
+		{
+			name:     "latest is newer than the running release",
+			running:  "v1.0.0",
+			latest:   "v9.9.9",
+			runTag:   "latest",
+			wantOut:  "Updated git-byline to v9.9.9 at ",
+			wantBody: goodBinary,
+		},
 		{
 			name:     "latest equals the running release",
 			running:  "v9.9.9",

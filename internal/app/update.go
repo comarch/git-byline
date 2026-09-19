@@ -114,6 +114,46 @@ func runOfflineUpdate(env *Env, command *command, target, archivePath, checksums
 	return ExitSuccess, nil
 }
 
+// latestRelease is the automatic path's resolved release: the tag to
+// install, or the finished command result when no update should run.
+type latestRelease struct {
+	tag  string
+	done bool
+	code int
+	err  error
+}
+
+// resolveLatestRelease probes the latest release and decides whether
+// the automatic path should install it. The equal case reports the
+// current release and converges managed hooks like the pinned short
+// circuit; the newer case keeps the newer running binary and still
+// refreshes hooks; anything else installs the probe's tag.
+func resolveLatestRelease(env *Env, target string, rn *runner.Runner, noHooks, dryRun bool) (latestRelease, error) {
+	var result latestRelease
+	tag, err := rn.LatestTag(updateRepository)
+	if err != nil {
+		return result, err
+	}
+	result.tag = tag
+	if !version.IsRelease() {
+		return result, nil
+	}
+	switch version.CompareReleaseTags(version.Version, tag) {
+	case 0:
+		result.done = true
+		result.code, result.err = reportCurrentRelease(env, target, tag, noHooks, dryRun)
+	case 1:
+		// The automatic path never rolls the running binary back to an
+		// older latest-release pointer.
+		fmt.Fprintf(env.Stdout, "git-byline %s is newer than the latest release %s; not updating automatically\n", version.Version, tag)
+		if !noHooks && !dryRun {
+			refreshHooks(env, target, runner.Detect)
+		}
+		result.done, result.code = true, ExitSuccess
+	}
+	return result, nil
+}
+
 // runFetchUpdate is the download path of update: resolve the release
 // tag, fetch the checksums and archive into a private directory, then
 // reuse the offline verify-and-swap machinery with an extra version
@@ -136,23 +176,14 @@ func runFetchUpdate(env *Env, command *command, target, tag string, dryRun, noHo
 		return operationalError(env, command.name, err)
 	}
 	if tag == updateLatestTag {
-		if tag, err = rn.LatestTag(updateRepository); err != nil {
+		resolved, err := resolveLatestRelease(env, target, rn, noHooks, dryRun)
+		if err != nil {
 			return operationalError(env, command.name, err)
 		}
-		if version.IsRelease() {
-			switch version.CompareReleaseTags(version.Version, tag) {
-			case 0:
-				return reportCurrentRelease(env, target, tag, noHooks, dryRun)
-			case 1:
-				// The automatic path never rolls the running binary back
-				// to an older latest-release pointer.
-				fmt.Fprintf(env.Stdout, "git-byline %s is newer than the latest release %s; not updating automatically\n", version.Version, tag)
-				if !noHooks && !dryRun {
-					refreshHooks(env, target, runner.Detect)
-				}
-				return ExitSuccess, nil
-			}
+		if resolved.done {
+			return resolved.code, resolved.err
 		}
+		tag = resolved.tag
 	}
 	archiveName := releaseArchiveName(tag)
 	tmp, err := os.MkdirTemp("", "git-byline-update-")
