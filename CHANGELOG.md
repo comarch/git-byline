@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/comarch/git-byline/compare/v1.2.0...v1.3.0) (2026-09-19)
+
+
+### Features
+
+* **update:** download the latest release and refresh hooks ([#36](https://github.com/comarch/git-byline/issues/36)) ([740539f](https://github.com/comarch/git-byline/commit/740539f7f2c435ec2edb0751134a42f80cc78072))
+
 ## [1.2.0](https://github.com/comarch/git-byline/compare/v1.1.1...v1.2.0) (2026-09-18)
 
 
