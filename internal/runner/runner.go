@@ -155,11 +155,7 @@ func (r *Runner) curl(timeout time.Duration, operation string, args []string, st
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.curlPath, args...)
 	cmd.WaitDelay = waitGrace
-	if stdout == nil {
-		cmd.Stdout = nil
-	} else {
-		cmd.Stdout = stdout
-	}
+	cmd.Stdout = stdout
 	stderr := &limitWriter{max: curlStderrMax}
 	cmd.Stderr = stderr
 	err := cmd.Run()

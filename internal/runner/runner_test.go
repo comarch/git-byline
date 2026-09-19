@@ -295,7 +295,7 @@ func TestDetectByCommandConfigDirAndNone(t *testing.T) {
 func TestFetchTimesOut(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "curl")
-	writeScript(t, bin, `sleep 5`)
+	writeScript(t, bin, `sleep 8`)
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	r := &Runner{curlPath: bin, probeTimeout: 50 * time.Millisecond, fetchTimeout: 50 * time.Millisecond}
 	start := time.Now()
@@ -312,7 +312,7 @@ func TestFetchTimesOut(t *testing.T) {
 func TestLatestTagTimesOut(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "curl")
-	writeScript(t, bin, `sleep 5`)
+	writeScript(t, bin, `sleep 8`)
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	r := &Runner{curlPath: bin, probeTimeout: 50 * time.Millisecond, fetchTimeout: 50 * time.Millisecond}
 	start := time.Now()
@@ -330,7 +330,7 @@ func TestLatestTagTimesOut(t *testing.T) {
 func TestRunTimesOut(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "slow")
-	writeScript(t, bin, `sleep 5`)
+	writeScript(t, bin, `sleep 8`)
 	start := time.Now()
 	_, _, err := runBinary(50*time.Millisecond, bin, "version")
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -348,7 +348,7 @@ func TestRunTimesOut(t *testing.T) {
 func TestRunTimesOutWithPipeHoldingDescendant(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "slow")
-	writeScript(t, bin, "sleep 5 &\nsleep 5")
+	writeScript(t, bin, "sleep 8 &\nsleep 8")
 	start := time.Now()
 	_, _, err := runBinary(50*time.Millisecond, bin, "version")
 	if !errors.Is(err, context.DeadlineExceeded) {
