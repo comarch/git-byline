@@ -71,7 +71,22 @@ func TestManagedTemplateConfigured(t *testing.T) {
 	if configured, err := ManagedTemplateConfigured(); err != nil || !configured {
 		t.Fatalf("ManagedTemplateConfigured(managed) = %t, %v; want true", configured, err)
 	}
-	if err := gitcmd.SetGlobalConfig(templateConfigKey, dir+"-foreign"); err != nil {
+	if err := gitcmd.AddGlobalConfig(templateConfigKey, dir+"-foreign"); err != nil {
+		t.Fatal(err)
+	}
+	if configured, err := ManagedTemplateConfigured(); err != nil || configured {
+		t.Fatalf("ManagedTemplateConfigured(managed then foreign) = %t, %v; want false", configured, err)
+	}
+	if _, err := gitcmd.UnsetGlobalConfig(templateConfigKey, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := gitcmd.AddGlobalConfig(templateConfigKey, dir); err != nil {
+		t.Fatal(err)
+	}
+	if configured, err := ManagedTemplateConfigured(); err != nil || configured {
+		t.Fatalf("ManagedTemplateConfigured(foreign then managed) = %t, %v; want false", configured, err)
+	}
+	if _, err := gitcmd.UnsetGlobalConfig(templateConfigKey, dir); err != nil {
 		t.Fatal(err)
 	}
 	if configured, err := ManagedTemplateConfigured(); err != nil || configured {

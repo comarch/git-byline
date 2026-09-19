@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const testFetchLimit int64 = 1 << 20
+
 // writeScript installs a POSIX shell script at path and returns its
 // directory for PATH injection.
 func writeScript(t *testing.T, path, body string) string {
@@ -58,13 +60,8 @@ func TestFetchWritesArgumentsAndFile(t *testing.T) {
 	bin := filepath.Join(dir, "curl")
 	writeScript(t, bin, strings.Join([]string{
 		`echo "$@" > "$FAKE_LOG"`,
-		`prev=""`,
-		`for arg in "$@"; do`,
-		`  [ "$prev" = "-o" ] && dest="$arg"`,
-		`  prev="$arg"`,
-		`done`,
 		`for arg in "$@"; do url="$arg"; done`,
-		`cp "$FAKE_DIR/${url##*/}" "$dest"`,
+		`cat "$FAKE_DIR/${url##*/}"`,
 	}, "\n"))
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_LOG", log)
@@ -74,7 +71,7 @@ func TestFetchWritesArgumentsAndFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(dir, "downloaded")
-	if err := r.Fetch("https://example.com/payload", dest); err != nil {
+	if err := r.Fetch("https://example.com/payload", dest, testFetchLimit); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(dest)
@@ -88,9 +85,64 @@ func TestFetchWritesArgumentsAndFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "-q -fsSL --proto =https --proto-redir =https --tlsv1.2 -o " + dest + " https://example.com/payload"
+	want := "-q -fsSL --proto =https --proto-redir =https --tlsv1.2 https://example.com/payload"
 	if string(args) != want+"\n" {
 		t.Fatalf("curl args = %q, want %q", args, want)
+	}
+}
+
+func TestFetchRejectsOversizedDownload(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "curl")
+	writeScript(t, bin, `printf 'oversized'`)
+	r, err := New(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "downloaded")
+	err = r.Fetch("https://example.com/payload", dest, 4)
+	if err == nil || !strings.Contains(err.Error(), "exceeds 4 bytes") {
+		t.Fatalf("Fetch(oversized) = %v, want size-limit error", err)
+	}
+	if _, err := os.Stat(dest); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("downloaded file remains after failure: %v", err)
+	}
+}
+
+// TestFetchRejectsInvalidLimit verifies that a broken caller cannot start
+// an effectively unbounded download.
+func TestFetchRejectsInvalidLimit(t *testing.T) {
+	r, err := New("/opt/curl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = r.Fetch("https://example.com/payload", filepath.Join(t.TempDir(), "downloaded"), -1)
+	if err == nil || !strings.Contains(err.Error(), "invalid size limit") {
+		t.Fatalf("Fetch(negative limit) = %v, want invalid-limit error", err)
+	}
+}
+
+// TestFetchRefusesExistingDestination verifies that a failed download setup
+// cannot replace a caller-owned file.
+func TestFetchRefusesExistingDestination(t *testing.T) {
+	r, err := New("/opt/curl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "downloaded")
+	if err := os.WriteFile(dest, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = r.Fetch("https://example.com/payload", dest, testFetchLimit)
+	if err == nil || !strings.Contains(err.Error(), "create destination") {
+		t.Fatalf("Fetch(existing destination) = %v, want create error", err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "keep" {
+		t.Fatalf("destination = %q, want original content", data)
 	}
 }
 
@@ -102,7 +154,7 @@ func TestFetchRejectsNonHTTPS(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, url := range []string{"http://example.com/a", "file:///etc/passwd", "-fsSL"} {
-		if err := r.Fetch(url, t.TempDir()+"/dest"); err == nil ||
+		if err := r.Fetch(url, t.TempDir()+"/dest", testFetchLimit); err == nil ||
 			!strings.Contains(err.Error(), "only https URLs are allowed") {
 			t.Fatalf("Fetch(%q) = %v, want https-only error", url, err)
 		}
@@ -135,7 +187,7 @@ func TestFetchReportsCurlFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = r.Fetch("https://example.com/archive.tar.gz", filepath.Join(dir, "dest"))
+	err = r.Fetch("https://example.com/archive.tar.gz", filepath.Join(dir, "dest"), testFetchLimit)
 	if err == nil ||
 		!strings.Contains(err.Error(), "fetch https://example.com/archive.tar.gz") ||
 		!strings.Contains(err.Error(), "connection reset") {
@@ -247,7 +299,7 @@ func TestFetchTimesOut(t *testing.T) {
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	r := &Runner{curlPath: bin, probeTimeout: 50 * time.Millisecond, fetchTimeout: 50 * time.Millisecond}
 	start := time.Now()
-	err := r.Fetch("https://example.com/archive.tar.gz", filepath.Join(dir, "dest"))
+	err := r.Fetch("https://example.com/archive.tar.gz", filepath.Join(dir, "dest"), testFetchLimit)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Fetch(deadline) = %v, want context.DeadlineExceeded", err)
 	}
@@ -335,9 +387,9 @@ func TestFetchReportsCurlFailureWithoutStderr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = r.Fetch("https://example.com/archive.tar.gz", filepath.Join(dir, "dest"))
+	err = r.Fetch("https://example.com/archive.tar.gz", filepath.Join(dir, "dest"), testFetchLimit)
 	if err == nil ||
-		!strings.Contains(err.Error(), "fetch https://example.com/archive.tar.gz: exit status 56") {
+		!strings.Contains(err.Error(), "fetch https://example.com/archive.tar.gz: curl: exit status 56") {
 		t.Fatalf("Fetch(silent failure) = %v, want operation and status", err)
 	}
 }

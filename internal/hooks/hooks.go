@@ -355,9 +355,9 @@ func ManagedTemplateDir() (string, error) {
 	return dir, err
 }
 
-// ManagedTemplateConfigured reports whether the user-level Git template
-// already points at the managed template directory, so a refresh touches
-// template configuration only when the user opted in before.
+// ManagedTemplateConfigured reports whether every user-level Git template
+// value points at the managed template directory. A refresh runs only when
+// template installation can succeed without replacing foreign config.
 func ManagedTemplateConfigured() (bool, error) {
 	dir, err := ManagedTemplateDir()
 	if err != nil {
@@ -368,11 +368,11 @@ func ManagedTemplateConfigured() (bool, error) {
 		return false, err
 	}
 	for _, value := range values {
-		if value == dir {
-			return true, nil
+		if value != dir {
+			return false, nil
 		}
 	}
-	return false, nil
+	return len(values) > 0, nil
 }
 
 // templateDir returns the trusted base directory and the managed Git

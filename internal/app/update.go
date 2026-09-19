@@ -193,11 +193,11 @@ func runFetchUpdate(env *Env, command *command, target, tag string, dryRun, noHo
 	defer func() { _ = os.RemoveAll(tmp) }()
 	base := updateRepository + "/releases/download/" + tag + "/"
 	checksumsPath := filepath.Join(tmp, "checksums.txt")
-	if err := rn.Fetch(base+"checksums.txt", checksumsPath); err != nil {
+	if err := rn.Fetch(base+"checksums.txt", checksumsPath, maxUpdateChecksumBytes); err != nil {
 		return operationalError(env, command.name, err)
 	}
 	archivePath := filepath.Join(tmp, archiveName)
-	if err := rn.Fetch(base+archiveName, archivePath); err != nil {
+	if err := rn.Fetch(base+archiveName, archivePath, maxUpdateArchiveBytes); err != nil {
 		return operationalError(env, command.name, err)
 	}
 	if err := applyUpdate(env, updateOptions{

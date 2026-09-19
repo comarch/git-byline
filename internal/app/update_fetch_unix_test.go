@@ -36,13 +36,8 @@ func newFakeRelease(t *testing.T, latest, binaryScript string) *fakeRelease {
 		`for arg in "$@"; do`,
 		`  [ "$arg" = "%{url_effective}" ] && { echo "$FAKE_REDIRECT"; exit 0; }`,
 		`done`,
-		`prev=""`,
-		`for arg in "$@"; do`,
-		`  [ "$prev" = "-o" ] && dest="$arg"`,
-		`  prev="$arg"`,
-		`done`,
 		`for arg in "$@"; do url="$arg"; done`,
-		`cp "$FAKE_DIR/${url##*/}" "$dest"`,
+		`cat "$FAKE_DIR/${url##*/}"`,
 	}, "\n")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 		t.Fatal(err)
@@ -606,16 +601,11 @@ func TestRunFetchUpdateDownloadFailures(t *testing.T) {
 				`for arg in "$@"; do`,
 				`  [ "$arg" = "%{url_effective}" ] && { echo "$FAKE_REDIRECT"; exit 0; }`,
 				`done`,
-				`prev=""`,
-				`for arg in "$@"; do`,
-				`  [ "$prev" = "-o" ] && dest="$arg"`,
-				`  prev="$arg"`,
-				`done`,
 				`for arg in "$@"; do url="$arg"; done`,
 				`case "$url" in`,
 				`  *"$FAKE_FAIL"*) echo "curl: (22) HTTP error" >&2; exit 22;;`,
 				`esac`,
-				`cp "$FAKE_DIR/${url##*/}" "$dest"`,
+				`cat "$FAKE_DIR/${url##*/}"`,
 			}, "\n")
 			if err := os.WriteFile(curlBin, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 				t.Fatal(err)

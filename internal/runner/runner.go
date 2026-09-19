@@ -40,6 +40,8 @@ const (
 // tagPattern accepts exactly the release tags the installers accept.
 var tagPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
+var errDownloadLimit = errors.New("download exceeds supported size")
+
 // ValidTag reports whether tag is a supported release tag.
 func ValidTag(tag string) bool {
 	return tagPattern.MatchString(tag)
@@ -71,16 +73,47 @@ func New(curlPath string) (*Runner, error) {
 // Fetch downloads url into dest with the installer's HTTPS-only curl
 // flags, so the in-binary fetch has the same transport guarantees as
 // install.sh. Only https URLs are accepted, so a malformed input can
-// never become a curl option. The caller owns dest.
-func (r *Runner) Fetch(url, dest string) error {
+// never become a curl option. The response is bounded while curl writes
+// it, so a hostile endpoint cannot fill the temporary filesystem. The
+// caller owns dest.
+func (r *Runner) Fetch(url, dest string, maxBytes int64) error {
 	if !strings.HasPrefix(url, "https://") {
 		return fmt.Errorf("fetch %s: only https URLs are allowed", url)
 	}
-	args := append(curlBase(), "-o", dest, url)
-	if err := r.curl(r.fetchTimeout, "fetch "+url, args, nil); err != nil {
-		return err
+	if maxBytes < 0 {
+		return fmt.Errorf("fetch %s: invalid size limit", url)
+	}
+	file, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("fetch %s: create destination: %w", url, err)
+	}
+	writer := &downloadWriter{file: file, remaining: maxBytes}
+	args := append(curlBase(), url)
+	runErr := r.curl(r.fetchTimeout, "curl", args, writer)
+	if err := errors.Join(runErr, file.Close()); err != nil {
+		_ = os.Remove(dest)
+		if writer.exceeded {
+			return fmt.Errorf("fetch %s: exceeds %d bytes", url, maxBytes)
+		}
+		return fmt.Errorf("fetch %s: %w", url, err)
 	}
 	return nil
+}
+
+type downloadWriter struct {
+	file      *os.File
+	remaining int64
+	exceeded  bool
+}
+
+func (w *downloadWriter) Write(data []byte) (int, error) {
+	if int64(len(data)) > w.remaining {
+		w.exceeded = true
+		return 0, errDownloadLimit
+	}
+	written, err := w.file.Write(data)
+	w.remaining -= int64(written)
+	return written, err
 }
 
 // LatestTag resolves the newest release tag by following the release
