@@ -256,13 +256,17 @@ Compare the Windows hash with the exact archive line in `checksums.txt`.
 
 ## Update
 
-Re-running the same one-liner is the update path. The installer compares the
-release version with the binary it is about to replace: when they match it
-prints `git-byline ... is already installed at ...` and exits without
-downloading anything. When they differ it installs the new release over the
-old binary and re-runs the hook installs, so managed hook blocks refresh to
-the new version. No backup file is kept; the installer reports the version it
-replaced.
+`git-byline update` is the update path. It resolves the newest release tag
+from the pinned GitHub repository, downloads the matching archive and
+`checksums.txt` over HTTPS, verifies the SHA-256, runs the staged binary once
+to confirm its version, replaces the installed binary, and re-runs the hook
+installs, so managed hook blocks refresh to the new version. When the release
+already matches the running binary it refreshes hooks, prints one line, and
+exits. `--version vX.Y.Z` pins a specific release, `--no-hooks` skips the
+hook refresh, and `--dry-run` verifies without replacing anything. The
+automatic path never installs an older release; a pinned `--version` is
+the deliberate way to downgrade. No backup
+file is kept; the command reports the version it replaced.
 
 Go installs update through the toolchain:
 
@@ -293,20 +297,27 @@ exits. After any update, confirm with `git-byline version`.
 
 ### Automatic updates
 
-git-byline ships no daemon and the binary performs no update check, so an
-automatic update is a scheduled re-run of the installer, which is a no-op
-when the version is current.
+git-byline ships no daemon, so an automatic update is a scheduled run of
+`git-byline update`, which replaces nothing when the version is current but
+still refreshes hooks. The automatic path never installs an older release;
+pin an explicit `--version` to downgrade deliberately. Cron and Task
+Scheduler may not carry the interactive PATH, so the scheduled entry names
+the installed binary by its full path.
 
-Linux and macOS, weekly with cron:
+Linux and macOS, weekly with cron (the installer places the binary at
+`$HOME/.local/bin` by default):
 
 ```text
-17 8 * * 1 curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubusercontent.com/comarch/git-byline/main/install.sh | sh >/dev/null
+17 8 * * 1 "$HOME/.local/bin/git-byline" update >/dev/null
 ```
 
-Windows, weekly with Task Scheduler:
+Windows, weekly with Task Scheduler (the installer places the binary at
+`$HOME\bin` by default; PowerShell expands `$env:USERPROFILE` before schtasks
+sees the full path and preserves the inner quotes needed when the profile
+path contains spaces):
 
 ```powershell
-schtasks /Create /TN "git-byline update" /SC WEEKLY /ST 08:17 /TR 'powershell -NoProfile -Command \"irm https://raw.githubusercontent.com/comarch/git-byline/main/install.ps1 | iex\"'
+schtasks /Create /TN "git-byline update" /SC WEEKLY /ST 08:17 /TR "`"$env:USERPROFILE\bin\git-byline.exe`" update"
 ```
 
 ## Go toolchain
@@ -339,6 +350,8 @@ need elevation, which they never request. Agent detection reads a command name
 and a directory name, writes nothing of its own, and only ever calls
 `git-byline install-hooks`. When run inside a Git worktree, installers enable automatic
 attribution-note sharing unless `--no-git-hook` is used and hooks are later
-installed with `--local-notes`. The `update` command follows the same rules
-offline: it refuses an archive whose checksum, file allowlist, or entry types
-do not match, and it never downloads anything.
+installed with `--local-notes`. The `update` command follows the same rules:
+it downloads over HTTPS from the pinned GitHub repository through the
+installer's HTTPS-only curl flags plus `-q`, so a local curlrc cannot weaken
+them; it refuses an archive whose checksum, file allowlist, or entry types do
+not match, and confirms the staged binary's version before the swap.

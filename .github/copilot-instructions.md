@@ -7,8 +7,9 @@
 git-byline is a local AI code attribution tool for Git. One pure Go binary
 tracks human, AI, and untracked authorship line by line from agent edits to
 commits. Checkpoints stay local; Git notes can follow ordinary pushes
-through a managed hook. No cloud, daemon, account, or telemetry. The binary
-opens no network connection.
+through a managed hook. No cloud, daemon, account, or telemetry. Every
+command runs offline except `update` and `version --check`, which fetch a
+checksum-verified release from the pinned GitHub repository on request.
 
 Read `README.md` and relevant files under `docs/` before changing public
 behavior, data formats, security boundaries, automation, or releases.
@@ -19,7 +20,7 @@ behavior, data formats, security boundaries, automation, or releases.
 
 ## architecture
 
-cli: cmd/git-byline and internal/app, git: internal/gitcmd is the only Git subprocess boundary, model: internal/model owns versioned records and invariants, storage: internal/store and internal/lock own local durability, engine: internal/engine is pure attribution transformation, notes: internal/notes and internal/provenance own Git attribution notes, dashboard: internal/dashboard renders self-contained local HTML without network access, hooks: internal/preset and internal/hooks own agent integration, annotation, and default Git note sharing, validation: tools/validate is the complete local gate, automation: .github/workflows owns CI, security, and release automation, generated: Native instructions, agents, workflows, and hooks for nine supported hook surfaces are compiled from .promptscript, installation: Factory users run /git-byline-setup from the marketplace plugin; other users install a checksum-verified release; Git hooks share attribution notes by default unless --local-notes is set
+cli: cmd/git-byline and internal/app, git: internal/gitcmd is the only Git subprocess boundary, runner: internal/runner is the only curl and self-exec subprocess boundary, used by update and version --check, model: internal/model owns versioned records and invariants, storage: internal/store and internal/lock own local durability, engine: internal/engine is pure attribution transformation, notes: internal/notes and internal/provenance own Git attribution notes, dashboard: internal/dashboard renders self-contained local HTML without network access, hooks: internal/preset and internal/hooks own agent integration, annotation, and default Git note sharing, validation: tools/validate is the complete local gate, automation: .github/workflows owns CI, security, and release automation, generated: Native instructions, agents, workflows, and hooks for nine supported hook surfaces are compiled from .promptscript, installation: Factory users run /git-byline-setup from the marketplace plugin; other users install a checksum-verified release; Git hooks share attribution notes by default unless --local-notes is set
 
 ## Context
 
@@ -33,7 +34,10 @@ line coverage, writes canonical JSON to `refs/notes/byline`, advances state,
 and compacts retention. `dashboard` renders validated blame and status data
 into one self-contained local HTML file without external resources. The
 managed `pre-push` hook publishes attribution notes through Git by default;
-`--local-notes` removes that sharing hook.
+`--local-notes` removes that sharing hook. `update` downloads the newest
+release from the pinned GitHub repository through `internal/runner`, verifies
+it against `checksums.txt`, swaps the binary, and refreshes managed hooks;
+`version --check` reads the latest release tag.
 
 ### Data locations
 
@@ -46,7 +50,7 @@ managed `pre-push` hook publishes attribution notes through Git by default;
 ### Public commands
 
 - `checkpoint`, `annotate`, `blame`, `status`, `dashboard`
-- `install-hooks`, `uninstall`
+- `install-hooks`, `uninstall`, `update`
 - `version`, `help`
 
 - Project: git-byline
@@ -95,8 +99,8 @@ managed `pre-push` hook publishes attribution notes through Git by default;
 ## donts
 
 - Don't add CGo
-- Don't add network calls, telemetry, update checks, downloads, or remote lookups to the production binary
-- Don't import os/exec outside internal/gitcmd
+- Don't add background network calls, telemetry, silent update checks, or remote lookups; network access is allowed only in the update command and the version --check probe, fetching from the pinned release repository
+- Don't import os/exec outside internal/gitcmd and internal/runner
 - Don't store raw hook payloads, prompts, transcripts, tool responses, file content, or environment dumps in checkpoint JSON or notes
 - Don't read or snapshot .git, ignored paths, symlink escapes, non-regular files, binary data, or paths outside the active worktree
 - Don't overwrite a different existing attribution note automatically

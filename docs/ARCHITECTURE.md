@@ -32,6 +32,7 @@ explicit refspec publishes them.
 | `internal/app` | CLI parsing, streams, exit codes, orchestration |
 | `internal/preset` | Untrusted Droid, Claude Code, and agent-v1 input |
 | `internal/gitcmd` | All Git subprocess calls and safe worktree reads |
+| `internal/runner` | The update command's curl fetches, latest-release probe, and self-exec of the staged or installed binary |
 | `internal/model` | Versioned persisted records and invariants |
 | `internal/store` | Checkpoint JSONL and atomic state files |
 | `internal/lock` | Cross-process repository operation locks |
@@ -44,7 +45,10 @@ explicit refspec publishes them.
 | `internal/hooks` | Idempotent agent and Git hook mutation |
 
 Production code runs Git only through `internal/gitcmd`. The attribution engine
-does not access Git, files, JSON, clocks, subprocesses, or global state.
+does not access Git, files, JSON, clocks, subprocesses, or global state. The
+update command's curl fetches and its self-exec of the staged or installed
+binary run only through `internal/runner`; no production package imports a
+network stack.
 
 The dashboard renderer consumes validated blame and status results. It embeds
 all styles, script, source lines, and metrics into one HTML file. The report

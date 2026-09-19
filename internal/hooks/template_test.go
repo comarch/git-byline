@@ -53,6 +53,57 @@ func templateOptions(localNotes bool) Options {
 	return Options{Agent: "none", Git: true, Template: true, LocalNotes: localNotes}
 }
 
+// TestManagedTemplateConfigured verifies the update refresh guard: the
+// user-level Git template must already point at the managed directory
+// before a refresh touches template configuration.
+func TestManagedTemplateConfigured(t *testing.T) {
+	xdg := templateEnv(t)
+	dir, err := ManagedTemplateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configured, err := ManagedTemplateConfigured(); err != nil || configured {
+		t.Fatalf("ManagedTemplateConfigured(unset) = %t, %v; want false", configured, err)
+	}
+	if err := gitcmd.SetGlobalConfig(templateConfigKey, dir); err != nil {
+		t.Fatal(err)
+	}
+	if configured, err := ManagedTemplateConfigured(); err != nil || !configured {
+		t.Fatalf("ManagedTemplateConfigured(managed) = %t, %v; want true", configured, err)
+	}
+	if err := gitcmd.AddGlobalConfig(templateConfigKey, dir+"-foreign"); err != nil {
+		t.Fatal(err)
+	}
+	if configured, err := ManagedTemplateConfigured(); err != nil || configured {
+		t.Fatalf("ManagedTemplateConfigured(managed then foreign) = %t, %v; want false", configured, err)
+	}
+	if _, err := gitcmd.UnsetGlobalConfig(templateConfigKey, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := gitcmd.AddGlobalConfig(templateConfigKey, dir); err != nil {
+		t.Fatal(err)
+	}
+	if configured, err := ManagedTemplateConfigured(); err != nil || configured {
+		t.Fatalf("ManagedTemplateConfigured(foreign then managed) = %t, %v; want false", configured, err)
+	}
+	if _, err := gitcmd.UnsetGlobalConfig(templateConfigKey, dir); err != nil {
+		t.Fatal(err)
+	}
+	if configured, err := ManagedTemplateConfigured(); err != nil || configured {
+		t.Fatalf("ManagedTemplateConfigured(foreign) = %t, %v; want false", configured, err)
+	}
+	if err := os.WriteFile(filepath.Join(xdg, "git", "config"), []byte("[core\nbroken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ManagedTemplateConfigured(); err == nil {
+		t.Fatal("ManagedTemplateConfigured(broken config) = nil error, want failure")
+	}
+	t.Setenv("XDG_CONFIG_HOME", "relative-path")
+	if _, err := ManagedTemplateConfigured(); err == nil {
+		t.Fatal("ManagedTemplateConfigured(relative XDG) = nil error, want failure")
+	}
+}
+
 func TestTemplateHelperBranches(t *testing.T) {
 	templateEnv(t)
 	agents := selectedAgents("all")

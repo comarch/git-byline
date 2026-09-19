@@ -347,6 +347,34 @@ func selectedAgents(value string) []string {
 	}
 }
 
+// ManagedTemplateDir returns the managed Git template directory under the
+// trusted config base, so callers outside this package can recognize an
+// already-configured template without duplicating the resolution rules.
+func ManagedTemplateDir() (string, error) {
+	_, dir, err := templateDir()
+	return dir, err
+}
+
+// ManagedTemplateConfigured reports whether every user-level Git template
+// value points at the managed template directory. A refresh runs only when
+// template installation can succeed without replacing foreign config.
+func ManagedTemplateConfigured() (bool, error) {
+	dir, err := ManagedTemplateDir()
+	if err != nil {
+		return false, err
+	}
+	values, err := gitcmd.GlobalConfigValues(templateConfigKey)
+	if err != nil {
+		return false, err
+	}
+	for _, value := range values {
+		if value != dir {
+			return false, nil
+		}
+	}
+	return len(values) > 0, nil
+}
+
 // templateDir returns the trusted base directory and the managed Git
 // template directory inside it. XDG_CONFIG_HOME takes precedence so tests
 // and custom setups can relocate the template.

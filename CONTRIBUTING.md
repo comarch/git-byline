@@ -47,8 +47,9 @@ required check to get a green result. See [docs/VALIDATION.md](docs/VALIDATION.m
 ## Code rules
 
 - Pure Go. CGo is forbidden.
-- Production code must not import network packages.
-- `os/exec` is allowed only in `internal/gitcmd`.
+- Production code must not import network packages; network access happens
+  only through the curl subprocess in `internal/runner`.
+- `os/exec` is allowed only in `internal/gitcmd` and `internal/runner`.
 - Validate paths and untrusted hook input at the boundary.
 - Wrap errors with context using `fmt.Errorf` and `%w`.
 - Keep the attribution engine independent from Git, files, JSON, clocks, and

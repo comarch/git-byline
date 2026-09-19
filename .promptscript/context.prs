@@ -8,6 +8,7 @@
   architecture: {
     cli: "cmd/git-byline and internal/app"
     git: "internal/gitcmd is the only Git subprocess boundary"
+    runner: "internal/runner is the only curl and self-exec subprocess boundary, used by update and version --check"
     model: "internal/model owns versioned records and invariants"
     storage: "internal/store and internal/lock own local durability"
     engine: "internal/engine is pure attribution transformation"
@@ -31,7 +32,10 @@
   and compacts retention. `dashboard` renders validated blame and status data
   into one self-contained local HTML file without external resources. The
   managed `pre-push` hook publishes attribution notes through Git by default;
-  `--local-notes` removes that sharing hook.
+  `--local-notes` removes that sharing hook. `update` downloads the newest
+  release from the pinned GitHub repository through `internal/runner`, verifies
+  it against `checksums.txt`, swaps the binary, and refreshes managed hooks;
+  `version --check` reads the latest release tag.
 
   ## Data locations
 
@@ -44,7 +48,7 @@
   ## Public commands
 
   - `checkpoint`, `annotate`, `blame`, `status`, `dashboard`
-  - `install-hooks`, `uninstall`
+  - `install-hooks`, `uninstall`, `update`
   - `version`, `help`
   """
 }

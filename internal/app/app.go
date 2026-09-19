@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/comarch/git-byline/internal/model"
+	"github.com/comarch/git-byline/internal/runner"
 	"github.com/comarch/git-byline/internal/version"
 )
 
@@ -189,13 +190,17 @@ func commands() []*command {
 		},
 		{
 			name:  "update",
-			short: "replace the running binary from a verified archive",
-			usage: "Usage: git-byline update --archive FILE --checksums FILE [--dry-run]\n\n" +
-				"Verify a staged release archive against its checksums and replace\n" +
-				"the running binary in place. Use the .tar.gz release on Linux and\n" +
-				"macOS and the .zip release on Windows. The binary never downloads\n" +
-				"anything: fetch the archive and checksums yourself. After the swap,\n" +
-				"run 'git-byline version' to confirm the new version.",
+			short: "download the latest verified release and swap it in",
+			usage: "Usage: git-byline update [--version vX.Y.Z] [--dry-run] [--no-hooks]\n" +
+				"                         [--archive FILE --checksums FILE]\n\n" +
+				"Update the running binary and refresh managed hooks. With no\n" +
+				"flags, the latest release is downloaded from the pinned GitHub\n" +
+				"repository over HTTPS, verified against its checksums.txt, and\n" +
+				"swapped in; this fetch is the command's only network access.\n" +
+				"--version pins a specific release tag. --archive and --checksums\n" +
+				"update from files you fetched yourself, with no network access at\n" +
+				"all. --no-hooks skips the hook refresh. After the swap, run\n" +
+				"'git-byline version' to confirm the new version.",
 			run: runUpdate,
 		},
 		{
@@ -208,11 +213,14 @@ func commands() []*command {
 		{
 			name:  "version",
 			short: "show the git-byline version",
-			usage: "Usage: git-byline version [--json]\n\n" +
+			usage: "Usage: git-byline version [--json] [--check]\n\n" +
 				"Print the git-byline version and exit. Release builds report the\n" +
 				"release tag; local builds report dev. --json prints the version,\n" +
 				"the highest supported attribution note version, and the state\n" +
-				"format version.",
+				"format version. --check asks the GitHub release page for the\n" +
+				"newest release and prints the update command when it is newer\n" +
+				"than the running one. It is one of the two commands that touch\n" +
+				"the network, and it only reads.",
 			run: runVersion,
 		},
 	}
@@ -229,7 +237,7 @@ func buildRootUsage() string {
 	b.WriteString("Usage: git-byline <command> [flags]\n")
 	b.WriteString("\n")
 	b.WriteString("Track human and AI authorship line by line, from agent edits\n")
-	b.WriteString("to commits. No cloud, no daemon, no network.\n")
+	b.WriteString("to commits. No cloud, no daemon, no background network.\n")
 	b.WriteString("\n")
 	b.WriteString("Commands:\n")
 	for _, c := range commands() {
@@ -329,7 +337,9 @@ type versionJSON struct {
 // runVersion implements the version command. The default output is one
 // stable line; --json adds the highest supported attribution note and
 // state format versions for tooling that checks format compatibility
-// before updating.
+// before updating. --check additionally resolves the newest release
+// tag from the GitHub release page and prints the update command when a
+// newer release exists.
 func runVersion(env *Env, c *command, args []string) (int, error) {
 	fs := flag.NewFlagSet("git-byline "+c.name, flag.ContinueOnError)
 	var flagOutput strings.Builder
@@ -338,6 +348,7 @@ func runVersion(env *Env, c *command, args []string) (int, error) {
 		fmt.Fprintln(&flagOutput, c.usage)
 	}
 	asJSON := fs.Bool("json", false, "print one machine-readable JSON object")
+	check := fs.Bool("check", false, "compare against the latest GitHub release")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(env.Stdout, c.usage)
@@ -348,6 +359,9 @@ func runVersion(env *Env, c *command, args []string) (int, error) {
 	}
 	if fs.NArg() > 0 {
 		return commandUsageError(env, c, fmt.Errorf("version takes no arguments, got %q", fs.Arg(0)))
+	}
+	if *asJSON && *check {
+		return commandUsageError(env, c, errors.New("--check cannot be combined with --json"))
 	}
 	if *asJSON {
 		data, err := json.Marshal(versionJSON{
@@ -362,5 +376,27 @@ func runVersion(env *Env, c *command, args []string) (int, error) {
 		return ExitSuccess, nil
 	}
 	fmt.Fprintf(env.Stdout, "git-byline %s\n", version.Version)
+	if !*check {
+		return ExitSuccess, nil
+	}
+	rn, err := runner.New("")
+	if err != nil {
+		return operationalError(env, c.name, err)
+	}
+	tag, err := rn.LatestTag(updateRepository)
+	if err != nil {
+		return operationalError(env, c.name, err)
+	}
+	if version.IsRelease() {
+		switch version.CompareReleaseTags(version.Version, tag) {
+		case 0:
+			fmt.Fprintf(env.Stdout, "git-byline %s is up to date with the latest release.\n", version.Version)
+			return ExitSuccess, nil
+		case 1:
+			fmt.Fprintf(env.Stdout, "git-byline %s is newer than the latest release %s.\n", version.Version, tag)
+			return ExitSuccess, nil
+		}
+	}
+	fmt.Fprintf(env.Stdout, "New release %s is available. Run 'git-byline update' to install it.\n", tag)
 	return ExitSuccess, nil
 }

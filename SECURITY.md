@@ -42,11 +42,14 @@ Source code, workflows, generated instructions, release assets, hook
 installation, local checkpoint storage, Git object retention, and attribution
 notes are in scope.
 
-The production binary must never make network connections. Telemetry, update
-checks, remote lookups, downloads, and cloud synchronization by the binary are
-forbidden. The managed `pre-push` hook may invoke Git to publish attribution
-notes unless installation used `--local-notes`. Any other network behavior is
-a security defect.
+The production binary makes no background network connections. Telemetry,
+silent update checks, remote lookups, and cloud synchronization are forbidden.
+Network access exists only in `git-byline update` and
+`git-byline version --check`: both run curl through `internal/runner` against
+the pinned GitHub release repository over HTTPS, and the update download must
+still match `checksums.txt` before the swap. The managed `pre-push` hook may
+invoke Git to publish attribution notes unless installation used
+`--local-notes`. Any other network behavior is a security defect.
 
 Checkpoint metadata and notes must not contain raw hook input, prompts,
 transcripts, environment dumps, authorization data, or file content. Snapshot
