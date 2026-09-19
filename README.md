@@ -152,7 +152,7 @@ recorded, so a commit never claims work it did not introduce.
 | Keep review effort where the risk is | Reviewers jump straight to agent-edited ranges instead of treating a mixed commit as one opaque change |
 | Enforce a policy instead of a guideline | `git byline check` fails a build on an AI or untracked share limit, with a stable exit code and JSON output |
 | Produce something an auditor accepts | Machine-readable disclosure documents plus `verify --deep`, which proves the artifact against the actual blobs |
-| Work in a regulated or air-gapped estate | No cloud, account, daemon, or telemetry. Every command runs offline; `update` and `version --check` fetch only a checksum-verified release, and air-gapped updates stay manual with `--archive` and `--checksums` |
+| Work in a regulated or air-gapped estate | No cloud, account, daemon, or telemetry. Only explicit `update` and `version --check` invocations use the network; every other command runs offline, and air-gapped updates stay manual with `--archive` and `--checksums` |
 | Avoid another vendor in the data path | Prompts and transcripts are never stored. Metadata travels only through Git, to the remote you already trust |
 | Survive real Git workflows | Rebase, amend, cherry-pick, reset, branch switch, stash, squash merges, and forge merges are covered |
 

@@ -47,11 +47,12 @@ func releaseTagFields(tag string) [3]string {
 	if len(fields) != len(out) {
 		return out
 	}
-	for index, field := range fields {
-		if isDecimal(field) {
-			out[index] = field
+	for _, field := range fields {
+		if !isDecimal(field) {
+			return out
 		}
 	}
+	copy(out[:], fields)
 	return out
 }
 

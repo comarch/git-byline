@@ -32,9 +32,10 @@ regulated change processes, and AI adoption experiments.
 
 ### Smaller data boundary
 
-Every command runs offline: only `update` and `version --check` fetch, and
-only the pinned GitHub release repository, over HTTPS, with the update
-checksum-verified. There is no account, API key, service, daemon, or telemetry
+Only explicit `update` and `version --check` invocations use the network.
+Every other command runs offline. Both fetch only from the pinned GitHub
+release repository over HTTPS, with update downloads checksum-verified.
+There is no account, API key, service, daemon, or telemetry
 endpoint. Prompts and transcripts stay outside the data model. A managed
 pre-push hook uses Git to publish attribution notes by default;
 `--local-notes` disables that sharing.

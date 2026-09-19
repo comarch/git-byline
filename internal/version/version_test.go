@@ -29,13 +29,14 @@ func TestCompareReleaseTags(t *testing.T) {
 		// input that skipped tag validation.
 		{"1.2", "v0.0.0", 0},
 		{"vX.Y.Z", "v0.0.0", 0},
+		{"v2.x.0", "v0.0.0", 0},
 		// Fields beyond any int range still order numerically, and leading
 		// zeros never change the order.
 		{"v99999999999999999999.0.0", "v9.0.0", 1},
 		{"v1.0.0", "v99999999999999999999.0.0", -1},
 		{"v01.002.0000", "v1.2.0", 0},
-		// An empty field compares as zero, and equal-length decimals
-		// order lexicographically.
+		// An empty field invalidates the whole tag, and equal-length
+		// decimals order lexicographically.
 		{"v0..0", "v0.0.0", 0},
 		{"v1.2.3", "v1.2.9", -1},
 	}

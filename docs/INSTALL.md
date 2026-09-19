@@ -313,11 +313,11 @@ Linux and macOS, weekly with cron (the installer places the binary at
 
 Windows, weekly with Task Scheduler (the installer places the binary at
 `$HOME\bin` by default; PowerShell expands `$env:USERPROFILE` before schtasks
-sees the full path, which Task Scheduler resolves without the interactive
-PATH):
+sees the full path and preserves the inner quotes needed when the profile
+path contains spaces):
 
 ```powershell
-schtasks /Create /TN "git-byline update" /SC WEEKLY /ST 08:17 /TR "$env:USERPROFILE\bin\git-byline.exe update"
+schtasks /Create /TN "git-byline update" /SC WEEKLY /ST 08:17 /TR "`"$env:USERPROFILE\bin\git-byline.exe`" update"
 ```
 
 ## Go toolchain
