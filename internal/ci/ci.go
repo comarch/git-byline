@@ -94,6 +94,92 @@ func Template(provider Provider) ([]byte, error) {
 	return embeddedTemplate(provider)
 }
 
+// DetectProvider classifies a repository's origin remote as a supported
+// public forge. Only github.com and gitlab.com hosts are detected, so a
+// self-hosted or enterprise forge stays untouched until the user runs
+// ci install explicitly. A missing repository, a missing origin remote,
+// or a configuration read failure reports no provider: detection is
+// advisory and never fails the caller.
+func DetectProvider(dir string) (Provider, bool) {
+	repo, err := gitcmd.Discover(dir)
+	if err != nil {
+		return "", false
+	}
+	remote, ok, err := repo.ConfigPath("remote.origin.url")
+	if err != nil || !ok {
+		return "", false
+	}
+	host, ok := remoteHost(remote)
+	if !ok {
+		return "", false
+	}
+	switch host {
+	case "github.com":
+		return ProviderGitHub, true
+	case "gitlab.com":
+		return ProviderGitLab, true
+	default:
+		return "", false
+	}
+}
+
+// remoteHost extracts the host from an HTTPS, SSH, or SCP-style Git remote
+// URL. The second result is false for a URL without a usable host.
+func remoteHost(remote string) (string, bool) {
+	value := remote
+	if index := strings.Index(value, "://"); index >= 0 {
+		value = value[index+3:]
+	}
+	if at := strings.LastIndex(value, "@"); at >= 0 && !strings.ContainsAny(value[:at], `/\`) {
+		value = value[at+1:]
+	}
+	end := strings.IndexAny(value, `:/`)
+	if end < 0 {
+		end = len(value)
+	}
+	if end == 0 {
+		return "", false
+	}
+	return strings.ToLower(value[:end]), true
+}
+
+// Uninstall removes forge workflow files that still match the canonical
+// template byte for byte. A modified or foreign file stays in place, so
+// removal is limited to managed content.
+func Uninstall(root string) ([]string, error) {
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve CI uninstall root: %w", err)
+	}
+	var removed []string
+	for _, provider := range []Provider{ProviderGitHub, ProviderGitLab} {
+		relative, err := TemplatePath(provider)
+		if err != nil {
+			return nil, err
+		}
+		template, err := Template(provider)
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.Join(absoluteRoot, filepath.FromSlash(relative))
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read CI workflow %q: %w", relative, err)
+		}
+		if !bytes.Equal(data, template) {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, fmt.Errorf("remove CI workflow %q: %w", relative, err)
+		}
+		removed = append(removed, relative)
+	}
+	return removed, nil
+}
+
 // Install writes a provider workflow without replacing an existing file.
 func Install(root string, provider Provider) (InstallResult, error) {
 	template, err := Template(provider)

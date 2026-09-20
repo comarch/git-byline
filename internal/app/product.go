@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/comarch/git-byline/internal/ci"
 	"github.com/comarch/git-byline/internal/dashboard"
 	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/hooks"
@@ -492,7 +493,34 @@ func runInstallHooks(env *Env, command *command, args []string) (int, error) {
 	if options.Git && !options.LocalNotes {
 		fmt.Fprintln(env.Stdout, "attribution notes will be pushed automatically")
 	}
+	provisionForgeWorkflow(env, dir, options)
 	return ExitSuccess, nil
+}
+
+// provisionForgeWorkflow creates the forge attribution workflow when the
+// origin remote points at a supported public forge. Provisioning belongs
+// to Git-hook installation with shared notes and is skipped for --template
+// scope, which has no repository remote. Detection or installation
+// problems warn and leave the exit code unchanged.
+func provisionForgeWorkflow(env *Env, dir string, options hooks.Options) {
+	if !options.Git || options.LocalNotes || options.Template {
+		return
+	}
+	provider, found := ci.DetectProvider(dir)
+	if !found {
+		fmt.Fprintln(env.Stdout, "no GitHub or GitLab remote detected; run: git-byline ci install --provider github|gitlab")
+		return
+	}
+	result, err := ci.Install(dir, provider)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "warning: could not install the forge workflow: %v\n", err)
+		return
+	}
+	if result.Changed {
+		fmt.Fprintf(env.Stdout, "created %s\n", result.Path)
+		return
+	}
+	fmt.Fprintf(env.Stdout, "workflow already installed at %s\n", result.Path)
 }
 
 func runUninstall(env *Env, command *command, args []string) (int, error) {
@@ -511,6 +539,14 @@ func runUninstall(env *Env, command *command, args []string) (int, error) {
 	result, err := hooks.Uninstall(dir, options)
 	if err != nil {
 		return operationalError(env, command.name, err)
+	}
+	if options.Git && !options.Template {
+		removed, err := ci.Uninstall(dir)
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "warning: could not remove the forge workflow: %v\n", err)
+		} else {
+			result.Changed = append(result.Changed, removed...)
+		}
 	}
 	for _, path := range result.Changed {
 		fmt.Fprintf(env.Stdout, "updated %s\n", path)

@@ -348,7 +348,10 @@ ignore events outside a Git worktree.
 `--git` installs `post-commit` attribution and `pre-push` note sharing.
 Ordinary pushes then publish line ranges, paths, agent and model names,
 human identity tokens, session identifiers, and timestamps to the same
-remote. Use `--local-notes` to install attribution without automatic note
+remote. When the origin remote is github.com or gitlab.com, the same
+install also creates the forge attribution workflow, so squash and rebase
+merges keep their attribution; `--local-notes` and `--template` skip it.
+Use `--local-notes` to install attribution without automatic note
 sharing:
 
 ```sh
@@ -482,7 +485,7 @@ Nineteen commands, one binary:
 | `export --format gitai\|agent-trace [--commit <rev>] [--output FILE]` | Export attribution to an interop format |
 | `import --format gitai [--range <rev-range>] [--dry-run]` | Import Git AI attribution notes |
 | `ci install\|run --provider github\|gitlab` | Install or run forge merge attribution workflows |
-| `install-hooks` | Merge agent hooks plus Git annotation and note-sharing hooks |
+| `install-hooks` | Merge agent hooks plus Git annotation and note-sharing hooks, plus the forge workflow for public GitHub or GitLab remotes |
 | `uninstall` | Remove only git-byline-managed hooks |
 | `update --archive FILE --checksums FILE [--dry-run]` | Replace the running binary from a checksum-verified staged archive |
 | `version [--json]` | Print the build version, optionally as JSON |
@@ -612,10 +615,13 @@ documented limitation, not a silent guess.
 
 Squash and rebase merges on GitHub or GitLab create commits that never passed
 a local hook. `git byline ci install` writes a least-privilege workflow;
-`git byline ci run` reconstructs attribution from the pull request commits,
-pairing by patch ID for rebase merges and folding in commit order for
-squashes. The binary writes notes locally; the workflow pushes the notes ref
-through Git, exactly like the pre-push hook.
+`install-hooks --git` creates the same workflow automatically when the
+origin remote is github.com or gitlab.com. `git byline ci run` reconstructs
+attribution from the pull request commits, pairing by patch ID for rebase
+merges and folding in commit order for squashes. The binary writes notes
+locally; the workflow pushes the notes ref through Git, exactly like the
+pre-push hook. `uninstall` removes the workflow only while it still matches
+the generated template byte for byte.
 
 ### Interoperate, do not lock in
 

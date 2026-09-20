@@ -290,6 +290,12 @@ notes push uses `--no-verify` to avoid recursively running the hook. Unrelated
 stops the branch push, but a successful notes push cannot guarantee that the
 later branch update will be accepted.
 
+When the origin remote is github.com or gitlab.com, `install-hooks --git`
+also creates the forge attribution workflow, so squash and rebase merges
+keep attribution. Detection reads `remote.origin.url` locally and is
+skipped for `--local-notes` and `--template` scope. `uninstall` removes
+the workflow only while it matches the embedded template byte for byte.
+
 Use `--local-notes` to install `post-commit` annotation without the sharing
 hook. Fetch shared notes into another clone explicitly:
 

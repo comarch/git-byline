@@ -52,6 +52,10 @@ Forge merge workflows are separate from the binary trust boundary. `git byline
 ci run` reads only commits and notes already fetched into the local repository,
 then writes attribution notes locally. It never calls a forge service and never
 pushes. The generated workflow performs the Git fetch and notes push.
+`install-hooks --git` provisions the workflow file locally from the embedded
+template when the origin remote host is github.com or gitlab.com; it refuses to
+replace an existing file and never contacts the forge. `uninstall` removes the
+file only while it still matches the embedded template byte for byte.
 
 The GitHub workflow requests only `contents: write`. It needs read access to
 the repository and write access to `refs/notes/byline`; it does not need issue,

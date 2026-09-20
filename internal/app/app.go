@@ -177,6 +177,9 @@ func commands() []*command {
 			usage: "Usage: git-byline install-hooks [--agent droid|claude|all|none] [--git] [--local-notes] [--user|--project] [--template]\n\n" +
 				"Merge managed hooks without replacing existing configuration.\n" +
 				"Git hooks share attribution notes on push unless --local-notes is set.\n" +
+				"When shared-note Git hooks are installed, the forge attribution\n" +
+				"workflow is also created when the origin remote is github.com or\n" +
+				"gitlab.com, so squash and rebase merges keep their attribution.\n" +
 				"--template manages Git hooks in the git-byline Git template\n" +
 				"directory, so every new git init and git clone is attributed.",
 			run: runInstallHooks,
@@ -185,7 +188,9 @@ func commands() []*command {
 			name:  "uninstall",
 			short: "remove managed hooks",
 			usage: "Usage: git-byline uninstall [--agent droid|claude|all|none] [--git] [--user|--project] [--template]\n\n" +
-				"Remove only configuration managed by git-byline.",
+				"Remove only configuration managed by git-byline, including a\n" +
+				"forge attribution workflow that still matches the generated\n" +
+				"template.",
 			run: runUninstall,
 		},
 		{
