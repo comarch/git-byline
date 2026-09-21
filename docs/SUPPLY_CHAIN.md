@@ -65,6 +65,11 @@ creation. The `release` environment protects the separate artifact upload.
 Keep a recovery owner independent from the release credential. No personal
 token should be the only recovery path.
 
+Repository rulesets must protect every `refs/tags/v*.*.*` against updates
+and deletion, so a semantic release tag cannot be retargeted after
+publish. The moving action major tag, like `v1`, sits outside that
+pattern by design: the release workflow moves it on every publish.
+
 ## Compromise response
 
 1. Disable affected workflows and auto-merge.
