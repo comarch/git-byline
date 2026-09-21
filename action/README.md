@@ -36,7 +36,7 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
-      - uses: comarch/git-byline/action@v1
+      - uses: comarch/git-byline@v1
 ```
 
 The workflow, not the action, decides when attribution is reconstructed,
@@ -50,6 +50,12 @@ so keep the `if`, `permissions`, and `concurrency` blocks as shown.
 | `token` | `github.token` | Token used for Git fetch and push. The default needs the calling workflow to grant `contents: write`. |
 
 ## Versioning
+
+The action metadata lives at the repository root, where the GitHub
+Marketplace listing requires it. The copy in this directory keeps the
+`comarch/git-byline/action@v1` reference working, and the validate gate
+fails when the two files drift. Prefer `comarch/git-byline@v1` in new
+workflows.
 
 GitHub Actions has no `@latest` reference, so the action is reached
 through Git refs. The moving major tag `v1` follows every 1.x release and

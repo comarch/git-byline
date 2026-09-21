@@ -628,12 +628,15 @@ reconstruction ships as a composite action that installs a
 checksum-verified release binary:
 
 ```yaml
-- uses: comarch/git-byline/action@v1
+- uses: comarch/git-byline@v1
 ```
 
-The moving `v1` tag follows every 1.x release; pin a release tag like
-`@v1.3.0` for immutable runs. See [action/README.md](action/README.md)
-for the calling workflow.
+The action metadata lives at the repository root, where the GitHub
+Marketplace listing requires it, and a byte-identical copy under
+`action/` keeps `comarch/git-byline/action@v1` working. The moving `v1`
+tag follows every 1.x release; pin a release tag like `@v1.3.0` for
+immutable runs. See [action/README.md](action/README.md) for the calling
+workflow.
 
 ### Interoperate, do not lock in
 

@@ -57,8 +57,11 @@ template when the origin remote host is github.com or gitlab.com; it refuses to
 replace an existing file and never contacts the forge. `uninstall` removes the
 file only while it still matches the embedded template byte for byte.
 
-The marketplace action under `action/` is an alternative delivery of the same
-reconstruction. It runs in the calling workflow's context: the caller grants
+The marketplace action is an alternative delivery of the same reconstruction.
+Its metadata lives at the repository root, where the GitHub Marketplace
+listing requires it, and a byte-identical copy under `action/` keeps the
+subdirectory reference working; the validate gate fails when the two drift.
+It runs in the calling workflow's context: the caller grants
 `contents: write`, the action downloads a release binary from the pinned
 git-byline repository, verifies it against the release `checksums.txt`, and
 pushes only `refs/notes/byline`. Unlike the generated workflow, which builds

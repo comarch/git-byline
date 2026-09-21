@@ -55,6 +55,9 @@ to stop all release publication.
 7. Install one artifact per supported operating system.
 8. Run `git-byline version` and compare it with the tag.
 9. Review release notes and publish state.
+10. Tick `Publish this Action to the GitHub Marketplace` on the release so
+    the action listing tracks it. The first publish needs the one-time
+    GitHub Marketplace Developer Agreement and two-factor authentication.
 
 If the tag event does not start publication, dispatch `release.yml` manually
 with the existing tag. The workflow validates the tag and checks out that exact

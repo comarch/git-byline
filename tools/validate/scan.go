@@ -252,6 +252,9 @@ func checkScans(root string) error {
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect CI template directory: %w", err)
 	}
+	if err := checkActionMetadata(root); err != nil {
+		return fmt.Errorf("action metadata contract: %w", err)
+	}
 	findings, err := scanRepo(root)
 	if err != nil {
 		return fmt.Errorf("scan: %w", err)
@@ -268,4 +271,35 @@ func checkScans(root string) error {
 		fmt.Fprintf(&b, "  %s %s:%d [%s] %s\n", f.Kind, f.File, f.Line, f.Pattern, text)
 	}
 	return fmt.Errorf("%d finding(s) in repository scan:\n%s", len(findings), b.String())
+}
+
+// checkActionMetadata enforces the marketplace action contract: the
+// repository-root action.yml is the metadata file the GitHub Marketplace
+// listing needs, so it must stay byte-identical to the maintained copy
+// under action/. Repositories without the action directory, such as
+// validation fixtures, skip the contract.
+func checkActionMetadata(root string) error {
+	actionDir := filepath.Join(root, "action")
+	info, err := os.Stat(actionDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect action directory: %w", err)
+	}
+	if !info.IsDir() {
+		return errors.New("action path is not a directory")
+	}
+	source, err := os.ReadFile(filepath.Join(actionDir, "action.yml"))
+	if err != nil {
+		return fmt.Errorf("read action/action.yml: %w", err)
+	}
+	listed, err := os.ReadFile(filepath.Join(root, "action.yml"))
+	if err != nil {
+		return fmt.Errorf("read root action.yml: %w", err)
+	}
+	if !bytes.Equal(source, listed) {
+		return errors.New("root action.yml differs from action/action.yml")
+	}
+	return nil
 }

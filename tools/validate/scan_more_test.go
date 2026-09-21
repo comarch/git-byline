@@ -127,3 +127,121 @@ func unreadableScanRoot(t *testing.T) string {
 	}
 	return root
 }
+
+// Action metadata fixture content; scan-clean and distinct so no
+// literal repeats past the Sonar duplication threshold.
+const (
+	actionSource = "runs: source\n"
+	actionDrift  = "runs: drifted\n"
+)
+
+func TestCheckScansActionContract(t *testing.T) {
+	t.Run("action metadata contract fails", checkScansActionContractFailure)
+}
+
+func TestCheckActionMetadata(t *testing.T) {
+	t.Run("without action directory passes", actionDirAbsent)
+	t.Run("action path is a file", actionPathFile)
+	t.Run("action directory is unreadable", actionDirUnreadable)
+	t.Run("source action.yml is missing", actionSourceMissing)
+	t.Run("root action.yml is missing", actionRootMissing)
+	t.Run("copies drift", actionDrifts)
+	t.Run("copies match", actionMatch)
+}
+
+func checkScansActionContractFailure(t *testing.T) {
+	root := writeActionCopies(t, actionSource, actionDrift)
+	err := requireCheckScansError(t, root, "checkScans() = nil error, want action contract failure")
+	if !strings.Contains(err.Error(), "action metadata contract") {
+		t.Fatalf("checkScans() = %v, want action metadata contract", err)
+	}
+}
+
+func actionDirAbsent(t *testing.T) {
+	if err := checkActionMetadata(t.TempDir()); err != nil {
+		t.Fatalf("checkActionMetadata(empty) = %v, want nil", err)
+	}
+}
+
+func actionPathFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "action"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write action path: %v", err)
+	}
+	requireCheckActionError(t, root, "checkActionMetadata() = nil error, want path failure")
+}
+
+func actionDirUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permissions are not enforced on Windows")
+	}
+	if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "action"), 0o755); err != nil {
+		t.Fatalf("create action directory: %v", err)
+	}
+	if err := os.Chmod(root, 0); err != nil {
+		t.Fatalf("chmod root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+	requireCheckActionError(t, root, "checkActionMetadata() = nil error, want inspection failure")
+}
+
+func actionSourceMissing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "action"), 0o755); err != nil {
+		t.Fatalf("create action directory: %v", err)
+	}
+	requireCheckActionError(t, root, "checkActionMetadata() = nil error, want source failure")
+}
+
+func actionRootMissing(t *testing.T) {
+	root := writeActionCopies(t, actionSource, "")
+	requireCheckActionError(t, root, "checkActionMetadata() = nil error, want root copy failure")
+}
+
+func actionDrifts(t *testing.T) {
+	root := writeActionCopies(t, actionSource, actionDrift)
+	err := requireCheckActionError(t, root, "checkActionMetadata() = nil error, want drift failure")
+	if !strings.Contains(err.Error(), "differs") {
+		t.Fatalf("checkActionMetadata() = %v, want drift finding", err)
+	}
+}
+
+func actionMatch(t *testing.T) {
+	root := writeActionCopies(t, actionSource, actionSource)
+	if err := checkActionMetadata(root); err != nil {
+		t.Fatalf("checkActionMetadata(copies) = %v, want nil", err)
+	}
+}
+
+// writeActionCopies writes the maintained action source and the root
+// marketplace copy. An empty listed string writes no root copy, the
+// drift case where the copy was never updated.
+func writeActionCopies(t *testing.T, source, listed string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "action"), 0o755); err != nil {
+		t.Fatalf("create action directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "action", "action.yml"), []byte(source), 0o600); err != nil {
+		t.Fatalf("write action source: %v", err)
+	}
+	if listed != "" {
+		if err := os.WriteFile(filepath.Join(root, "action.yml"), []byte(listed), 0o600); err != nil {
+			t.Fatalf("write root action copy: %v", err)
+		}
+	}
+	return root
+}
+
+func requireCheckActionError(t *testing.T, root, failure string) error {
+	t.Helper()
+	err := checkActionMetadata(root)
+	if err == nil {
+		t.Fatal(failure)
+	}
+	return err
+}
