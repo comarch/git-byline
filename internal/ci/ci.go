@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -167,31 +169,37 @@ func managedWorkflows() []managedWorkflow {
 
 // Uninstall removes forge workflow files that still match the canonical
 // template byte for byte. A modified or foreign file stays in place, so
-// removal is limited to managed content. Removals already done are
+// removal is limited to managed content. Validation, reading, and removal
+// all happen below one os.Root, so no symlink swap between checks can
+// redirect an operation outside the root. Removals already done are
 // reported together with any later failure, so the caller can show what
 // changed before the failure.
 func Uninstall(root string) ([]string, error) {
+	rootFile, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open CI uninstall root: %w", err)
+	}
+	defer rootFile.Close()
 	var removed []string
 	for _, workflow := range managedWorkflows() {
 		template, err := Template(workflow.provider)
 		if err != nil {
 			return removed, err
 		}
-		path, ok, err := managedWorkflowPath(root, workflow.relative)
-		if err != nil {
+		if err := validateManagedWorkflow(rootFile, workflow.relative); err != nil {
 			return removed, err
 		}
-		if !ok {
-			continue
-		}
-		data, err := os.ReadFile(path)
+		data, err := readManagedWorkflow(rootFile, workflow.relative)
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return removed, fmt.Errorf("read CI workflow %q: %w", workflow.relative, err)
 		}
 		if !bytes.Equal(data, template) {
 			continue
 		}
-		if err := os.Remove(path); err != nil {
+		if err := rootFile.Remove(workflow.relative); err != nil {
 			return removed, fmt.Errorf("remove CI workflow %q: %w", workflow.relative, err)
 		}
 		removed = append(removed, workflow.relative)
@@ -199,36 +207,47 @@ func Uninstall(root string) ([]string, error) {
 	return removed, nil
 }
 
-// managedWorkflowPath walks every path component from root without
-// following symlinks. It reports false when the workflow is absent and an
-// error when a component exists but is not the expected kind, so a
-// symlink or junction cannot redirect removal outside root.
-func managedWorkflowPath(root, relative string) (string, bool, error) {
+// validateManagedWorkflow checks every path component below root without
+// following symlinks. A missing workflow is not an error; a component
+// that exists but is not the expected kind is, so a symlink or junction
+// is refused before anything is read or removed.
+func validateManagedWorkflow(rootFile *os.Root, relative string) error {
 	components := splitPath(relative)
-	current := root
+	current := ""
 	for index, component := range components {
-		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
+		current = path.Join(current, component)
+		info, err := rootFile.Lstat(current)
 		if errors.Is(err, os.ErrNotExist) {
-			return "", false, nil
+			return nil
 		}
 		if err != nil {
-			return "", false, fmt.Errorf("inspect CI workflow path %q: %w", current, err)
+			return fmt.Errorf("inspect CI workflow path %q: %w", current, err)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return "", false, fmt.Errorf("refusing symlinked CI workflow path %q", current)
+			return fmt.Errorf("refusing symlinked CI workflow path %q", current)
 		}
 		if index+1 < len(components) {
 			if !info.IsDir() {
-				return "", false, fmt.Errorf("CI workflow parent %q is not a directory", current)
+				return fmt.Errorf("CI workflow parent %q is not a directory", current)
 			}
 			continue
 		}
 		if !info.Mode().IsRegular() {
-			return "", false, fmt.Errorf("CI workflow path %q is not a regular file", relative)
+			return fmt.Errorf("CI workflow path %q is not a regular file", relative)
 		}
 	}
-	return current, true, nil
+	return nil
+}
+
+// readManagedWorkflow reads the workflow below root. Go 1.24 has no
+// os.Root.ReadFile, so the file opens explicitly and reads fully.
+func readManagedWorkflow(rootFile *os.Root, relative string) ([]byte, error) {
+	file, err := rootFile.Open(relative)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(file)
 }
 
 // Install writes a provider workflow without replacing an existing file.

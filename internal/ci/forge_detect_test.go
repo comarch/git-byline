@@ -184,6 +184,16 @@ func TestUninstallMissingWorkflows(t *testing.T) {
 	}
 }
 
+// TestUninstallOpenRootFails covers an uninstall root that is missing.
+func TestUninstallOpenRootFails(t *testing.T) {
+	t.Parallel()
+	missing := filepath.Join(t.TempDir(), "missing-root")
+	if _, err := Uninstall(missing); err == nil ||
+		!strings.Contains(err.Error(), "open CI uninstall root") {
+		t.Fatalf("Uninstall(missing root) = %v, want open CI uninstall root error", err)
+	}
+}
+
 // TestUninstallWorkflowParentNotDirectory covers a blocked parent path on
 // every platform.
 func TestUninstallWorkflowParentNotDirectory(t *testing.T) {
