@@ -11,6 +11,10 @@
 - The short installer one-liners execute only scripts from this repository's
   protected `main`; checksum-first and reviewed-script alternatives are
   documented.
+- The `action/` marketplace action installs the git-byline binary from the
+  pinned release repository, verifies it against the release `checksums.txt`,
+  and pins every action it uses by commit SHA. Consumers pin the action to
+  immutable release tags.
 
 ## CI
 

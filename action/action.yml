@@ -1,0 +1,178 @@
+name: git-byline forge attribution
+description: >-
+  Reconstruct human, AI, and untracked line-level attribution after a
+  GitHub squash or rebase merge, and publish it to refs/notes/byline.
+author: Comarch
+branding:
+  icon: git-commit
+  color: blue
+
+inputs:
+  version:
+    description: >-
+      git-byline release tag to install, like v1.3.0. The default,
+      latest, resolves the newest release.
+    default: latest
+  token:
+    description: >-
+      Token used for Git fetch and push. Defaults to the workflow
+      github.token, which needs contents: write.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Check out repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Install git-byline
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        BYLINE_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        base="https://github.com/comarch/git-byline/releases"
+        version="${BYLINE_VERSION}"
+        if [ "$version" = "latest" ]; then
+          version="$(curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            -I -o /dev/null -w '%{url_effective}' "$base/latest")"
+          version="${version##*/}"
+        fi
+        case "$RUNNER_OS:$RUNNER_ARCH" in
+          Linux:X64) os=linux; arch=amd64 ;;
+          Linux:ARM64) os=linux; arch=arm64 ;;
+          macOS:X64) os=macOS; arch=amd64 ;;
+          macOS:ARM64) os=macOS; arch=arm64 ;;
+          *)
+            echo "git-byline: unsupported runner $RUNNER_OS $RUNNER_ARCH" >&2
+            exit 1
+            ;;
+        esac
+        archive="git-byline_${version#v}_${os}_${arch}.tar.gz"
+        dir="${RUNNER_TEMP}/git-byline-action"
+        rm -rf "$dir"
+        mkdir -p "$dir/bin"
+        curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+          -o "$dir/$archive" "$base/download/$version/$archive"
+        curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+          -o "$dir/checksums.txt" "$base/download/$version/checksums.txt"
+        expected="$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1 }' "$dir/checksums.txt")"
+        printf '%s' "$expected" | grep -Eq '^[0-9a-fA-F]{64}$' || {
+          echo "git-byline: missing or invalid checksum for $archive" >&2
+          exit 1
+        }
+        if command -v sha256sum >/dev/null 2>&1; then
+          actual="$(sha256sum "$dir/$archive" | awk '{ print $1 }')"
+        else
+          actual="$(shasum -a 256 "$dir/$archive" | awk '{ print $1 }')"
+        fi
+        [ "$actual" = "$expected" ] || {
+          echo "git-byline: checksum mismatch for $archive" >&2
+          exit 1
+        }
+        tar -xzf "$dir/$archive" -C "$dir" git-byline
+        mv "$dir/git-byline" "$dir/bin/git-byline"
+        printf '%s\n' "$dir/bin" >> "$GITHUB_PATH"
+
+    - name: Install git-byline (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        BYLINE_VERSION: ${{ inputs.version }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $base = 'https://github.com/comarch/git-byline/releases'
+        $version = $env:BYLINE_VERSION
+        if ($version -eq 'latest') {
+          $response = Invoke-WebRequest -Uri "$base/latest" -Method Head `
+            -MaximumRedirection 0 -SkipHttpErrorCheck
+          $version = ($response.Headers.Location -split '/')[-1]
+        }
+        if ($env:RUNNER_ARCH -eq 'X64') {
+          $arch = 'amd64'
+        } else {
+          $arch = 'arm64'
+        }
+        $archive = "git-byline_$($version.TrimStart('v'))_windows_$arch.zip"
+        $dir = Join-Path $env:RUNNER_TEMP 'git-byline-action'
+        if (Test-Path $dir) {
+          Remove-Item $dir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Force -Path "$dir/bin" | Out-Null
+        Invoke-WebRequest -Uri "$base/download/$version/checksums.txt" `
+          -OutFile "$dir/checksums.txt"
+        Invoke-WebRequest -Uri "$base/download/$version/$archive" `
+          -OutFile "$dir/$archive"
+        $expected = Get-Content "$dir/checksums.txt" | ForEach-Object {
+          $parts = $_ -split '\s+'
+          if ($parts[1] -eq $archive) { $parts[0] }
+        } | Select-Object -First 1
+        if (-not ($expected -match '^[0-9a-fA-F]{64}$')) {
+          throw "git-byline: missing or invalid checksum for $archive"
+        }
+        $actual = (Get-FileHash "$dir/$archive" -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected.ToLowerInvariant()) {
+          throw "git-byline: checksum mismatch for $archive"
+        }
+        Expand-Archive -Path "$dir/$archive" -DestinationPath $dir -Force
+        Copy-Item "$dir/git-byline.exe" "$dir/bin/git-byline.exe" -Force
+        Add-Content -Path $env:GITHUB_PATH -Value "$dir/bin"
+
+    - name: Reconstruct attribution
+      shell: bash
+      env:
+        BYLINE_TOKEN: ${{ inputs.token || github.token }}
+        GIT_BYLINE_CI_SOURCE: ${{ github.event.pull_request.head.sha }}
+        GIT_BYLINE_CI_TARGET: ${{ github.event.pull_request.merge_commit_sha }}
+        GIT_BYLINE_PR_NUMBER: ${{ github.event.pull_request.number }}
+        GIT_BYLINE_REMOTE_URL: ${{ github.server_url }}/${{ github.repository }}.git
+      run: |
+        set -euo pipefail
+        auth_value="${BYLINE_TOKEN}"
+        empty_hooks="${RUNNER_TEMP}/git-byline-empty-hooks"
+        clean_home="${RUNNER_TEMP}/git-byline-home"
+        mkdir -p "$empty_hooks" "$clean_home" "$clean_home/config"
+        export HOME="$clean_home"
+        export XDG_CONFIG_HOME="$clean_home/config"
+        export GIT_CONFIG_NOSYSTEM=1
+        export GIT_CONFIG_GLOBAL=/dev/null
+        export GIT_CONFIG_SYSTEM=/dev/null
+        git_byline() {
+          GIT_CONFIG_COUNT=2 \
+          GIT_CONFIG_KEY_0=http.extraheader \
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer $auth_value" \
+          GIT_CONFIG_KEY_1=credential.helper \
+          GIT_CONFIG_VALUE_1="" \
+          git -c remote.origin.url="${GIT_BYLINE_REMOTE_URL}" "$@"
+        }
+        git_byline remote set-url origin "${GIT_BYLINE_REMOTE_URL}"
+        git config --local core.hooksPath "$empty_hooks"
+        git_byline fetch --no-tags origin \
+          "refs/pull/${GIT_BYLINE_PR_NUMBER}/head:refs/remotes/origin/git-byline-pr-head"
+        if source="$(git rev-parse "${GIT_BYLINE_CI_TARGET}^2" 2>/dev/null)"; then
+          base="$(git rev-parse "${GIT_BYLINE_CI_TARGET}^1")"
+        else
+          source="${GIT_BYLINE_CI_SOURCE}"
+          base="$(git merge-base "$source" "${GIT_BYLINE_CI_TARGET}")"
+        fi
+        test -n "$base"
+        notes="$(git_byline ls-remote --refs origin refs/notes/byline)"
+        if [ -n "$notes" ]; then
+          git_byline fetch --no-tags origin refs/notes/byline:refs/notes/byline
+        fi
+        git config --local user.name git-byline-ci
+        git config --local user.email git-byline-ci@users.noreply.github.com
+        unset BYLINE_TOKEN
+        GIT_BYLINE_CI_BASE="$base" \
+        GIT_BYLINE_CI_SOURCE="$source" \
+          git-byline ci run --provider github
+        push_hooks="$(mktemp -d "${RUNNER_TEMP}/git-byline-push-hooks.XXXXXX")"
+        mkdir -p "$push_hooks"
+        git config --local core.hooksPath "$push_hooks"
+        if git show-ref --verify --quiet refs/notes/byline; then
+          git_byline push --no-verify origin refs/notes/byline:refs/notes/byline
+        fi

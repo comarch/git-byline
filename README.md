@@ -623,6 +623,16 @@ locally; the workflow pushes the notes ref through Git, exactly like the
 pre-push hook. `uninstall` removes the workflow only while it still matches
 the generated template byte for byte.
 
+Prefer a marketplace action over running repository code? The same
+reconstruction ships as a composite action that installs a
+checksum-verified release binary:
+
+```yaml
+- uses: comarch/git-byline/action@v1.3.0 # pin a release tag
+```
+
+See [action/README.md](action/README.md) for the calling workflow.
+
 ### Interoperate, do not lock in
 
 ```sh

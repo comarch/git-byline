@@ -42,9 +42,11 @@ jobs:
       - name: Prepare isolated runner paths
         run: |
           set -euo pipefail
-          printf 'EMPTY_HOOKS=%s\n' "$RUNNER_TEMP/git-byline-empty-hooks" >> "$GITHUB_ENV"
-          printf 'HOME=%s\n' "$RUNNER_TEMP/git-byline-home" >> "$GITHUB_ENV"
-          printf 'XDG_CONFIG_HOME=%s\n' "$RUNNER_TEMP/git-byline-home/config" >> "$GITHUB_ENV"
+          {
+            printf 'EMPTY_HOOKS=%s\n' "$RUNNER_TEMP/git-byline-empty-hooks"
+            printf 'HOME=%s\n' "$RUNNER_TEMP/git-byline-home"
+            printf 'XDG_CONFIG_HOME=%s\n' "$RUNNER_TEMP/git-byline-home/config"
+          } >> "$GITHUB_ENV"
 
       - name: Fetch pull request commits and notes
         env:
