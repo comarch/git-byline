@@ -3,7 +3,9 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      # Semantic release tags only. The moving action major tag, like v1,
+      # must not retrigger the release workflow that just moved it.
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       tag:
@@ -119,3 +121,18 @@ jobs:
           CGO_ENABLED: "0"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOPROXY: "off"
+
+      - name: Move the action major tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          major="${RELEASE_TAG%%.*}"
+          remote="$(git remote get-url origin)"
+          git config --local user.name "git-byline-release"
+          git config --local user.email "git-byline-release@users.noreply.github.com"
+          git tag -f "$major" "${RELEASE_TAG}^{commit}"
+          git -c http.extraheader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" \
+            push "$remote" "refs/tags/${major}" --force

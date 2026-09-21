@@ -36,7 +36,7 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
-      - uses: comarch/git-byline/action@v1.3.0 # pin a release tag
+      - uses: comarch/git-byline/action@v1
 ```
 
 The workflow, not the action, decides when attribution is reconstructed,
@@ -51,9 +51,11 @@ so keep the `if`, `permissions`, and `concurrency` blocks as shown.
 
 ## Versioning
 
-The action lives in this repository and is tagged with every git-byline
-release, so pin it to an immutable release tag, like `@v1.3.0`. Release
-tags are never moved.
+GitHub Actions has no `@latest` reference, so the action is reached
+through Git refs. The moving major tag `v1` follows every 1.x release and
+is the easiest pin. For immutable runs, pin a release tag like `@v1.3.0`
+or the commit SHA behind it; release tags are never moved. The `v1` tag
+exists from the first release that ships the action.
 
 ## Security
 

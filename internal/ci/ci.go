@@ -189,7 +189,7 @@ func Uninstall(root string) ([]string, error) {
 		if err := validateManagedWorkflow(rootFile, workflow.relative); err != nil {
 			return removed, err
 		}
-		data, err := readManagedWorkflow(rootFile, workflow.relative)
+		data, err := readManagedWorkflow(rootFile, workflow.relative, len(template)+1)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
@@ -239,15 +239,17 @@ func validateManagedWorkflow(rootFile *os.Root, relative string) error {
 	return nil
 }
 
-// readManagedWorkflow reads the workflow below root. Go 1.24 has no
-// os.Root.ReadFile, so the file opens explicitly and reads fully.
-func readManagedWorkflow(rootFile *os.Root, relative string) ([]byte, error) {
+// readManagedWorkflow reads at most maxBytes of the workflow below root,
+// so a repository-controlled file cannot exhaust memory: a file longer
+// than the template cannot match it anyway. Go 1.24 has no
+// os.Root.ReadFile, so the file opens explicitly.
+func readManagedWorkflow(rootFile *os.Root, relative string, maxBytes int) ([]byte, error) {
 	file, err := rootFile.Open(relative)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-	return io.ReadAll(file)
+	return io.ReadAll(io.LimitReader(file, int64(maxBytes)))
 }
 
 // Install writes a provider workflow without replacing an existing file.

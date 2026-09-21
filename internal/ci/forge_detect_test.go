@@ -175,6 +175,29 @@ func TestUninstallKeepsModifiedWorkflow(t *testing.T) {
 	}
 }
 
+// TestUninstallKeepsLongerWorkflow covers a workflow larger than the
+// template, which the bounded read treats as a mismatch.
+func TestUninstallKeepsLongerWorkflow(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	forgeFixture(t, root, ProviderGitHub)
+	path := filepath.Join(root, ".github", "workflows", "git-byline.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := Uninstall(root)
+	if err != nil || len(removed) != 0 {
+		t.Fatalf("Uninstall() = %v, %v, want the longer workflow kept", removed, err)
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("longer workflow removed: %v", statErr)
+	}
+}
+
 // TestUninstallMissingWorkflows covers a root without workflow files.
 func TestUninstallMissingWorkflows(t *testing.T) {
 	t.Parallel()
