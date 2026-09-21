@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/comarch/git-byline/compare/v1.3.0...v1.4.0) (2026-09-21)
+
+
+### Features
+
+* **action:** publish marketplace metadata at repo root ([#42](https://github.com/comarch/git-byline/issues/42)) ([0a94a9a](https://github.com/comarch/git-byline/commit/0a94a9a4860bd5183426aa212e42c5ed275b13d3))
+* **ci:** auto-install forge workflow when origin is public forge ([#39](https://github.com/comarch/git-byline/issues/39)) ([221b38d](https://github.com/comarch/git-byline/commit/221b38db21627905940a9cecf8c3382e508e5c42))
+
 ## [1.3.0](https://github.com/comarch/git-byline/compare/v1.2.0...v1.3.0) (2026-09-19)
 
 
