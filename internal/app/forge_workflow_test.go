@@ -9,7 +9,33 @@ import (
 	"time"
 )
 
-func TestInstallHooksForgeWorkflow(t *testing.T) {
+// forgeInstall runs one install-hooks pass and fails unless it succeeds
+// without warnings.
+func forgeInstall(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	code, stdout, stderr, err := appRun(root, time.Time{}, nil,
+		append([]string{"install-hooks"}, args...)...)
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("install-hooks %v = %d, %q, %q, %v", args, code, stdout, stderr, err)
+	}
+	return stdout
+}
+
+// forgeUninstall runs one uninstall pass and fails unless it exits
+// successfully.
+func forgeUninstall(t *testing.T, root string, args ...string) (string, string) {
+	t.Helper()
+	code, stdout, stderr, err := appRun(root, time.Time{}, nil,
+		append([]string{"uninstall"}, args...)...)
+	if code != ExitSuccess || err != nil {
+		t.Fatalf("uninstall %v = %d, %q, %q, %v", args, code, stdout, stderr, err)
+	}
+	return stdout, stderr
+}
+
+// TestInstallHooksProvisionsForgeWorkflow covers workflow creation for
+// public GitHub and GitLab origins, including the idempotent rerun.
+func TestInstallHooksProvisionsForgeWorkflow(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
@@ -35,81 +61,67 @@ func TestInstallHooksForgeWorkflow(t *testing.T) {
 			t.Parallel()
 			root := appRepo(t)
 			appGit(t, root, "remote", "add", "origin", test.remote)
-			code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-				"install-hooks", "--agent", "none", "--git")
-			if code != ExitSuccess || err != nil || stderr != "" ||
-				!strings.Contains(stdout, test.wantLine) {
-				t.Fatalf("install-hooks = %d, %q, %q, %v", code, stdout, stderr, err)
+			stdout := forgeInstall(t, root, "--agent", "none", "--git")
+			if !strings.Contains(stdout, test.wantLine) {
+				t.Fatalf("install status = %q, want %q", stdout, test.wantLine)
 			}
 			if _, statErr := os.Stat(filepath.Join(root, filepath.FromSlash(test.wantPath))); statErr != nil {
 				t.Fatalf("workflow %s: %v", test.wantPath, statErr)
 			}
-			code, stdout, stderr, err = appRun(root, time.Time{}, nil,
-				"install-hooks", "--agent", "none", "--git")
-			if code != ExitSuccess || err != nil || stderr != "" ||
-				!strings.Contains(stdout, "workflow already installed at "+test.wantPath) {
-				t.Fatalf("reinstall = %d, %q, %q, %v", code, stdout, stderr, err)
+			stdout = forgeInstall(t, root, "--agent", "none", "--git")
+			if !strings.Contains(stdout, "workflow already installed at "+test.wantPath) {
+				t.Fatalf("reinstall status = %q", stdout)
 			}
 		})
 	}
 }
 
-func TestInstallHooksForgeWorkflowSkips(t *testing.T) {
+// TestInstallHooksForgeWorkflowHintNoRemote covers the hint for a
+// repository without a remote.
+func TestInstallHooksForgeWorkflowHintNoRemote(t *testing.T) {
 	t.Parallel()
-	t.Run("no remote prints hint", func(t *testing.T) {
-		t.Parallel()
-		root := appRepo(t)
-		code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-			"install-hooks", "--agent", "none", "--git")
-		if code != ExitSuccess || err != nil || stderr != "" ||
-			!strings.Contains(stdout, "no GitHub or GitLab remote detected") {
-			t.Fatalf("install-hooks = %d, %q, %q, %v", code, stdout, stderr, err)
-		}
-		if _, statErr := os.Stat(filepath.Join(root, ".github")); !errors.Is(statErr, os.ErrNotExist) {
-			t.Fatalf(".github created without a forge remote: %v", statErr)
-		}
-	})
-	t.Run("unknown remote prints hint", func(t *testing.T) {
-		t.Parallel()
-		root := appRepo(t)
-		appGit(t, root, "remote", "add", "origin", "https://example.com/owner/repo.git")
-		code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-			"install-hooks", "--agent", "none", "--git")
-		if code != ExitSuccess || err != nil || stderr != "" ||
-			!strings.Contains(stdout, "no GitHub or GitLab remote detected") {
-			t.Fatalf("install-hooks = %d, %q, %q, %v", code, stdout, stderr, err)
-		}
-		if _, statErr := os.Stat(filepath.Join(root, ".github")); !errors.Is(statErr, os.ErrNotExist) {
-			t.Fatalf(".github created for an unsupported forge: %v", statErr)
-		}
-	})
-	t.Run("local notes skips detection", func(t *testing.T) {
-		t.Parallel()
-		root := appRepo(t)
-		appGit(t, root, "remote", "add", "origin", "https://github.com/comarch/git-byline.git")
-		code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-			"install-hooks", "--agent", "none", "--git", "--local-notes")
-		if code != ExitSuccess || err != nil || stderr != "" ||
-			strings.Contains(stdout, "no GitHub or GitLab remote detected") ||
-			strings.Contains(stdout, "created ") {
-			t.Fatalf("install-hooks = %d, %q, %q, %v", code, stdout, stderr, err)
-		}
-		if _, statErr := os.Stat(filepath.Join(root, ".github")); !errors.Is(statErr, os.ErrNotExist) {
-			t.Fatalf(".github created with --local-notes: %v", statErr)
-		}
-	})
-	t.Run("agent only skips detection", func(t *testing.T) {
-		t.Parallel()
-		root := appRepo(t)
-		code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-			"install-hooks", "--agent", "droid")
-		if code != ExitSuccess || err != nil ||
-			strings.Contains(stdout, "no GitHub or GitLab remote detected") {
-			t.Fatalf("install-hooks = %d, %q, %q, %v", code, stdout, stderr, err)
-		}
-	})
+	root := appRepo(t)
+	stdout := forgeInstall(t, root, "--agent", "none", "--git")
+	if !strings.Contains(stdout, "no GitHub or GitLab remote detected") {
+		t.Fatalf("install status = %q, want the remote hint", stdout)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".github")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf(".github created without a forge remote: %v", statErr)
+	}
 }
 
+// TestInstallHooksForgeWorkflowHintUnsupportedRemote covers the hint for
+// a remote outside the supported forges.
+func TestInstallHooksForgeWorkflowHintUnsupportedRemote(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appGit(t, root, "remote", "add", "origin", "https://example.com/owner/repo.git")
+	stdout := forgeInstall(t, root, "--agent", "none", "--git")
+	if !strings.Contains(stdout, "no GitHub or GitLab remote detected") {
+		t.Fatalf("install status = %q, want the remote hint", stdout)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".github")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf(".github created for an unsupported forge: %v", statErr)
+	}
+}
+
+// TestInstallHooksLocalNotesSkipsForgeWorkflow covers the sharing opt-out.
+func TestInstallHooksLocalNotesSkipsForgeWorkflow(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appGit(t, root, "remote", "add", "origin", "https://github.com/comarch/git-byline.git")
+	stdout := forgeInstall(t, root, "--agent", "none", "--git", "--local-notes")
+	if strings.Contains(stdout, "no GitHub or GitLab remote detected") ||
+		strings.Contains(stdout, "created ") {
+		t.Fatalf("install status = %q, want no workflow output", stdout)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".github")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf(".github created with --local-notes: %v", statErr)
+	}
+}
+
+// TestInstallHooksTemplateSkipsForgeWorkflow covers template scope, which
+// has no repository remote.
 func TestInstallHooksTemplateSkipsForgeWorkflow(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	xdg := t.TempDir()
@@ -120,16 +132,27 @@ func TestInstallHooksTemplateSkipsForgeWorkflow(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(xdg, "git", "config"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
-	code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-		"install-hooks", "--agent", "none", "--git", "--template")
-	if code != ExitSuccess || err != nil ||
-		strings.Contains(stdout, "no GitHub or GitLab remote detected") ||
+	stdout := forgeInstall(t, t.TempDir(),
+		"--agent", "none", "--git", "--template")
+	if strings.Contains(stdout, "no GitHub or GitLab remote detected") ||
 		strings.Contains(stdout, "created ") {
-		t.Fatalf("install-hooks = %d, %q, %q, %v", code, stdout, stderr, err)
+		t.Fatalf("install status = %q, want no workflow output", stdout)
 	}
 }
 
+// TestInstallHooksAgentOnlySkipsForgeWorkflow covers the path without Git
+// hooks.
+func TestInstallHooksAgentOnlySkipsForgeWorkflow(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	stdout := forgeInstall(t, root, "--agent", "droid")
+	if strings.Contains(stdout, "no GitHub or GitLab remote detected") {
+		t.Fatalf("install status = %q, want no workflow output", stdout)
+	}
+}
+
+// TestInstallHooksForgeWorkflowFailureWarns covers the blocked workflow
+// path on every platform.
 func TestInstallHooksForgeWorkflowFailureWarns(t *testing.T) {
 	t.Parallel()
 	root := appRepo(t)
@@ -145,73 +168,78 @@ func TestInstallHooksForgeWorkflowFailureWarns(t *testing.T) {
 	}
 }
 
-func TestUninstallForgeWorkflow(t *testing.T) {
+// TestUninstallRemovesForgeWorkflow covers removal of the provisioned
+// workflow.
+func TestUninstallRemovesForgeWorkflow(t *testing.T) {
 	t.Parallel()
-	t.Run("removes managed workflow", func(t *testing.T) {
-		t.Parallel()
-		root := appRepo(t)
-		appGit(t, root, "remote", "add", "origin", "https://github.com/comarch/git-byline.git")
-		if code, _, _, err := appRun(root, time.Time{}, nil,
-			"install-hooks", "--agent", "none", "--git"); err != nil || code != ExitSuccess {
-			t.Fatalf("install-hooks = %d, %v", code, err)
-		}
-		code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-			"uninstall", "--agent", "none", "--git")
-		if code != ExitSuccess || err != nil || stderr != "" ||
-			!strings.Contains(stdout, "updated .github/workflows/git-byline.yml") {
-			t.Fatalf("uninstall = %d, %q, %q, %v", code, stdout, stderr, err)
-		}
-		if _, statErr := os.Stat(filepath.Join(root, ".github", "workflows", "git-byline.yml")); !errors.Is(statErr, os.ErrNotExist) {
-			t.Fatalf("workflow still present: %v", statErr)
-		}
-	})
-	t.Run("keeps modified workflow", func(t *testing.T) {
-		t.Parallel()
-		root := appRepo(t)
-		appGit(t, root, "remote", "add", "origin", "https://github.com/comarch/git-byline.git")
-		if code, _, _, err := appRun(root, time.Time{}, nil,
-			"install-hooks", "--agent", "none", "--git"); err != nil || code != ExitSuccess {
-			t.Fatalf("install-hooks = %d, %v", code, err)
-		}
-		path := filepath.Join(root, ".github", "workflows", "git-byline.yml")
-		if err := os.WriteFile(path, []byte("modified"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-			"uninstall", "--agent", "none", "--git")
-		if code != ExitSuccess || err != nil || stderr != "" ||
-			strings.Contains(stdout, "updated .github/workflows/git-byline.yml") {
-			t.Fatalf("uninstall = %d, %q, %q, %v", code, stdout, stderr, err)
-		}
-		if _, statErr := os.Stat(path); statErr != nil {
-			t.Fatalf("modified workflow removed: %v", statErr)
-		}
-	})
-	t.Run("blocked path warns", func(t *testing.T) {
-		t.Parallel()
-		root := appRepo(t)
-		if err := os.WriteFile(filepath.Join(root, ".github"), []byte("blocked"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-			"uninstall", "--agent", "none", "--git")
-		if code != ExitSuccess || err != nil ||
-			!strings.Contains(stderr, "warning: could not remove the forge workflow") {
-			t.Fatalf("uninstall = %d, %q, %q, %v", code, stdout, stderr, err)
-		}
-	})
-	t.Run("agent only skips workflow removal", func(t *testing.T) {
-		t.Parallel()
-		root := appRepo(t)
-		code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-			"uninstall", "--agent", "droid")
-		if code != ExitSuccess || err != nil ||
-			strings.Contains(stderr, "warning: could not remove the forge workflow") {
-			t.Fatalf("uninstall = %d, %q, %q, %v", code, stdout, stderr, err)
-		}
-	})
+	root := appRepo(t)
+	appGit(t, root, "remote", "add", "origin", "https://github.com/comarch/git-byline.git")
+	forgeInstall(t, root, "--agent", "none", "--git")
+	stdout, stderr := forgeUninstall(t, root, "--agent", "none", "--git")
+	if !strings.Contains(stdout, "updated .github/workflows/git-byline.yml") {
+		t.Fatalf("uninstall status = %q, stderr = %q", stdout, stderr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".github", "workflows", "git-byline.yml")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("workflow still present: %v", statErr)
+	}
 }
 
+// TestUninstallKeepsModifiedForgeWorkflow covers a customized workflow,
+// which stays in place.
+func TestUninstallKeepsModifiedForgeWorkflow(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appGit(t, root, "remote", "add", "origin", "https://github.com/comarch/git-byline.git")
+	forgeInstall(t, root, "--agent", "none", "--git")
+	path := filepath.Join(root, ".github", "workflows", "git-byline.yml")
+	if err := os.WriteFile(path, []byte("modified"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr := forgeUninstall(t, root, "--agent", "none", "--git")
+	if strings.Contains(stdout, "updated .github/workflows/git-byline.yml") {
+		t.Fatalf("uninstall status = %q, stderr = %q, want the modified file kept", stdout, stderr)
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("modified workflow removed: %v", statErr)
+	}
+}
+
+// TestUninstallForgeWorkflowPartialRemovalWarns covers a run where one
+// workflow is removed before a later provider fails.
+func TestUninstallForgeWorkflowPartialRemovalWarns(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appGit(t, root, "remote", "add", "origin", "https://github.com/comarch/git-byline.git")
+	forgeInstall(t, root, "--agent", "none", "--git")
+	if err := os.WriteFile(filepath.Join(root, ".gitlab"), []byte("blocked"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr := forgeUninstall(t, root, "--agent", "none", "--git")
+	if !strings.Contains(stdout, "updated .github/workflows/git-byline.yml") {
+		t.Fatalf("uninstall status = %q, want the completed removal", stdout)
+	}
+	if !strings.Contains(stderr, "warning: could not remove the forge workflow") {
+		t.Fatalf("uninstall stderr = %q, want the later failure warning", stderr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".github", "workflows", "git-byline.yml")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("workflow still present: %v", statErr)
+	}
+}
+
+// TestUninstallAgentOnlySkipsForgeWorkflow covers the path without Git
+// hooks.
+func TestUninstallAgentOnlySkipsForgeWorkflow(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	stdout, stderr := forgeUninstall(t, root, "--agent", "droid")
+	if strings.Contains(stdout, "updated .github/workflows/git-byline.yml") ||
+		strings.Contains(stderr, "warning: could not remove the forge workflow") {
+		t.Fatalf("uninstall = %q, %q, want no workflow output", stdout, stderr)
+	}
+}
+
+// TestUninstallTemplateSkipsForgeWorkflow covers template scope, which
+// never manages the repository workflow.
 func TestUninstallTemplateSkipsForgeWorkflow(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	xdg := t.TempDir()
@@ -223,15 +251,10 @@ func TestUninstallTemplateSkipsForgeWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	if _, _, _, err := appRun(root, time.Time{}, nil,
-		"install-hooks", "--agent", "none", "--git", "--template", "--local-notes"); err != nil {
-		t.Fatal(err)
-	}
-	code, stdout, stderr, err := appRun(root, time.Time{}, nil,
-		"uninstall", "--agent", "none", "--git", "--template")
-	if code != ExitSuccess || err != nil ||
-		strings.Contains(stdout, ".github/workflows/git-byline.yml") ||
+	forgeInstall(t, root, "--agent", "none", "--git", "--template", "--local-notes")
+	stdout, stderr := forgeUninstall(t, root, "--agent", "none", "--git", "--template")
+	if strings.Contains(stdout, ".github/workflows/git-byline.yml") ||
 		strings.Contains(stderr, "warning: could not remove the forge workflow") {
-		t.Fatalf("uninstall = %d, %q, %q, %v", code, stdout, stderr, err)
+		t.Fatalf("uninstall = %q, %q, want no workflow output", stdout, stderr)
 	}
 }

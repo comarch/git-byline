@@ -75,9 +75,11 @@ binary. The generated GitLab job is stored under
 `.gitlab-ci.yml`.
 
 Both workflows reconstruct from the actual post-merge target commit. The
-GitHub workflow derives `GIT_BYLINE_CI_BASE` from the merge commit's first
-parent and uses its second parent as the source tip when present, falling back
-to the merged pull request head for a single-parent squash result. The GitLab
+GitHub workflow uses the merge commit's second parent as the source tip for a
+true merge, with its first parent as `GIT_BYLINE_CI_BASE`. A single-parent
+result, whether a squash or a rebase merge, uses the merged pull request head
+as the source and derives the base from the merge base of that head and the
+target, so a multi-commit rebase range stays complete. The GitLab
 workflow derives its base from the pushed commit's first parent and its source
 from the second parent; a single-parent result has an empty source range and is
 skipped safely. The workflow runs repository code from that merge commit before

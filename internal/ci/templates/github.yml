@@ -26,9 +26,6 @@ jobs:
       GIT_CONFIG_NOSYSTEM: "1"
       GIT_CONFIG_GLOBAL: /dev/null
       GIT_CONFIG_SYSTEM: /dev/null
-      EMPTY_HOOKS: ${{ runner.temp }}/git-byline-empty-hooks
-      HOME: ${{ runner.temp }}/git-byline-home
-      XDG_CONFIG_HOME: ${{ runner.temp }}/git-byline-home/config
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,6 +38,13 @@ jobs:
         with:
           go-version: "1.24.0"
           cache: false
+
+      - name: Prepare isolated runner paths
+        run: |
+          set -euo pipefail
+          printf 'EMPTY_HOOKS=%s\n' "$RUNNER_TEMP/git-byline-empty-hooks" >> "$GITHUB_ENV"
+          printf 'HOME=%s\n' "$RUNNER_TEMP/git-byline-home" >> "$GITHUB_ENV"
+          printf 'XDG_CONFIG_HOME=%s\n' "$RUNNER_TEMP/git-byline-home/config" >> "$GITHUB_ENV"
 
       - name: Fetch pull request commits and notes
         env:
@@ -56,12 +60,13 @@ jobs:
           git remote set-url origin "$GIT_BYLINE_REMOTE_URL"
           git config --local core.hooksPath "$EMPTY_HOOKS"
           git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" fetch --no-tags origin "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/git-byline-pr-head"
-          base="$(git rev-parse "${GIT_BYLINE_CI_TARGET}^1")"
           if source="$(git rev-parse "${GIT_BYLINE_CI_TARGET}^2" 2>/dev/null)"; then
-            :
+            base="$(git rev-parse "${GIT_BYLINE_CI_TARGET}^1")"
           else
             source="$GIT_BYLINE_CI_SOURCE"
+            base="$(git merge-base "$source" "${GIT_BYLINE_CI_TARGET}")"
           fi
+          test -n "$base"
           printf 'GIT_BYLINE_CI_BASE=%s\n' "$base" >> "$GITHUB_ENV"
           printf 'GIT_BYLINE_CI_SOURCE=%s\n' "$source" >> "$GITHUB_ENV"
           notes="$(git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" ls-remote --refs origin refs/notes/byline)"

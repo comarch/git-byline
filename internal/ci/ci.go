@@ -124,10 +124,17 @@ func DetectProvider(dir string) (Provider, bool) {
 }
 
 // remoteHost extracts the host from an HTTPS, SSH, or SCP-style Git remote
-// URL. The second result is false for a URL without a usable host.
+// URL. Any other scheme, such as file:// or http://, is rejected so an
+// unsupported remote is never treated as a forge. The second result is
+// false for a URL without a usable host.
 func remoteHost(remote string) (string, bool) {
 	value := remote
 	if index := strings.Index(value, "://"); index >= 0 {
+		switch strings.ToLower(value[:index]) {
+		case "https", "ssh":
+		default:
+			return "", false
+		}
 		value = value[index+3:]
 	}
 	if at := strings.LastIndex(value, "@"); at >= 0 && !strings.ContainsAny(value[:at], `/\`) {
@@ -143,41 +150,85 @@ func remoteHost(remote string) (string, bool) {
 	return strings.ToLower(value[:end]), true
 }
 
+// managedWorkflow pairs one provider's workflow path with its provider.
+type managedWorkflow struct {
+	provider Provider
+	relative string
+}
+
+// managedWorkflows returns the workflow path of every supported
+// provider, in a fixed order.
+func managedWorkflows() []managedWorkflow {
+	return []managedWorkflow{
+		{provider: ProviderGitHub, relative: ".github/workflows/git-byline.yml"},
+		{provider: ProviderGitLab, relative: ".gitlab/ci/git-byline.yml"},
+	}
+}
+
 // Uninstall removes forge workflow files that still match the canonical
 // template byte for byte. A modified or foreign file stays in place, so
-// removal is limited to managed content.
+// removal is limited to managed content. Removals already done are
+// reported together with any later failure, so the caller can show what
+// changed before the failure.
 func Uninstall(root string) ([]string, error) {
-	absoluteRoot, err := filepath.Abs(root)
-	if err != nil {
-		return nil, fmt.Errorf("resolve CI uninstall root: %w", err)
-	}
 	var removed []string
-	for _, provider := range []Provider{ProviderGitHub, ProviderGitLab} {
-		relative, err := TemplatePath(provider)
+	for _, workflow := range managedWorkflows() {
+		template, err := Template(workflow.provider)
 		if err != nil {
-			return nil, err
+			return removed, err
 		}
-		template, err := Template(provider)
+		path, ok, err := managedWorkflowPath(root, workflow.relative)
 		if err != nil {
-			return nil, err
+			return removed, err
 		}
-		path := filepath.Join(absoluteRoot, filepath.FromSlash(relative))
-		data, err := os.ReadFile(path)
-		if errors.Is(err, os.ErrNotExist) {
+		if !ok {
 			continue
 		}
+		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("read CI workflow %q: %w", relative, err)
+			return removed, fmt.Errorf("read CI workflow %q: %w", workflow.relative, err)
 		}
 		if !bytes.Equal(data, template) {
 			continue
 		}
 		if err := os.Remove(path); err != nil {
-			return nil, fmt.Errorf("remove CI workflow %q: %w", relative, err)
+			return removed, fmt.Errorf("remove CI workflow %q: %w", workflow.relative, err)
 		}
-		removed = append(removed, relative)
+		removed = append(removed, workflow.relative)
 	}
 	return removed, nil
+}
+
+// managedWorkflowPath walks every path component from root without
+// following symlinks. It reports false when the workflow is absent and an
+// error when a component exists but is not the expected kind, so a
+// symlink or junction cannot redirect removal outside root.
+func managedWorkflowPath(root, relative string) (string, bool, error) {
+	components := splitPath(relative)
+	current := root
+	for index, component := range components {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		if err != nil {
+			return "", false, fmt.Errorf("inspect CI workflow path %q: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", false, fmt.Errorf("refusing symlinked CI workflow path %q", current)
+		}
+		if index+1 < len(components) {
+			if !info.IsDir() {
+				return "", false, fmt.Errorf("CI workflow parent %q is not a directory", current)
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			return "", false, fmt.Errorf("CI workflow path %q is not a regular file", relative)
+		}
+	}
+	return current, true, nil
 }
 
 // Install writes a provider workflow without replacing an existing file.

@@ -464,6 +464,8 @@ func runStatus(env *Env, command *command, args []string) (int, error) {
 	return ExitSuccess, nil
 }
 
+// runInstallHooks merges managed agent and Git hooks and provisions the
+// forge attribution workflow for a public forge origin.
 func runInstallHooks(env *Env, command *command, args []string) (int, error) {
 	options, err := parseHookOptions(command, args)
 	if err != nil {
@@ -523,6 +525,8 @@ func provisionForgeWorkflow(env *Env, dir string, options hooks.Options) {
 	fmt.Fprintf(env.Stdout, "workflow already installed at %s\n", result.Path)
 }
 
+// runUninstall removes managed hooks and the template-matching forge
+// attribution workflow.
 func runUninstall(env *Env, command *command, args []string) (int, error) {
 	options, err := parseHookOptions(command, args)
 	if err != nil {
@@ -541,11 +545,10 @@ func runUninstall(env *Env, command *command, args []string) (int, error) {
 		return operationalError(env, command.name, err)
 	}
 	if options.Git && !options.Template {
-		removed, err := ci.Uninstall(dir)
-		if err != nil {
-			fmt.Fprintf(env.Stderr, "warning: could not remove the forge workflow: %v\n", err)
-		} else {
-			result.Changed = append(result.Changed, removed...)
+		removed, removeErr := ci.Uninstall(dir)
+		result.Changed = append(result.Changed, removed...)
+		if removeErr != nil {
+			fmt.Fprintf(env.Stderr, "warning: could not remove the forge workflow: %v\n", removeErr)
 		}
 	}
 	for _, path := range result.Changed {
