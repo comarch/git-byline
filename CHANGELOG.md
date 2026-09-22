@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/comarch/git-byline/compare/v1.4.1...v1.4.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* **action:** fit marketplace description under 125 chars ([#45](https://github.com/comarch/git-byline/issues/45)) ([addf53e](https://github.com/comarch/git-byline/commit/addf53ee7fb357415c45df501ab07e07e31de715))
+
 ## [1.4.1](https://github.com/comarch/git-byline/compare/v1.4.0...v1.4.1) (2026-09-22)
 
 
