@@ -1,7 +1,7 @@
 name: git-byline forge attribution
 description: >-
   Reconstruct human, AI, and untracked line-level attribution after a
-  GitHub squash or rebase merge, and publish it to refs/notes/byline.
+  squash or rebase merge, published to refs/notes/byline.
 author: Comarch
 branding:
   icon: git-commit

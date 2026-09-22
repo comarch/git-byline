@@ -1,7 +1,7 @@
 # git-byline forge attribution
 
-Reconstruct human, AI, and untracked line-level attribution after a GitHub
-squash or rebase merge, and publish it to `refs/notes/byline`.
+Reconstruct human, AI, and untracked line-level attribution after a
+squash or rebase merge, published to `refs/notes/byline`.
 
 Squash and rebase merges create commits that never passed a local
 git-byline hook. This action fetches the merged pull request commits and
