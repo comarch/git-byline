@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/comarch/git-byline/compare/v1.4.0...v1.4.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **ci:** use HTTP basic auth for git token push ([#43](https://github.com/comarch/git-byline/issues/43)) ([4ce59b7](https://github.com/comarch/git-byline/commit/4ce59b7a4feb842ddac43f8c461725f2ffa94041))
+
 ## [1.4.0](https://github.com/comarch/git-byline/compare/v1.3.0...v1.4.0) (2026-09-21)
 
 
