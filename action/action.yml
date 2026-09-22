@@ -133,6 +133,10 @@ runs:
       run: |
         set -euo pipefail
         auth_value="${BYLINE_TOKEN}"
+        # GitHub git endpoints accept HTTP basic auth only; bearer is
+        # rejected with 401, so the token rides the header as
+        # x-access-token, exactly how actions/checkout authenticates.
+        auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$auth_value" | base64 | tr -d '\n')"
         empty_hooks="${RUNNER_TEMP}/git-byline-empty-hooks"
         clean_home="${RUNNER_TEMP}/git-byline-home"
         mkdir -p "$empty_hooks" "$clean_home" "$clean_home/config"
@@ -144,7 +148,7 @@ runs:
         git_byline() {
           GIT_CONFIG_COUNT=2 \
           GIT_CONFIG_KEY_0=http.extraheader \
-          GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer $auth_value" \
+          GIT_CONFIG_VALUE_0="$auth_header" \
           GIT_CONFIG_KEY_1=credential.helper \
           GIT_CONFIG_VALUE_1="" \
           git -c remote.origin.url="${GIT_BYLINE_REMOTE_URL}" "$@"
@@ -166,7 +170,7 @@ runs:
         fi
         git config --local user.name git-byline-ci
         git config --local user.email git-byline-ci@users.noreply.github.com
-        unset BYLINE_TOKEN
+        unset BYLINE_TOKEN auth_value
         GIT_BYLINE_CI_BASE="$base" \
         GIT_BYLINE_CI_SOURCE="$source" \
           git-byline ci run --provider github
@@ -176,3 +180,4 @@ runs:
         if git show-ref --verify --quiet refs/notes/byline; then
           git_byline push --no-verify origin refs/notes/byline:refs/notes/byline
         fi
+        unset auth_header

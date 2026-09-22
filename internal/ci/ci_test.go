@@ -80,8 +80,14 @@ func TestTemplatesSecurityContract(t *testing.T) {
 				"git remote set-url origin",
 				"GIT_BYLINE_PUSH_HOOKS",
 				"git config --local user.name git-byline-ci",
-				`go-version: "1.24.0"`,
+				`go-version: "1.27.1"`,
 				`GIT_BYLINE_CI_BASE=%s`,
+				// GitHub git endpoints reject bearer auth with 401, so the
+				// workflow must authenticate with HTTP basic.
+				`GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"`,
+			},
+			forbidden: []string{
+				"AUTHORIZATION: bearer",
 			},
 		},
 		{

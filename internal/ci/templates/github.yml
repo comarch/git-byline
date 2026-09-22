@@ -36,7 +36,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.24.0"
+          go-version: "1.27.1"
           cache: false
 
       - name: Prepare isolated runner paths
@@ -50,18 +50,26 @@ jobs:
 
       - name: Fetch pull request commits and notes
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          GIT_CONFIG_COUNT: "2"
-          GIT_CONFIG_KEY_0: http.extraheader
-          GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ github.token }}"
-          GIT_CONFIG_KEY_1: credential.helper
-          GIT_CONFIG_VALUE_1: ""
         run: |
           set -euo pipefail
+          # GitHub git endpoints accept HTTP basic auth only; bearer is
+          # rejected with 401, so the token rides the header as
+          # x-access-token, exactly how actions/checkout authenticates.
+          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+          git_byline() {
+            GIT_CONFIG_COUNT=2 \
+            GIT_CONFIG_KEY_0=http.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            GIT_CONFIG_KEY_1=credential.helper \
+            GIT_CONFIG_VALUE_1="" \
+            git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" "$@"
+          }
           mkdir -p "$EMPTY_HOOKS"
           git remote set-url origin "$GIT_BYLINE_REMOTE_URL"
           git config --local core.hooksPath "$EMPTY_HOOKS"
-          git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" fetch --no-tags origin "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/git-byline-pr-head"
+          git_byline fetch --no-tags origin "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/git-byline-pr-head"
           if source="$(git rev-parse "${GIT_BYLINE_CI_TARGET}^2" 2>/dev/null)"; then
             base="$(git rev-parse "${GIT_BYLINE_CI_TARGET}^1")"
           else
@@ -71,9 +79,9 @@ jobs:
           test -n "$base"
           printf 'GIT_BYLINE_CI_BASE=%s\n' "$base" >> "$GITHUB_ENV"
           printf 'GIT_BYLINE_CI_SOURCE=%s\n' "$source" >> "$GITHUB_ENV"
-          notes="$(git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" ls-remote --refs origin refs/notes/byline)"
+          notes="$(git_byline ls-remote --refs origin refs/notes/byline)"
           if [ -n "$notes" ]; then
-            git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" fetch --no-tags origin refs/notes/byline:refs/notes/byline
+            git_byline fetch --no-tags origin refs/notes/byline:refs/notes/byline
           fi
 
       - name: Configure local Git identity
@@ -104,16 +112,24 @@ jobs:
 
       - name: Push attribution notes
         env:
-          GIT_CONFIG_COUNT: "2"
-          GIT_CONFIG_KEY_0: http.extraheader
-          GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ github.token }}"
-          GIT_CONFIG_KEY_1: credential.helper
-          GIT_CONFIG_VALUE_1: ""
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # GitHub git endpoints accept HTTP basic auth only; bearer is
+          # rejected with 401, so the token rides the header as
+          # x-access-token, exactly how actions/checkout authenticates.
+          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+          git_byline() {
+            GIT_CONFIG_COUNT=2 \
+            GIT_CONFIG_KEY_0=http.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            GIT_CONFIG_KEY_1=credential.helper \
+            GIT_CONFIG_VALUE_1="" \
+            git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" "$@"
+          }
           mkdir -p "$GIT_BYLINE_PUSH_HOOKS"
           git remote set-url origin "$GIT_BYLINE_REMOTE_URL"
           git config --local core.hooksPath "$GIT_BYLINE_PUSH_HOOKS"
           if git show-ref --verify --quiet refs/notes/byline; then
-            git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" push --no-verify origin refs/notes/byline:refs/notes/byline
+            git_byline push --no-verify origin refs/notes/byline:refs/notes/byline
           fi

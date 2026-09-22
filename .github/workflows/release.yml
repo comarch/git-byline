@@ -134,5 +134,9 @@ jobs:
           git config --local user.name "git-byline-release"
           git config --local user.email "git-byline-release@users.noreply.github.com"
           git tag -f "$major" "${RELEASE_TAG}^{commit}"
-          git -c http.extraheader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" \
+          # GitHub git endpoints accept HTTP basic auth only; bearer is
+          # rejected with 401, so the token rides the header as
+          # x-access-token, exactly how actions/checkout authenticates.
+          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth}" \
             push "$remote" "refs/tags/${major}" --force
