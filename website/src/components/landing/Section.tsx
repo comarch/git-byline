@@ -10,7 +10,7 @@ type SectionProps = {
   children: ReactNode;
 };
 
-export function Section({id, className, children}: SectionProps) {
+export function Section({id, className, children}: Readonly<SectionProps>) {
   // React pages must report their anchors, or links such as /#features
   // fail the broken anchor check.
   useBrokenLinks().collectAnchor(id);
@@ -27,7 +27,7 @@ type HeaderProps = {
   children?: ReactNode;
 };
 
-export function SectionHeader({eyebrow, title, children}: HeaderProps) {
+export function SectionHeader({eyebrow, title, children}: Readonly<HeaderProps>) {
   return (
     <Reveal className={styles.header}>
       {eyebrow && <p className={styles.eyebrow}>{eyebrow}</p>}

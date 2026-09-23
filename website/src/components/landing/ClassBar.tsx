@@ -8,7 +8,7 @@ type Props = {
 };
 
 // One thin bar split by attribution state, sized by line count.
-export default function ClassBar({counts, className}: Props) {
+export default function ClassBar({counts, className}: Readonly<Props>) {
   return (
     <span className={clsx(styles.bar, className)} role="img" aria-label={describe(counts)}>
       {kinds

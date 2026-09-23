@@ -11,7 +11,7 @@ type Props = {
 // Adds `is-visible` once the element scrolls into view. The matching
 // styles, and the fallback for readers without JavaScript, are global in
 // custom.css and docusaurus.config.ts.
-export default function Reveal({children, className, style, delay = 0}: Props) {
+export default function Reveal({children, className, style, delay = 0}: Readonly<Props>) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 

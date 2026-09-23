@@ -96,7 +96,7 @@ type CardProps = {
   children: ReactNode;
 };
 
-function Card({title, subtitle, action, className, delay, children}: CardProps) {
+function Card({title, subtitle, action, className, delay, children}: Readonly<CardProps>) {
   return (
     <Reveal className={clsx(styles.card, className)} delay={delay}>
       <div className={styles.cardHead}>
@@ -111,13 +111,13 @@ function Card({title, subtitle, action, className, delay, children}: CardProps) 
   );
 }
 
-function Toggle({mode, onChange}: {mode: Mode; onChange: (mode: Mode) => void}) {
+function Toggle({mode, onChange}: Readonly<{mode: Mode; onChange: (mode: Mode) => void}>) {
   const options: {value: Mode; label: string}[] = [
     {value: 'lines', label: 'Lines'},
     {value: 'share', label: 'Share'},
   ];
   return (
-    <div className={styles.toggle} role="group" aria-label="Chart unit">
+    <fieldset className={styles.toggle} aria-label="Chart unit">
       {options.map((option) => (
         <button
           key={option.value}
@@ -128,7 +128,7 @@ function Toggle({mode, onChange}: {mode: Mode; onChange: (mode: Mode) => void}) 
           {option.label}
         </button>
       ))}
-    </div>
+    </fieldset>
   );
 }
 

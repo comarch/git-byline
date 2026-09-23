@@ -39,7 +39,7 @@ for (const file of readdirSync(path.join(repoRoot, 'docs'))) {
     pages.set(rel, docsPage(file));
   }
 }
-const publishedFiles = [...pages.keys()].sort();
+const publishedFiles = [...pages.keys()].sort((a, b) => a.localeCompare(b));
 
 // Colors come from the palette in docs/DESIGN.md, so code on the site
 // reads like the terminal output of the binary.

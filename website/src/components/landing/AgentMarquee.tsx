@@ -24,17 +24,19 @@ export default function AgentMarquee() {
       <div className={styles.viewport}>
         <ul className={styles.track}>
           {/* The second copy makes the loop seamless; readers hear one. */}
-          {[...agents, ...agents].map((agent, index) => (
-            <li
-              key={index}
-              className={styles.agent}
-              aria-hidden={index >= agents.length ? true : undefined}
-              style={{'--tone': agentColor(agent.label)} as CSSProperties}>
-              <span className={styles.dot} />
-              <span className={styles.name}>{agent.name}</span>
-              <code className={styles.label}>ai:{agent.label}</code>
-            </li>
-          ))}
+          {['main', 'copy'].flatMap((copy) =>
+            agents.map((agent) => (
+              <li
+                key={`${copy}-${agent.label}`}
+                className={styles.agent}
+                aria-hidden={copy === 'copy' ? true : undefined}
+                style={{'--tone': agentColor(agent.label)} as CSSProperties}>
+                <span className={styles.dot} />
+                <span className={styles.name}>{agent.name}</span>
+                <code className={styles.label}>ai:{agent.label}</code>
+              </li>
+            )),
+          )}
         </ul>
       </div>
     </section>

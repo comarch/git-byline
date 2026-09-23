@@ -14,7 +14,7 @@ const views = [
 
 type View = (typeof views)[number]['id'];
 
-function Blame({file}: {file: BlameFile}) {
+function Blame({file}: Readonly<{file: BlameFile}>) {
   // Sized from the widest label, like the terminal report.
   const labelWidth = Math.max(...file.lines.map((line) => line.label.length));
   return (
@@ -118,7 +118,7 @@ export default function HeroWindow() {
           <div className={styles.status}>
             <span>
               <span className={styles.dot} />
-              refs/notes/byline
+              <span>refs/notes/byline</span>
             </span>
             <span>
               {stats.commits.annotated} of {stats.commits.total} commits annotated

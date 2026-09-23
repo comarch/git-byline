@@ -11,7 +11,7 @@ type Props = {
 
 // Window frame shared by the hero, recordings, and code panels. The three
 // dots reuse the gradient stops, like the header of the HTML report.
-export default function Window({title, children, className, accent = false}: Props) {
+export default function Window({title, children, className, accent = false}: Readonly<Props>) {
   return (
     <div className={clsx(styles.window, accent && styles.accent, className)}>
       <div className={styles.bar}>

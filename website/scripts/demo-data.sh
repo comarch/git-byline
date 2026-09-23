@@ -42,15 +42,16 @@ cd "$work/demo"
 # step <command> prints one terminal panel as JSON: the command line, its
 # combined output, and its exit code.
 step() {
-  local output status=0
-  output="$(bash -c "$1" 2>&1)" || status=$?
-  jq -n --arg command "$1" --arg output "$output" --argjson exit "$status" \
+  local command=$1 output status=0
+  output="$(bash -c "$command" 2>&1)" || status=$?
+  jq -n --arg command "$command" --arg output "$output" --argjson exit "$status" \
     '{command: $command, output: $output, exit: $exit}'
 }
 
 # blame <path> prints the plain blame report of one file at HEAD.
 blame() {
-  jq -n --arg path "$1" --arg output "$(git byline blame --color=never "$1")" \
+  local file=$1
+  jq -n --arg path "$file" --arg output "$(git byline blame --color=never "$file")" \
     '{path: $path, output: $output}'
 }
 

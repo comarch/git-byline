@@ -150,7 +150,7 @@ const choices: Record<ToolKey, string> = {
 const markIcon: Record<Mark, IconName> = {yes: 'check', no: 'cross', unknown: 'minus'};
 const markLabel: Record<Mark, string> = {yes: 'Yes', no: 'No', unknown: 'Not documented'};
 
-function MarkIcon({mark, labelled = true}: {mark: Mark; labelled?: boolean}) {
+function MarkIcon({mark, labelled = true}: Readonly<{mark: Mark; labelled?: boolean}>) {
   return (
     <span className={clsx(styles.mark, styles[mark])}>
       <Icon name={markIcon[mark]} />
@@ -159,7 +159,7 @@ function MarkIcon({mark, labelled = true}: {mark: Mark; labelled?: boolean}) {
   );
 }
 
-function CellContent({cell}: {cell: Cell}) {
+function CellContent({cell}: Readonly<{cell: Cell}>) {
   return (
     <span className={styles.cell}>
       {cell.mark && <MarkIcon mark={cell.mark} />}

@@ -72,7 +72,7 @@ const states: {kind: Kind; icon: IconName; meaning: string; carries: string; exa
   },
 ];
 
-function AnswerCell({value}: {value: Answer}) {
+function AnswerCell({value}: Readonly<{value: Answer}>) {
   if (value === true) {
     return (
       <span className={styles.yes}>

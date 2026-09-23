@@ -27,7 +27,7 @@ type StackedBarsProps = {
 
 // Lines per commit, stacked by attribution state. The commit buttons under
 // the plot double as the x axis and as the keyboard way into the data.
-export function StackedBars({commits, mode, active, onActive}: StackedBarsProps) {
+export function StackedBars({commits, mode, active, onActive}: Readonly<StackedBarsProps>) {
   const plotWidth = frame.width - frame.left - frame.right;
   const plotHeight = frame.height - frame.top - frame.bottom;
   const baseline = frame.top + plotHeight;
@@ -143,7 +143,7 @@ export function StackedBars({commits, mode, active, onActive}: StackedBarsProps)
 }
 
 // Share of all lines per state, drawn as dashed circle segments.
-export function Donut({counts}: {counts: Counts}) {
+export function Donut({counts}: Readonly<{counts: Counts}>) {
   const radius = 76;
   const circumference = 2 * Math.PI * radius;
   const gap = 3;
@@ -196,7 +196,7 @@ export function Donut({counts}: {counts: Counts}) {
 
 // Each line of each file as a bar: indent and length follow the source,
 // color follows attribution. A minimap of who wrote what.
-export function LineMap({files}: {files: BlameFile[]}) {
+export function LineMap({files}: Readonly<{files: BlameFile[]}>) {
   const [hover, setHover] = useState<{path: string; line: BlameLine} | null>(null);
   return (
     <div>
@@ -264,7 +264,7 @@ export type BarRow = {
 
 // Horizontal bars, longest row first. Length is relative to the longest
 // row; the percentage is the share of all lines in the range.
-export function BarList({rows, total}: {rows: BarRow[]; total: number}) {
+export function BarList({rows, total}: Readonly<{rows: BarRow[]; total: number}>) {
   const max = Math.max(...rows.map((row) => row.value));
   return (
     <ul className={styles.barList}>

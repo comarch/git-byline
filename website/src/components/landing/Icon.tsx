@@ -100,7 +100,7 @@ export type IconName = keyof typeof shapes;
 
 type Props = SVGProps<SVGSVGElement> & {name: IconName};
 
-export default function Icon({name, ...props}: Props) {
+export default function Icon({name, ...props}: Readonly<Props>) {
   return (
     <svg
       viewBox="0 0 24 24"

@@ -56,7 +56,7 @@ function slug(text: string): string {
   return text
     .toLowerCase()
     .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, '')
-    .replace(/ /g, '-');
+    .replaceAll(' ', '-');
 }
 
 function rewrite(url: string, dir: string, options: Options, published: Set<string>): string {

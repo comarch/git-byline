@@ -19,7 +19,7 @@ function toneOf(line: string): string | undefined {
 
 // Recorded command output. The text stays exactly as the binary printed
 // it; only verdict lines get a color.
-export default function Terminal({steps, className}: Props) {
+export default function Terminal({steps, className}: Readonly<Props>) {
   return (
     <div className={clsx(styles.terminal, className)}>
       {steps.map((step) => (

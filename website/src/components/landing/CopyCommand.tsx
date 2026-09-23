@@ -8,7 +8,7 @@ type Props = {
   className?: string;
 };
 
-export default function CopyCommand({command, className}: Props) {
+export default function CopyCommand({command, className}: Readonly<Props>) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
