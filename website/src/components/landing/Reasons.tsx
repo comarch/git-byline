@@ -35,8 +35,8 @@ const reasons: {icon: IconName; title: string; text: ReactNode}[] = [
     title: 'Ready for air-gapped estates',
     text: (
       <>
-        No cloud, account, daemon, or telemetry. Only explicit <code>update</code> and <code>version --check</code> runs
-        use the network.
+        No cloud, account, daemon, or telemetry. Commands run offline except explicit <code>update</code> and{' '}
+        <code>version --check</code>, and notes travel only with your own <code>git push</code>.
       </>
     ),
   },

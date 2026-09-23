@@ -1,3 +1,4 @@
+import {useState, type CSSProperties} from 'react';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
@@ -52,6 +53,25 @@ const chapters = [
   },
 ] as const;
 
+type MediaProps = {src: string; width: number; height: number; alt: string};
+
+// A GIF cannot be paused, so with reduced motion the recording waits for a
+// click instead of playing on its own.
+function Media({src, width, height, alt}: Readonly<MediaProps>) {
+  const [playing, setPlaying] = useState(false);
+  return (
+    <div
+      className={clsx(styles.player, playing && styles.playing)}
+      style={{'--ratio': `${width} / ${height}`} as CSSProperties}>
+      <img className={styles.media} src={src} width={width} height={height} loading="lazy" decoding="async" alt={alt} />
+      <button type="button" className={styles.play} onClick={() => setPlaying(true)}>
+        <Icon name="play" />
+        Play recording
+      </button>
+    </div>
+  );
+}
+
 export default function Recordings() {
   const {siteConfig} = useDocusaurusContext();
   const repoUrl = String(siteConfig.customFields?.repoUrl);
@@ -63,13 +83,10 @@ export default function Recordings() {
       </SectionHeader>
       <Reveal className={styles.tour}>
         <Window accent title="git byline blame · stats · check">
-          <img
-            className={styles.media}
+          <Media
             src={tourGif}
             width={1250}
             height={486}
-            loading="lazy"
-            decoding="async"
             alt="A four-view tour: line attribution with human identity, agent model, and human-override ranges; a close-up of untracked merge content next to two named people; a range aggregate with per-person totals; and the policy gate failing with exit code 1, then passing, then exporting Git AI authorship"
           />
         </Window>
@@ -95,15 +112,7 @@ export default function Recordings() {
             </Reveal>
             <Reveal className={styles.frame} delay={120}>
               <Window title={chapter.command}>
-                <img
-                  className={styles.media}
-                  src={chapter.src}
-                  width={chapter.width}
-                  height={chapter.height}
-                  loading="lazy"
-                  decoding="async"
-                  alt={chapter.alt}
-                />
+                <Media src={chapter.src} width={chapter.width} height={chapter.height} alt={chapter.alt} />
               </Window>
             </Reveal>
           </div>

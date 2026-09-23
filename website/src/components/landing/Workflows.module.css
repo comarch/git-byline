@@ -106,6 +106,7 @@
 }
 
 .layout:hover .progress,
+.layout:focus-within .progress,
 :global(.reveal:not(.is-visible)) .progress {
   animation-play-state: paused;
 }

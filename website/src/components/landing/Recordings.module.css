@@ -9,6 +9,48 @@
   height: auto;
 }
 
+.play {
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--byline-border);
+  border-radius: 999px;
+  background: var(--byline-raised);
+  color: var(--byline-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.play:hover,
+.play:focus-visible {
+  border-color: var(--byline-ai);
+}
+
+.play svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--byline-ai);
+}
+
+/* A GIF ignores reduced motion, so the frame shows a play button instead. */
+@media (prefers-reduced-motion: reduce) {
+  .player:not(.playing) {
+    display: grid;
+    place-items: center;
+    aspect-ratio: var(--ratio);
+  }
+
+  .player:not(.playing) .media {
+    display: none;
+  }
+
+  .player:not(.playing) .play {
+    display: inline-flex;
+  }
+}
+
 .caption {
   margin: 1rem 0 0;
   color: var(--byline-faint);

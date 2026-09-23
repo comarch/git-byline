@@ -96,8 +96,10 @@ function kindOf(label: string): Kind {
       return 'ai';
     case 'human-override':
       return 'human_override';
-    default:
+    case 'untracked':
       return 'untracked';
+    default:
+      throw new Error(`unknown git byline blame state: ${label}`);
   }
 }
 
