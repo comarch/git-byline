@@ -96,6 +96,41 @@ git-byline-reconstruct:
       source="${3:-$base}"
       test -n "$base"
       gitlab_git fetch --no-tags origin "$base" "$source" "$target"
+      # After a squash merge the merge request commits, and their notes,
+      # stay only on the merge request head. The default merge commit
+      # message names the merge request, so use its head as the source when
+      # its diff is exactly the diff the target commit brings.
+      mr_iid="$(git log -1 --format=%B "$target" | awk -v prefix="${CI_PROJECT_PATH}!" '
+        {
+          gsub(/[(),;]/, " ")
+          for (i = 1; i <= NF; i++) {
+            if (index($i, prefix) == 1) {
+              rest = substr($i, length(prefix) + 1)
+              sub(/[.:]$/, "", rest)
+              if (rest ~ /^[0-9]+$/) iid = rest
+            }
+          }
+        }
+        END { if (iid != "") print iid }')"
+      if [ -n "$mr_iid" ] && gitlab_git fetch --no-tags origin \
+        "+refs/merge-requests/$mr_iid/head:refs/remotes/origin/git-byline-mr-head"; then
+        mr_head="$(git rev-parse refs/remotes/origin/git-byline-mr-head)"
+        if [ "$mr_head" != "$source" ]; then
+          mr_base="$(git merge-base "$base" "$mr_head" || true)"
+          merged="$(git diff-tree -p -r --no-ext-diff --no-textconv "$base" "$target" |
+            git patch-id --stable | awk '{ print $1 }')"
+          proposed=""
+          if [ -n "$mr_base" ]; then
+            proposed="$(git diff-tree -p -r --no-ext-diff --no-textconv "$mr_base" "$mr_head" |
+              git patch-id --stable | awk '{ print $1 }')"
+          fi
+          if [ -n "$merged" ] && [ "$merged" = "$proposed" ]; then
+            source="$mr_head"
+          else
+            echo "git-byline: merge request !$mr_iid does not match $target; using commit parents" >&2
+          fi
+        fi
+      fi
       notes="$(gitlab_git ls-remote --refs origin refs/notes/byline)"
       if [ -n "$notes" ]; then
         gitlab_git fetch --no-tags origin refs/notes/byline:refs/notes/byline

@@ -133,6 +133,13 @@ func TestTemplatesSecurityContract(t *testing.T) {
 				// token as password; PRIVATE-TOKEN is a REST header.
 				`auth_value="$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 | tr -d '\n')"`,
 				`GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_value"`,
+				// A squash merge keeps notes only on the merge request
+				// head, used when its diff matches the target commit.
+				`awk -v prefix="${CI_PROJECT_PATH}!"`,
+				`"+refs/merge-requests/$mr_iid/head:refs/remotes/origin/git-byline-mr-head"`,
+				"git patch-id --stable",
+				`[ "$merged" = "$proposed" ]`,
+				`source="$mr_head"`,
 			},
 			forbidden: []string{
 				"merged_result",

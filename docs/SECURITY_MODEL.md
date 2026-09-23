@@ -103,8 +103,14 @@ result, whether a squash or a rebase merge, uses the merged pull request head
 as the source and derives the base from the merge base of that head and the
 target, so a multi-commit rebase range stays complete. The GitLab
 workflow derives its base from the pushed commit's first parent and its source
-from the second parent; a single-parent result has an empty source range and is
-skipped safely. The workflow runs the pinned release binary, not code from
+from the second parent. A squash merge leaves the merge request commits, and
+their notes, only on the merge request head. When the target commit message
+names the merge request as `<project path>!<iid>`, the workflow fetches
+`refs/merge-requests/<iid>/head` and uses it as the source only when its diff
+from the merge base has the same stable patch ID as the diff the target commit
+brings, so a wrong or edited reference cannot move notes onto other changes.
+Otherwise a single-parent result has an empty source range and is skipped
+safely. The workflow runs the pinned release binary, not code from
 that merge commit, before pushing notes. Before every token-bearing Git
 operation, it re-pins the
 canonical remote URL, disables repository hooks with an empty
@@ -140,6 +146,7 @@ warning and writes no notes.
 | Dashboard exposes source or metadata | Private temporary file mode, no external resources, no automatic publication | User review and repository scans | Delete local report |
 | Hook config overwrite | Structural merge, backup, managed markers | Idempotency and preservation tests | Restore `.git-byline.bak` |
 | Fork reaches write token | Post-merge default-branch rules, explicit fork rejection, token only in fetch and push steps | Pipeline rule checks | Disable workflow and rotate token |
+| Commit message names another merge request | Numeric merge request ID only; its head is used only when its stable patch ID equals the target diff | Job warning names the rejected merge request | Lines stay `untracked` |
 | Compromised action or tool | Immutable action pins and pinned tool versions | Renovate, dependency review, CodeQL | Pause automation, pin or remove tool |
 | Invalid release | Tag validation, tests, archive checks, checksums, SBOM | Release workflow and manual install | Withdraw release and publish patch |
 

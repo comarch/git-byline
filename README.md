@@ -630,6 +630,17 @@ On GitLab, CI/CD variables change the download without editing the file:
 `GIT_BYLINE_VERSION` pins another release and `GIT_BYLINE_RELEASES_URL`
 points at an internal mirror of the GitHub release assets.
 
+On GitLab, a squash merge keeps the merge request commits, and their notes,
+only on the merge request head. The job finds that head through the
+`group/project!123` reference in the merged commit message and uses it only
+when its diff matches the merged commit exactly. The default merge commit
+template carries that reference. With the fast-forward merge method, add
+`%{reference}` to the squash commit template under Settings > Merge
+requests, because the default one holds only the title. Without the
+reference, or when the diffs differ, the squashed lines stay `untracked`.
+Rebase merge requests locally, where the managed hooks carry attribution to
+the new commits; GitLab's server-side rebase creates commits no hook sees.
+
 On GitHub the same reconstruction also ships as a composite action, so a
 workflow can call it instead of carrying the generated steps:
 
