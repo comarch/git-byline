@@ -37,6 +37,19 @@ npm run serve        # serve the production build locally
 `npm run build` fails on broken links, broken anchors, and broken Markdown
 links, so a moved file or a renamed heading is caught before it ships.
 
+## Dependency overrides
+
+Docusaurus 3.10.2 still pulls two transitive packages with known advisories,
+so `overrides` in `package.json` lifts them to fixed releases:
+
+- `serialize-javascript` 7, used by the copy and CSS minimizer webpack plugins
+  at build time. Their newer majors already depend on 7.
+- `uuid` 11 under `sockjs`, used only by the dev server.
+
+Drop an override when Docusaurus ships a fixed dependency. Keep `npm audit`
+clean: the dependency review check fails a pull request that adds a package
+with a known advisory.
+
 ## Add or move a page
 
 - A new Markdown file directly under `docs/` is published automatically. Add
