@@ -4,6 +4,7 @@ const shapes = {
   arrowRight: <path d="M5 12h14M13 6l6 6-6 6" />,
   check: <path d="M5 12.5l4.5 4.5L19 7" />,
   cross: <path d="M7 7l10 10M17 7L7 17" />,
+  minus: <path d="M7 12h10" />,
   chevronDown: <path d="M6 9l6 6 6-6" />,
   copy: (
     <>

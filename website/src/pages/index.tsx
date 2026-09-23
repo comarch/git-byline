@@ -1,6 +1,7 @@
 import Layout from '@theme/Layout';
 import AgentMarquee from '@site/src/components/landing/AgentMarquee';
 import CallToAction from '@site/src/components/landing/CallToAction';
+import Compare from '@site/src/components/landing/Compare';
 import Dashboard from '@site/src/components/landing/Dashboard';
 import Faq from '@site/src/components/landing/Faq';
 import Hero from '@site/src/components/landing/Hero';
@@ -24,6 +25,7 @@ export default function Home() {
         <Install />
         <Workflows />
         <Reasons />
+        <Compare />
         <Faq />
         <CallToAction />
       </main>

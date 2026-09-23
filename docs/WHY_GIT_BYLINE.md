@@ -49,27 +49,49 @@ format stays the same across supported agents.
 ## Market landscape
 
 Different products answer different questions. Product capabilities change,
-so verify linked vendor documentation before a procurement decision.
+so verify linked vendor documentation before a procurement decision. The
+entries below were last checked against public READMEs, documentation, and
+source on 23 September 2026.
 
 | Approach | Primary question | Granularity | Evidence model | Operational model |
 | --- | --- | --- | --- | --- |
 | [Standard Git blame](https://git-scm.com/docs/git-blame) | Which commit last changed this line? | Line to commit | Commit graph | Built into Git |
 | Commit trailers such as `Co-authored-by` or `Assisted-by` | Was AI involved in this commit? | Whole commit | Declared metadata | Team convention |
 | [GitHub Copilot usage metrics](https://docs.github.com/en/copilot/concepts/copilot-usage-metrics/copilot-metrics) and similar dashboards | How is an assistant used across a team? | User, organization, or aggregate events | Platform usage events | Vendor account, dashboard, or API |
-| [Git AI](https://github.com/git-ai-project/git-ai) and prompt-linked provenance tools | Which agent, model, and prompt produced code? | Line-level and lifecycle context | Hooks, checkpoints, Git metadata, prompt links | Broader provenance and observability workflow |
+| [Git AI](https://github.com/git-ai-project/git-ai) | Which agent, model, and prompt produced each line? | Line-level, plus session and pull request context | Agent hooks, Git notes, prompt links, background daemon | Open source CLI; Git AI for Teams in the cloud or self-hosted |
+| [Entire](https://github.com/entireio/cli) | How did the agent session behind this commit go? | Session and checkpoint, with line-level blame | Agent hooks and transcripts in Git refs | CLI with an optional entire.io web app |
+| [Cursor Blame](https://cursor.com/docs/integrations/cursor-blame) | Which lines came from Tab, an agent, or a person in Cursor? | Line-level, Cursor edits only | Editor events and conversation summaries | Cursor Enterprise plan |
 | **git-byline** | Which committed lines were observed as human, AI, or unknown? | **Line-level** | **Local hooks, Git blobs, and Git notes** | **One binary, Git note sharing, no account, daemon, telemetry, or prompts** |
 
 ### Closest category peer: Git AI
 
-Git AI and git-byline share important ideas: agent checkpoints, line-level
-provenance, and Git notes. Their product boundaries differ.
+Git AI and git-byline share the core design: agent checkpoints, line-level
+provenance in Git notes, and attribution that follows rebases and squash
+merges. Their product boundaries differ.
 
-Git AI presents prompt-linked provenance and prompt-to-production
-observability. git-byline intentionally excludes prompts, transcripts, cloud
-sync, hosted analytics, accounts, daemons, and background network calls. Choose
-the broader model when prompt context and lifecycle analytics are required.
-Choose git-byline when local operation, prompt exclusion, and a small trust
-boundary matter more.
+Git AI links every AI line to the prompt that produced it and keeps prompts
+in a local database, in Git notes, or in a team prompt store. A background
+daemon follows Git operations through trace2 events rather than Git hooks.
+Release builds send error reports and update themselves by default; both are
+configurable.
+
+git-byline stores no prompts or transcripts, runs no daemon, sends no
+telemetry, and changes itself only when you run `update`. It adds a CI policy
+gate, disclosure output, and deep verification against blobs, and it reads
+and writes the Git AI format, so attribution history can move either way.
+
+Choose Git AI when prompt context, the widest agent list, editor blame, or
+team analytics matter most. Choose git-byline when local operation, prompt
+exclusion, and a small trust boundary matter more.
+
+### Session recorders and editor features
+
+[Entire](https://github.com/entireio/cli) captures whole agent sessions,
+including prompts and transcripts, in Git refs next to each commit, and
+`entire blame` maps lines back to them.
+[Cursor Blame](https://cursor.com/docs/integrations/cursor-blame) separates
+Tab, agent, and human lines inside Cursor on the Enterprise plan. Both answer
+a wider question than git-byline and collect more data to do it.
 
 ## Why hook evidence beats detection
 

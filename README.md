@@ -681,13 +681,17 @@ What makes it different:
 
 The closest category peer is
 [Git AI](https://github.com/git-ai-project/git-ai). Both use agent
-checkpoints, line-level provenance, and Git notes. Git AI adds prompt-linked
-provenance and lifecycle observability; git-byline intentionally excludes
-prompts, transcripts, cloud sync, hosted analytics, accounts, daemons, and
-background network calls, and instead covers history rewrites, shell-written
-files, interop, forge merges, policy gates, and disclosure output. Choose the
-broader model when prompt context is required. Choose git-byline when local
-operation, prompt exclusion, and a small trust boundary matter more.
+checkpoints, line-level provenance, and Git notes, and both follow history
+rewrites and forge merges. Git AI adds prompt-linked provenance, a background
+daemon, and team analytics; git-byline intentionally excludes prompts,
+transcripts, cloud sync, hosted analytics, accounts, daemons, telemetry, and
+background network calls, and adds policy gates, disclosure output, and Git AI
+interop. [Entire](https://github.com/entireio/cli) records whole agent
+sessions next to commits, and
+[Cursor Blame](https://cursor.com/docs/integrations/cursor-blame) covers code
+written in Cursor. Choose a broader tool when prompt or session context is
+required. Choose git-byline when local operation, prompt exclusion, and a
+small trust boundary matter more.
 
 git-byline is not a productivity score, AI detector, or compliance
 certificate. It is a small provenance primitive for teams that want stronger

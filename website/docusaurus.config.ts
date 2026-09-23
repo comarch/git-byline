@@ -163,6 +163,7 @@ const config: Config = {
       },
       items: [
         {to: '/#features', label: 'Features', position: 'left', activeBaseRegex: '^$'},
+        {to: '/#compare', label: 'Compare', position: 'left', activeBaseRegex: '^$'},
         {type: 'docSidebar', sidebarId: 'docs', label: 'Docs', position: 'left'},
         {to: '/docs/install', label: 'Install', position: 'left'},
         {to: '/docs/changelog', label: 'Changelog', position: 'left'},
@@ -182,6 +183,7 @@ const config: Config = {
           title: 'Product',
           items: [
             {label: 'Features', to: '/#features'},
+            {label: 'How it compares', to: '/#compare'},
             {label: 'Installation', to: '/docs/install'},
             {label: 'Product guide', to: '/docs/guide'},
             {label: 'Changelog', to: '/docs/changelog'},

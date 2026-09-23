@@ -90,10 +90,11 @@ const questions: {question: string; answer: ReactNode}[] = [
     question: 'How is it different from Git AI?',
     answer: (
       <>
-        Both use agent checkpoints, line-level provenance, and Git notes. Git AI adds prompt-linked provenance and
-        lifecycle observability. git-byline excludes prompts, transcripts, cloud sync, and hosted analytics, and covers
-        history rewrites, shell-written files, forge merges, policy gates, and disclosure output. It also reads and
-        writes the Git AI format; see <Link to="/docs/interop">interop</Link>.
+        Both record agent edits through hooks, keep line-level attribution in Git notes, and follow rebases and squash
+        merges. Git AI links every AI line to its prompt, runs a background daemon, and sends error reports by default.
+        git-byline stores no prompts, runs no daemon, sends no telemetry, and adds a CI gate and SBOM disclosure. It
+        also reads and writes the Git AI format; see <Link to="/docs/interop">interop</Link> and the{' '}
+        <Link to="/#compare">full comparison</Link>.
       </>
     ),
   },
