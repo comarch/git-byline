@@ -175,8 +175,8 @@ func TestUninstallKeepsModifiedWorkflow(t *testing.T) {
 	}
 }
 
-// TestUninstallKeepsLongerWorkflow covers a workflow larger than the
-// template, which the bounded read treats as a mismatch.
+// TestUninstallKeepsLongerWorkflow covers a workflow with content appended
+// to the template, which no longer matches it.
 func TestUninstallKeepsLongerWorkflow(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

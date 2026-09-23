@@ -4,7 +4,7 @@
 
 git-byline-reconstruct:
   stage: .post
-  image: golang:1.24.0@sha256:98839b84b95b4aa50e7bb488fdae07e456feef65073937c8684ead428782875c # Go 1.24.0
+  image: buildpack-deps:trixie-scm@sha256:d4850751e438aed5a675c30861b95ce1be3547ff9e0243fdc645e7c1b976bb66 # Debian 13 with Git and curl
   resource_group: git-byline-notes-$CI_PROJECT_ID-$CI_DEFAULT_BRANCH
   timeout: 15m
   rules:
@@ -22,6 +22,8 @@ git-byline-reconstruct:
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_BYLINE_REMOTE_URL: "$CI_PROJECT_URL"
+    GIT_BYLINE_VERSION: "v1.4.2" # x-release-please-version
+    GIT_BYLINE_RELEASES_URL: "https://github.com/comarch/git-byline/releases/download"
   script:
     - |
       set -eu
@@ -29,10 +31,44 @@ git-byline-reconstruct:
       auth_value="$GITLAB_TOKEN"
       empty_hooks="${CI_BUILDS_DIR:-/tmp}/git-byline-empty-hooks-${CI_JOB_ID}"
       clean_home="${CI_BUILDS_DIR:-/tmp}/git-byline-home-${CI_JOB_ID}"
-      mkdir -p "$empty_hooks" "$clean_home"
+      byline_dir="${CI_BUILDS_DIR:-/tmp}/git-byline-bin-${CI_JOB_ID}"
+      mkdir -p "$empty_hooks" "$clean_home" "$byline_dir"
       export HOME="$clean_home"
       export XDG_CONFIG_HOME="$clean_home/config"
       mkdir -p "$XDG_CONFIG_HOME"
+      printf '%s\n' "$GIT_BYLINE_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || {
+        echo "git-byline: GIT_BYLINE_VERSION must be a release tag like v1.2.3" >&2
+        exit 1
+      }
+      case "$(uname -m)" in
+        x86_64 | amd64) byline_arch=amd64 ;;
+        aarch64 | arm64) byline_arch=arm64 ;;
+        *)
+          echo "git-byline: unsupported runner architecture $(uname -m)" >&2
+          exit 1
+          ;;
+      esac
+      archive="git-byline_${GIT_BYLINE_VERSION#v}_linux_${byline_arch}.tar.gz"
+      release_url="$GIT_BYLINE_RELEASES_URL/$GIT_BYLINE_VERSION"
+      curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+        -o "$byline_dir/$archive" "$release_url/$archive"
+      curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+        -o "$byline_dir/checksums.txt" "$release_url/checksums.txt"
+      expected="$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1 }' "$byline_dir/checksums.txt")"
+      printf '%s' "$expected" | grep -Eq '^[0-9a-fA-F]{64}$' || {
+        echo "git-byline: missing or invalid checksum for $archive" >&2
+        exit 1
+      }
+      actual="$(sha256sum "$byline_dir/$archive" | awk '{ print $1 }')"
+      [ "$actual" = "$expected" ] || {
+        echo "git-byline: checksum mismatch for $archive" >&2
+        exit 1
+      }
+      tar -xzf "$byline_dir/$archive" -C "$byline_dir" git-byline
+      [ "$("$byline_dir/git-byline" version)" = "git-byline $GIT_BYLINE_VERSION" ] || {
+        echo "git-byline: binary version does not match $GIT_BYLINE_VERSION" >&2
+        exit 1
+      }
       gitlab_git() {
         GIT_CONFIG_NOSYSTEM=1 \
         GIT_CONFIG_GLOBAL=/dev/null \
@@ -64,8 +100,8 @@ git-byline-reconstruct:
       GIT_BYLINE_CI_BASE="$base" \
       GIT_BYLINE_CI_SOURCE="$source" \
       GIT_BYLINE_CI_TARGET="$target" \
-      CGO_ENABLED=0 GOPROXY=off \
-        go run ./cmd/git-byline ci run --provider gitlab
+        "$byline_dir/git-byline" ci run --provider gitlab
+      rm -rf "$byline_dir"
       push_hooks="$(mktemp -d "${CI_BUILDS_DIR:-/tmp}/git-byline-push-hooks.XXXXXX")"
       mkdir -p "$push_hooks"
       gitlab_git remote set-url origin "$GIT_BYLINE_REMOTE_URL"

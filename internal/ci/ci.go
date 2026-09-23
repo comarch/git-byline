@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -36,7 +37,15 @@ const (
 	ciSourceEnv     = "GIT_BYLINE_CI_SOURCE"
 	ciTargetEnv     = "GIT_BYLINE_CI_TARGET"
 	ciModeEnv       = "GIT_BYLINE_CI_MODE"
+	// versionPinMarker tags the template line that pins the git-byline
+	// release. Release tooling rewrites that tag on every release.
+	versionPinMarker = "x-release-please-version"
+	// managedWorkflowSlack lets an installed workflow pin a longer
+	// release tag than the embedded template and still be read whole.
+	managedWorkflowSlack = 64
 )
+
+var releaseTagPattern = regexp.MustCompile(`v[0-9]+\.[0-9]+\.[0-9]+`)
 
 // InstallResult reports the workflow path and whether it was created.
 type InstallResult struct {
@@ -94,6 +103,43 @@ func TemplatePath(provider Provider) (string, error) {
 // Template returns a copy of the canonical workflow template.
 func Template(provider Provider) ([]byte, error) {
 	return embeddedTemplate(provider)
+}
+
+// PinnedVersion returns the git-byline release tag that a workflow
+// installs, read from its single version pin line.
+func PinnedVersion(workflow []byte) (string, error) {
+	var tags []string
+	for _, line := range bytes.Split(workflow, []byte("\n")) {
+		if !bytes.Contains(line, []byte(versionPinMarker)) {
+			continue
+		}
+		found := releaseTagPattern.FindAll(line, -1)
+		if len(found) != 1 {
+			return "", fmt.Errorf("CI version pin line must hold one release tag, found %d", len(found))
+		}
+		tags = append(tags, string(found[0]))
+	}
+	if len(tags) != 1 {
+		return "", fmt.Errorf("CI workflow must have one version pin line, found %d", len(tags))
+	}
+	return tags[0], nil
+}
+
+// matchesTemplate reports whether data is the canonical template apart from
+// the release tag on the version pin line, so a workflow written by an
+// earlier release, or pinned to another release, is still managed content.
+func matchesTemplate(data, template []byte) bool {
+	return bytes.Equal(withoutReleaseTag(data), withoutReleaseTag(template))
+}
+
+func withoutReleaseTag(data []byte) []byte {
+	lines := bytes.SplitAfter(data, []byte("\n"))
+	for index, line := range lines {
+		if bytes.Contains(line, []byte(versionPinMarker)) {
+			lines[index] = releaseTagPattern.ReplaceAllLiteral(line, []byte("vX.Y.Z"))
+		}
+	}
+	return bytes.Join(lines, nil)
 }
 
 // DetectProvider classifies a repository's origin remote as a supported
@@ -168,8 +214,8 @@ func managedWorkflows() []managedWorkflow {
 }
 
 // Uninstall removes forge workflow files that still match the canonical
-// template byte for byte. A modified or foreign file stays in place, so
-// removal is limited to managed content. Validation, reading, and removal
+// template, apart from the pinned release tag. A modified or foreign file
+// stays in place, so removal is limited to managed content. Validation, reading, and removal
 // all happen below one os.Root, so no symlink swap between checks can
 // redirect an operation outside the root. Removals already done are
 // reported together with any later failure, so the caller can show what
@@ -189,14 +235,14 @@ func Uninstall(root string) ([]string, error) {
 		if err := validateManagedWorkflow(rootFile, workflow.relative); err != nil {
 			return removed, err
 		}
-		data, err := readManagedWorkflow(rootFile, workflow.relative, len(template)+1)
+		data, err := readManagedWorkflow(rootFile, workflow.relative, len(template)+managedWorkflowSlack)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			return removed, fmt.Errorf("read CI workflow %q: %w", workflow.relative, err)
 		}
-		if !bytes.Equal(data, template) {
+		if !matchesTemplate(data, template) {
 			continue
 		}
 		if err := rootFile.Remove(workflow.relative); err != nil {
@@ -240,8 +286,8 @@ func validateManagedWorkflow(rootFile *os.Root, relative string) error {
 }
 
 // readManagedWorkflow reads at most maxBytes of the workflow below root,
-// so a repository-controlled file cannot exhaust memory: a file longer
-// than the template cannot match it anyway. Go 1.24 has no
+// so a repository-controlled file cannot exhaust memory: a file much
+// longer than the template cannot match it anyway. Go 1.24 has no
 // os.Root.ReadFile, so the file opens explicitly.
 func readManagedWorkflow(rootFile *os.Root, relative string, maxBytes int) ([]byte, error) {
 	file, err := rootFile.Open(relative)
@@ -291,7 +337,7 @@ func Install(root string, provider Provider) (InstallResult, error) {
 		if readErr != nil {
 			return InstallResult{}, fmt.Errorf("read existing CI workflow: %w", readErr)
 		}
-		if !bytes.Equal(existing, template) {
+		if !matchesTemplate(existing, template) {
 			return InstallResult{}, fmt.Errorf("refusing to replace existing CI workflow %q", relative)
 		}
 		return InstallResult{Path: relative}, nil

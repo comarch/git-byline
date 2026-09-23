@@ -251,6 +251,9 @@ func checkScans(root string) error {
 		if err := checkCITemplates(root); err != nil {
 			return fmt.Errorf("CI template contract: %w", err)
 		}
+		if err := checkCITemplateVersions(root); err != nil {
+			return fmt.Errorf("CI template version: %w", err)
+		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect CI template directory: %w", err)
 	}

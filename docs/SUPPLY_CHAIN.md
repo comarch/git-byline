@@ -22,6 +22,11 @@
   `checksums.txt`, and pins every action it uses by commit SHA. Release tags are never moved;
   the moving action major tag `v1` follows each release publish and is
   documented as the convenience pin, with release tags as the immutable one.
+- The forge workflow templates written by `ci install` pin one release tag,
+  which Release Please rewrites on every release. The workflows download that
+  release over HTTPS and verify the archive against its `checksums.txt` and
+  the binary's reported version before running it. The validate gate fails
+  when a template pins a release other than the manifest version.
 
 ## CI
 

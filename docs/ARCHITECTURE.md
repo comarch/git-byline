@@ -293,8 +293,10 @@ later branch update will be accepted.
 When the origin remote is github.com or gitlab.com, `install-hooks --git`
 also creates the forge attribution workflow, so squash and rebase merges
 keep attribution. Detection reads `remote.origin.url` locally and is
-skipped for `--local-notes` and `--template` scope. `uninstall` removes
-the workflow only while it matches the embedded template byte for byte.
+skipped for `--local-notes` and `--template` scope. The workflow installs
+the git-byline release pinned on its version line. `uninstall` removes the
+workflow only while it matches the embedded template; only the pinned
+release tag may differ.
 
 Use `--local-notes` to install `post-commit` annotation without the sharing
 hook. Fetch shared notes into another clone explicitly:

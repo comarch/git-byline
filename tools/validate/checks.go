@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -521,4 +522,40 @@ func ciTemplateSourcePath(root string, provider ci.Provider) (string, error) {
 		return "", fmt.Errorf("unsupported CI provider %q", provider)
 	}
 	return filepath.Join(root, "internal", "ci", "templates", name), nil
+}
+
+// checkCITemplateVersions proves that every CI template installs the
+// release recorded in the release-please manifest, so a release never
+// ships templates that download an older binary.
+func checkCITemplateVersions(root string) error {
+	data, err := os.ReadFile(filepath.Join(root, ".release-please-manifest.json"))
+	if err != nil {
+		return fmt.Errorf("read release manifest: %w", err)
+	}
+	var manifest map[string]string
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("parse release manifest: %w", err)
+	}
+	version := manifest["."]
+	if version == "" {
+		return errors.New("release manifest has no root package version")
+	}
+	for _, provider := range []ci.Provider{ci.ProviderGitHub, ci.ProviderGitLab} {
+		sourcePath, err := ciTemplateSourcePath(root, provider)
+		if err != nil {
+			return err
+		}
+		source, err := os.ReadFile(sourcePath)
+		if err != nil {
+			return fmt.Errorf("read %s CI source template: %w", provider, err)
+		}
+		pinned, err := ci.PinnedVersion(source)
+		if err != nil {
+			return fmt.Errorf("%s CI template: %w", provider, err)
+		}
+		if pinned != "v"+version {
+			return fmt.Errorf("%s CI template pins %s, release manifest is v%s", provider, pinned, version)
+		}
+	}
+	return nil
 }

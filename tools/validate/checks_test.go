@@ -489,6 +489,65 @@ func TestCheckCITemplatesDetectsSourceDrift(t *testing.T) {
 	}
 }
 
+func TestCheckCITemplateVersions(t *testing.T) {
+	t.Parallel()
+	repositoryRoot, err := repoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCITemplateVersions(repositoryRoot); err != nil {
+		t.Fatalf("checkCITemplateVersions(repo) = %v, want nil", err)
+	}
+	tests := []struct {
+		name string
+		path string
+		data string
+		want string
+	}{
+		{"missing manifest", ".release-please-manifest.json", "", "read release manifest"},
+		{"invalid manifest", ".release-please-manifest.json", "{", "parse release manifest"},
+		{"no root version", ".release-please-manifest.json", `{"other": "1.0.0"}` + "\n", "no root package version"},
+		{"older manifest", ".release-please-manifest.json", `{".": "0.0.1"}` + "\n", "release manifest is v0.0.1"},
+		{"missing template", "internal/ci/templates/gitlab.yml", "", "read gitlab CI source template"},
+		{"template without pin", "internal/ci/templates/gitlab.yml", "name: x\n", "gitlab CI template: CI workflow must have one version pin line"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			for _, relative := range []string{
+				".release-please-manifest.json",
+				"internal/ci/templates/github.yml",
+				"internal/ci/templates/gitlab.yml",
+			} {
+				data, err := os.ReadFile(filepath.Join(repositoryRoot, filepath.FromSlash(relative)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(root, filepath.FromSlash(relative))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			path := filepath.Join(root, filepath.FromSlash(tt.path))
+			if tt.data == "" {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(path, []byte(tt.data), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkCITemplateVersions(root); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("checkCITemplateVersions() = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseCoverageTotal(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

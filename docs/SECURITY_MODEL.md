@@ -54,8 +54,11 @@ then writes attribution notes locally. It never calls a forge service and never
 pushes. The generated workflow performs the Git fetch and notes push.
 `install-hooks --git` provisions the workflow file locally from the embedded
 template when the origin remote host is github.com or gitlab.com; it refuses to
-replace an existing file and never contacts the forge. `uninstall` removes the
-file only while it still matches the embedded template byte for byte.
+replace a different existing file and never contacts the forge. A workflow
+that differs from the embedded template only in the release tag on its
+version pin line still counts as managed, so a git-byline upgrade does not
+orphan it. `uninstall` removes the file only while it still matches the
+embedded template apart from that tag.
 
 The marketplace action is an alternative delivery of the same reconstruction.
 Its metadata lives at the repository root, where the GitHub Marketplace
@@ -64,9 +67,9 @@ subdirectory reference working; the validate gate fails when the two drift.
 It runs in the calling workflow's context: the caller grants
 `contents: write`, the action downloads a release binary from the pinned
 git-byline repository, verifies it against the release `checksums.txt`, and
-pushes only `refs/notes/byline`. Unlike the generated workflow, which builds
-git-byline from the merge commit, the action runs the released binary pinned
-by its input version.
+pushes only `refs/notes/byline`. The generated workflows install a release
+the same way, pinned by their version line; the action installs the release
+named by its version input.
 
 The GitHub workflow requests only `contents: write`. It needs read access to
 the repository and write access to `refs/notes/byline`; it does not need issue,
@@ -83,7 +86,11 @@ HTTP header for each command, removed from the shell environment before the
 binary runs, and is not written to the repository. It is not used by the
 binary. The generated GitLab job is stored under
 `.gitlab/ci/git-byline.yml` and must be included from the project's
-`.gitlab-ci.yml`.
+`.gitlab-ci.yml`. It installs the release named by `GIT_BYLINE_VERSION`
+from `GIT_BYLINE_RELEASES_URL`, the pinned git-byline repository by default,
+over HTTPS only. It verifies the archive against that release's
+`checksums.txt` and the binary's reported version, and deletes the download
+after the run. A mirror URL moves trust for both files to the mirror.
 
 Both workflows reconstruct from the actual post-merge target commit. The
 GitHub workflow uses the merge commit's second parent as the source tip for a
@@ -93,8 +100,9 @@ as the source and derives the base from the merge base of that head and the
 target, so a multi-commit rebase range stays complete. The GitLab
 workflow derives its base from the pushed commit's first parent and its source
 from the second parent; a single-parent result has an empty source range and is
-skipped safely. The workflow runs repository code from that merge commit before
-pushing notes. Before every token-bearing Git operation, it re-pins the
+skipped safely. The workflow runs the pinned release binary, not code from
+that merge commit, before pushing notes. Before every token-bearing Git
+operation, it re-pins the
 canonical remote URL, disables repository hooks with an empty
 `core.hooksPath`, and disables system and global Git configuration. No branch,
 tag, source file, or workflow ref is pushed by the generated job.

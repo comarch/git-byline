@@ -4,8 +4,6 @@ on:
   pull_request:
     types:
       - closed
-    branches:
-      - main
 
 concurrency:
   group: git-byline-notes-${{ github.repository }}-${{ github.event.pull_request.base.ref }}
@@ -16,13 +14,16 @@ permissions:
 
 jobs:
   reconstruct:
-    if: github.event.pull_request.merged == true
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       GIT_BYLINE_CI_SOURCE: ${{ github.event.pull_request.head.sha }}
       GIT_BYLINE_CI_TARGET: ${{ github.event.pull_request.merge_commit_sha }}
       GIT_BYLINE_REMOTE_URL: ${{ github.server_url }}/${{ github.repository }}.git
+      GIT_BYLINE_VERSION: v1.4.2 # x-release-please-version
       GIT_CONFIG_NOSYSTEM: "1"
       GIT_CONFIG_GLOBAL: /dev/null
       GIT_CONFIG_SYSTEM: /dev/null
@@ -33,11 +34,45 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.27.1"
-          cache: false
+      - name: Install git-byline
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$GIT_BYLINE_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "git-byline: GIT_BYLINE_VERSION must be a release tag like v1.2.3" >&2
+            exit 1
+          }
+          case "$RUNNER_OS:$RUNNER_ARCH" in
+            Linux:X64) arch=amd64 ;;
+            Linux:ARM64) arch=arm64 ;;
+            *)
+              echo "git-byline: unsupported runner $RUNNER_OS $RUNNER_ARCH" >&2
+              exit 1
+              ;;
+          esac
+          release_url="https://github.com/comarch/git-byline/releases/download/$GIT_BYLINE_VERSION"
+          archive="git-byline_${GIT_BYLINE_VERSION#v}_linux_${arch}.tar.gz"
+          dir="$RUNNER_TEMP/git-byline-bin"
+          mkdir -p "$dir"
+          curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            -o "$dir/$archive" "$release_url/$archive"
+          curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            -o "$dir/checksums.txt" "$release_url/checksums.txt"
+          expected="$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1 }' "$dir/checksums.txt")"
+          printf '%s' "$expected" | grep -Eq '^[0-9a-fA-F]{64}$' || {
+            echo "git-byline: missing or invalid checksum for $archive" >&2
+            exit 1
+          }
+          actual="$(sha256sum "$dir/$archive" | awk '{ print $1 }')"
+          [ "$actual" = "$expected" ] || {
+            echo "git-byline: checksum mismatch for $archive" >&2
+            exit 1
+          }
+          tar -xzf "$dir/$archive" -C "$dir" git-byline
+          [ "$("$dir/git-byline" version)" = "git-byline $GIT_BYLINE_VERSION" ] || {
+            echo "git-byline: binary version does not match $GIT_BYLINE_VERSION" >&2
+            exit 1
+          }
+          printf '%s\n' "$dir" >> "$GITHUB_PATH"
 
       - name: Prepare isolated runner paths
         run: |
@@ -94,10 +129,7 @@ jobs:
           git config --local user.email git-byline-ci@users.noreply.github.com
 
       - name: Reconstruct attribution
-        env:
-          CGO_ENABLED: "0"
-          GOPROXY: "off"
-        run: go run ./cmd/git-byline ci run --provider github
+        run: git-byline ci run --provider github
 
       - name: Harden Git before push
         run: |
