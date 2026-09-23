@@ -79,12 +79,16 @@ uses immutable action commit pins and pushes only the notes ref with
 
 The GitLab workflow is a trusted post-merge push pipeline on the project
 default branch. Merge-request and external fork pipelines are explicitly
-blocked. It expects a project token in `GITLAB_TOKEN` with only the
+blocked. It expects a project access token in `GITLAB_TOKEN` with only the
 `write_repository` scope because the job uses Git-over-HTTP `ls-remote`,
-fetch, and push operations only. The token is copied into Git's in-memory
-HTTP header for each command, removed from the shell environment before the
-binary runs, and is not written to the repository. It is not used by the
-binary. The generated GitLab job is stored under
+fetch, and push operations only. The token is the password of HTTP basic
+authentication with the user name `oauth2`, which Git over HTTPS accepts;
+the `PRIVATE-TOKEN` header works only for REST calls. The encoded credential
+is passed through Git's in-memory `http.extraHeader` for each command, the
+token is removed from the shell environment before the binary runs, and
+neither is written to the repository. It is not used by the binary. GitLab
+masks the raw token in job logs, not the encoded header, so do not enable
+`CI_DEBUG_TRACE` for this job. The generated GitLab job is stored under
 `.gitlab/ci/git-byline.yml` and must be included from the project's
 `.gitlab-ci.yml`. It installs the release named by `GIT_BYLINE_VERSION`
 from `GIT_BYLINE_RELEASES_URL`, the pinned git-byline repository by default,

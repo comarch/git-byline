@@ -27,8 +27,14 @@ git-byline-reconstruct:
   script:
     - |
       set -eu
-      test -n "${GITLAB_TOKEN:-}"
-      auth_value="$GITLAB_TOKEN"
+      test -n "${GITLAB_TOKEN:-}" || {
+        echo "git-byline: set GITLAB_TOKEN to a token with the write_repository scope" >&2
+        exit 1
+      }
+      # Git over HTTPS takes HTTP basic auth, PRIVATE-TOKEN works only for
+      # REST calls. GitLab accepts any user name with an access token as the
+      # password, and oauth2 also covers OAuth tokens.
+      auth_value="$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 | tr -d '\n')"
       empty_hooks="${CI_BUILDS_DIR:-/tmp}/git-byline-empty-hooks-${CI_JOB_ID}"
       clean_home="${CI_BUILDS_DIR:-/tmp}/git-byline-home-${CI_JOB_ID}"
       byline_dir="${CI_BUILDS_DIR:-/tmp}/git-byline-bin-${CI_JOB_ID}"
@@ -75,7 +81,7 @@ git-byline-reconstruct:
         GIT_CONFIG_SYSTEM=/dev/null \
         GIT_CONFIG_COUNT=2 \
         GIT_CONFIG_KEY_0=http.extraHeader \
-        GIT_CONFIG_VALUE_0="PRIVATE-TOKEN: $auth_value" \
+        GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_value" \
         GIT_CONFIG_KEY_1=credential.helper \
         GIT_CONFIG_VALUE_1="" \
         git -c remote.origin.url="$GIT_BYLINE_REMOTE_URL" "$@"

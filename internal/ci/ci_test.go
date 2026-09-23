@@ -129,6 +129,10 @@ func TestTemplatesSecurityContract(t *testing.T) {
 				`[ "$("$byline_dir/git-byline" version)" = "git-byline $GIT_BYLINE_VERSION" ]`,
 				`"$byline_dir/git-byline" ci run --provider gitlab`,
 				`rm -rf "$byline_dir"`,
+				// GitLab Git over HTTPS takes HTTP basic auth with the
+				// token as password; PRIVATE-TOKEN is a REST header.
+				`auth_value="$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 | tr -d '\n')"`,
+				`GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_value"`,
 			},
 			forbidden: []string{
 				"merged_result",
@@ -136,6 +140,7 @@ func TestTemplatesSecurityContract(t *testing.T) {
 				"api",
 				"go run",
 				"GOPROXY",
+				"PRIVATE-TOKEN:",
 			},
 		},
 	}
