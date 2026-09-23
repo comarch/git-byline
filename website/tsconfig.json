@@ -1,0 +1,11 @@
+// Used by `npm run typecheck` and editors; Docusaurus transpiles on its own.
+{
+  "extends": "@docusaurus/tsconfig",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "resolveJsonModule": true,
+    "strict": true
+  },
+  "exclude": [".docusaurus", "build", "node_modules"]
+}

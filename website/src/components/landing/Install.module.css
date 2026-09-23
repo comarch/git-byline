@@ -1,0 +1,155 @@
+.section {
+  background: radial-gradient(40% 50% at 20% 50%, rgb(0 255 255 / 5%), transparent 70%);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 4rem;
+  align-items: center;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.tab {
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--byline-border);
+  border-radius: 999px;
+  background: var(--byline-card);
+  color: var(--byline-muted);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+.tab:hover {
+  color: var(--byline-text);
+}
+
+.tabActive,
+.tabActive:hover {
+  border-color: rgb(0 255 255 / 45%);
+  background: rgb(0 255 255 / 8%);
+  color: var(--byline-text);
+}
+
+/* Room for the longest path, so switching tabs does not move the page.
+   Only needed side by side, where the columns are centered on each other. */
+@media (min-width: 997px) {
+  .code {
+    min-height: 11.5rem;
+  }
+}
+
+.code :global(.theme-code-block),
+.next :global(.theme-code-block) {
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.code pre {
+  --ifm-pre-background: transparent;
+}
+
+.next {
+  margin-top: 1.25rem;
+  overflow: hidden;
+  border: 1px solid var(--byline-border);
+  border-radius: 12px;
+}
+
+.nextLabel {
+  margin: 0;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--byline-border);
+  background: var(--byline-card);
+  color: var(--byline-faint);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  margin: 0 0 1rem;
+  color: var(--byline-ai);
+  font-family: var(--byline-mono);
+  font-size: 0.8rem;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.text {
+  margin: 1.1rem 0 0;
+  color: var(--byline-muted);
+  font-size: 1.075rem;
+  line-height: 1.6;
+}
+
+.points {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.points li {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.points svg {
+  flex: none;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-top: 0.2rem;
+  color: var(--byline-ai);
+}
+
+.more {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 1.75rem;
+  font-weight: 600;
+}
+
+.more svg {
+  width: 1rem;
+  height: 1rem;
+  transition: transform 160ms ease;
+}
+
+.more:hover svg {
+  transform: translateX(3px);
+}
+
+@media (max-width: 996px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2.5rem;
+  }
+
+  .copy {
+    order: -1;
+  }
+}

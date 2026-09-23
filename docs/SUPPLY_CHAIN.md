@@ -3,8 +3,13 @@
 ## Source
 
 - GitHub Actions use immutable commit SHAs with version comments.
-- Renovate updates Go modules, action pins, and configuration.
+- Renovate updates Go modules, action pins, documentation site packages, and
+  configuration.
 - Major updates remain manual.
+- The documentation site under `website/` is a separate npm project pinned to
+  exact versions by `package-lock.json`. CI installs it with `npm ci` and
+  lifecycle scripts disabled. It never ships in release archives, and the
+  built site loads no third-party script, font, or stylesheet.
 - New Go dependencies require source, license, necessity, security, and binary
   size review.
 - Runtime code remains pure Go without CGo.
@@ -21,8 +26,9 @@
 ## CI
 
 Workflow permissions default to `contents: read`. Write access exists only in
-Release Please, release publication, and CodeQL jobs that need it. Pull request
-workflows do not receive release credentials.
+Release Please, release publication, GitHub Pages deployment, and CodeQL jobs
+that need it. Pull request workflows do not receive release credentials, and
+pull requests build the documentation site without deploying it.
 
 Required checks cover validation, operating system tests, release snapshots,
 coverage, dependency review, CodeQL, and generated instruction drift.

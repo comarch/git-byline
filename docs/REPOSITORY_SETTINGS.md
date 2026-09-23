@@ -6,6 +6,7 @@ contributions or release publication.
 ## General
 
 - Description: `Local line-level human and AI authorship for Git`
+- Website: `https://comarch.github.io/git-byline/`
 - Topics: `git`, `go`, `ai`, `attribution`, `developer-tools`, `cli`
 - Default branch: `main`
 - Issues: enabled
@@ -79,6 +80,14 @@ pull request prove that exact check always reports a conclusion.
 - Keep `GITHUB_TOKEN` as the artifact publishing token.
 - Add a second recovery owner for release settings and private advisories.
 - Keep bypass actors empty unless a tested bot path needs a narrow exception.
+
+## Documentation site
+
+- Set the GitHub Pages source to GitHub Actions, so `pages.yml` publishes
+  `website/build` from `main`.
+- Keep the `github-pages` environment restricted to the default branch.
+- Make `Build site` a required check only after it concludes on a
+  same-repository and a fork pull request.
 
 ## Labels
 

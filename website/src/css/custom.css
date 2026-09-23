@@ -1,0 +1,353 @@
+/*
+ * Palette, type, and accessibility rules follow docs/DESIGN.md, so the site
+ * matches the terminal output and the HTML report of the binary. The site
+ * is dark only: every palette token is measured against dark surfaces.
+ */
+
+:root {
+  --byline-ai: #00ffff;
+  --byline-human: #b280df;
+  --byline-override: #ff009b;
+  --byline-untracked: #a6a6a6;
+  --byline-cyan-deep: #00aaaa;
+  --byline-violet: #6400be;
+  --byline-violet-light: #d8bfef;
+  --byline-magenta-light: #ff80cd;
+  --byline-blue: #8080ff;
+  --byline-blue-light: #bfbfff;
+  --byline-red: #ff0000;
+  --byline-red-light: #ff8080;
+  --byline-alert: #ff4040;
+
+  --byline-canvas: #000000;
+  --byline-card: rgb(26 26 26 / 50%);
+  --byline-raised: #1a1a1a;
+  --byline-raised-strong: #333333;
+  --byline-border: rgb(64 64 64 / 60%);
+  --byline-border-strong: #404040;
+  --byline-text: #ffffff;
+  --byline-muted: #bfbfbf;
+  --byline-faint: #a6a6a6;
+
+  --byline-gradient: linear-gradient(90deg, #00ffff 0%, #6400be 50%, #ff0000 100%);
+  --byline-text-gradient: linear-gradient(90deg, #00ffff 0%, #b280df 50%, #ff009b 100%);
+  --byline-font: "Cera Pro", Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial,
+    sans-serif;
+  --byline-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --byline-radius: 14px;
+  --byline-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #00ffff;
+  --ifm-color-primary-dark: #00e6e6;
+  --ifm-color-primary-darker: #00d9d9;
+  --ifm-color-primary-darkest: #00b3b3;
+  --ifm-color-primary-light: #1affff;
+  --ifm-color-primary-lighter: #33ffff;
+  --ifm-color-primary-lightest: #80ffff;
+
+  --ifm-background-color: var(--byline-canvas);
+  --ifm-background-surface-color: #0d0d0d;
+  --ifm-font-color-base: var(--byline-text);
+  --ifm-font-color-secondary: var(--byline-muted);
+  --ifm-font-family-base: var(--byline-font);
+  --ifm-font-family-monospace: var(--byline-mono);
+  --ifm-heading-font-weight: 800;
+  --ifm-line-height-base: 1.6;
+  --ifm-global-radius: 10px;
+  --ifm-link-color: var(--byline-ai);
+  --ifm-link-hover-color: var(--ifm-color-primary-lightest);
+  --ifm-hr-border-color: var(--byline-border);
+  --ifm-toc-border-color: var(--byline-border);
+
+  --ifm-navbar-background-color: rgb(0 0 0 / 72%);
+  --ifm-navbar-height: 4rem;
+  --ifm-navbar-link-color: var(--byline-muted);
+  --ifm-navbar-link-hover-color: var(--byline-text);
+  --ifm-navbar-shadow: none;
+
+  --ifm-menu-color: var(--byline-muted);
+  --ifm-menu-color-active: var(--byline-ai);
+  --ifm-menu-color-background-active: rgb(0 255 255 / 8%);
+  --ifm-menu-color-background-hover: var(--byline-raised);
+
+  --ifm-code-background: var(--byline-raised);
+  --ifm-code-font-size: 90%;
+  --ifm-pre-background: #0d0d0d;
+  --prism-background-color: #0d0d0d;
+  --docusaurus-highlighted-code-line-bg: rgb(0 255 255 / 8%);
+
+  --ifm-table-border-color: var(--byline-raised-strong);
+  --ifm-table-head-background: var(--byline-raised);
+  --ifm-table-stripe-background: rgb(26 26 26 / 45%);
+
+  --ifm-button-border-radius: 10px;
+  --ifm-color-content-secondary: var(--byline-muted);
+}
+
+html {
+  background: var(--byline-canvas);
+  color-scheme: dark;
+}
+
+body {
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgb(0 255 255 / 30%);
+}
+
+:focus-visible {
+  outline: 2px solid var(--byline-ai);
+  outline-offset: 2px;
+}
+
+code {
+  border: 1px solid var(--byline-border);
+}
+
+/* Navbar */
+
+.navbar {
+  border-bottom: 1px solid var(--byline-border);
+  backdrop-filter: saturate(160%) blur(14px);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+}
+
+.navbar__title {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.navbar__link {
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.navbar-github-link {
+  display: flex;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+}
+
+.navbar-github-link::before {
+  content: '';
+  width: 22px;
+  height: 22px;
+  background-color: currentcolor;
+  -webkit-mask: var(--github-mark) center / contain no-repeat;
+  mask: var(--github-mark) center / contain no-repeat;
+  --github-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 0-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.3-3.1-.2-.4-.6-1.6 0-3.2 0 0 1-.3 3.4 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8 0 3.2.9.8 1.3 1.9 1.3 3.2 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1 .9 2.2v3.3c0 .3.1.7.8.6A12 12 0 0 0 12 .3'/%3E%3C/svg%3E");
+}
+
+/* Footer */
+
+/* Infima sets its own slate background on .footer--dark, so the root
+   variables alone do not reach the footer. */
+.footer--dark {
+  --ifm-footer-background-color: var(--byline-canvas);
+  --ifm-footer-color: var(--byline-muted);
+  --ifm-footer-link-color: var(--byline-muted);
+  --ifm-footer-link-hover-color: var(--byline-text);
+  --ifm-footer-title-color: var(--byline-text);
+}
+
+.footer {
+  border-top: 1px solid var(--byline-border);
+}
+
+.footer__copyright {
+  color: var(--byline-faint);
+  font-size: 0.875rem;
+}
+
+/* Documentation pages */
+
+.theme-doc-markdown h1 {
+  font-size: clamp(2rem, 3vw, 2.75rem);
+  letter-spacing: -0.03em;
+}
+
+.theme-doc-markdown h2,
+.theme-doc-markdown h3 {
+  letter-spacing: -0.02em;
+}
+
+.theme-doc-markdown img {
+  border: 1px solid var(--byline-border);
+  border-radius: 12px;
+}
+
+.theme-doc-markdown table {
+  display: block;
+  overflow-x: auto;
+  font-size: 0.925rem;
+}
+
+.theme-doc-markdown table code {
+  white-space: nowrap;
+}
+
+.theme-doc-sidebar-container {
+  border-right-color: var(--byline-border) !important;
+}
+
+.menu__link {
+  font-size: 0.925rem;
+}
+
+.pagination-nav__link {
+  border-color: var(--byline-border);
+}
+
+.pagination-nav__link:hover {
+  border-color: var(--byline-ai);
+}
+
+/* Landing page primitives shared by several sections. */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition:
+    opacity 700ms var(--byline-ease),
+    transform 700ms var(--byline-ease);
+}
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* Chart parts that grow into place once their section is revealed. */
+.grow-x,
+.grow-y,
+.grow-spin {
+  transition:
+    transform 900ms var(--byline-ease),
+    opacity 900ms var(--byline-ease);
+}
+
+.grow-x {
+  transform-origin: left center;
+}
+
+.grow-y,
+.grow-spin {
+  transform-box: fill-box;
+}
+
+.grow-y {
+  transform-origin: 50% 100%;
+}
+
+.grow-spin {
+  transform-origin: 50% 50%;
+}
+
+.reveal:not(.is-visible) .grow-x {
+  transform: scaleX(0);
+}
+
+.reveal:not(.is-visible) .grow-y {
+  transform: scaleY(0);
+}
+
+.reveal:not(.is-visible) .grow-spin {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.85);
+}
+
+.byline-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.875rem;
+  padding: 0 1.3rem;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 0.975rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.byline-button:hover {
+  text-decoration: none;
+  transform: translateY(-1px);
+}
+
+.byline-button svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.byline-button--primary,
+.byline-button--primary:hover {
+  background: var(--byline-text);
+  color: var(--byline-canvas);
+}
+
+.byline-button--primary:hover {
+  box-shadow: 0 0 0 4px rgb(0 255 255 / 25%);
+}
+
+.byline-button--ghost,
+.byline-button--ghost:hover {
+  border-color: var(--byline-border-strong);
+  background: rgb(26 26 26 / 60%);
+  color: var(--byline-text);
+}
+
+.byline-button--ghost:hover {
+  border-color: rgb(0 255 255 / 50%);
+}
+
+.gradient-text {
+  background: var(--byline-text-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .reveal.is-visible,
+  .reveal .grow-x,
+  .reveal .grow-y,
+  .reveal .grow-spin {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+}

@@ -1,0 +1,55 @@
+.command {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: 100%;
+  padding: 0.4rem 0.4rem 0.4rem 1rem;
+  border: 1px solid var(--byline-border-strong);
+  border-radius: 12px;
+  background: rgb(0 0 0 / 70%);
+  font-family: var(--byline-mono);
+  font-size: 0.85rem;
+}
+
+.prompt {
+  color: var(--byline-ai);
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0;
+  overflow-x: auto;
+  border: 0;
+  background: none;
+  color: var(--byline-text);
+  font-size: inherit;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid var(--byline-border);
+  border-radius: 9px;
+  background: var(--byline-raised);
+  color: var(--byline-muted);
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease;
+}
+
+.button:hover {
+  border-color: rgb(0 255 255 / 50%);
+  color: var(--byline-ai);
+}
+
+.button svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}

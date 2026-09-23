@@ -135,15 +135,17 @@ func scanRepo(root string) ([]finding, error) {
 // scanSkipDir reports whether the repository scan stays out of the
 // directory at rel, the path relative to the repository root. Hidden
 // directories at the repository root are skipped except generated agent
-// configuration and PromptScript source; local tool caches stay out of the
-// scan.
+// configuration and PromptScript source; local tool caches and the
+// packages, cache, and output of the documentation site build stay out of
+// the scan.
 func scanSkipDir(rel string) bool {
 	rel = path.Clean(strings.ReplaceAll(filepath.ToSlash(rel), `\`, "/"))
 	if rel == "." {
 		return false
 	}
 	switch rel {
-	case ".git", ".worktrees", "dist", "node_modules":
+	case ".git", ".worktrees", "dist", "node_modules",
+		"website/.docusaurus", "website/build", "website/node_modules":
 		return true
 	}
 	if rel == testDataDir || strings.HasPrefix(rel, testDataDir+"/") {

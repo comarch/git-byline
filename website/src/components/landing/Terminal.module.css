@@ -1,0 +1,75 @@
+.terminal {
+  display: grid;
+  gap: 1.1rem;
+  padding: 1.25rem 1.4rem;
+  font-family: var(--byline-mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.step {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: start;
+  min-width: 0;
+}
+
+.command {
+  display: flex;
+  gap: 0.6rem;
+  max-width: 100%;
+  color: var(--byline-text);
+}
+
+.command code {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prompt {
+  color: var(--byline-ai);
+}
+
+.output {
+  max-width: 100%;
+  margin: 0;
+  padding: 0 0 0 1.2rem;
+  overflow-x: auto;
+  border-radius: 0;
+  background: none;
+  color: var(--byline-muted);
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre;
+}
+
+.good {
+  color: var(--byline-ai);
+}
+
+.bad {
+  color: var(--byline-alert);
+}
+
+.exit {
+  margin-left: 1.2rem;
+  padding: 0.05rem 0.55rem;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.72rem;
+}
+
+.ok {
+  border-color: rgb(0 255 255 / 35%);
+  color: var(--byline-ai);
+}
+
+.fail {
+  border-color: rgb(255 64 64 / 45%);
+  color: var(--byline-alert);
+}

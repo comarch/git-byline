@@ -5,6 +5,11 @@
 /git-byline
 dist/
 
+# Documentation site dependencies, cache, and build output
+website/node_modules/
+website/.docusaurus/
+website/build/
+
 # Test and coverage artifacts
 *.test
 coverage.out

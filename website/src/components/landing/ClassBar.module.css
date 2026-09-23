@@ -1,0 +1,12 @@
+.bar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.bar > span {
+  flex-basis: 0;
+  min-width: 3px;
+}

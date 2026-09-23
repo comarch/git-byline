@@ -1,0 +1,85 @@
+.strip {
+  padding: 3rem 0 1rem;
+}
+
+.caption {
+  margin: 0 1rem 1.5rem;
+  color: var(--byline-faint);
+  font-size: 0.925rem;
+  text-align: center;
+}
+
+.viewport {
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, #000000 12%, #000000 88%, transparent);
+}
+
+.track {
+  display: flex;
+  gap: 1rem;
+  width: max-content;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  animation: marquee 48s linear infinite;
+}
+
+.viewport:hover .track {
+  animation-play-state: paused;
+}
+
+.agent {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem 1.15rem;
+  border: 1px solid var(--byline-border);
+  border-radius: 12px;
+  background: var(--byline-card);
+  white-space: nowrap;
+}
+
+.dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 12px var(--tone);
+}
+
+.name {
+  font-weight: 600;
+}
+
+.label {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tone);
+  font-size: 0.8rem;
+}
+
+/* One copy plus one gap: the loop restarts on an identical frame. */
+@keyframes marquee {
+  to {
+    transform: translateX(calc(-50% - 0.5rem));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewport {
+    mask-image: none;
+  }
+
+  .track {
+    flex-wrap: wrap;
+    justify-content: center;
+    width: auto;
+    padding: 0 1rem;
+    animation: none;
+  }
+
+  .agent[aria-hidden='true'] {
+    display: none;
+  }
+}

@@ -1,0 +1,349 @@
+.window {
+  margin-top: 4.5rem;
+  text-align: left;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 15.5rem minmax(0, 1fr);
+}
+
+/* Sidebar */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 1.1rem 0.85rem;
+  border-right: 1px solid var(--byline-border);
+  background: rgb(26 26 26 / 35%);
+}
+
+.group {
+  margin: 0.9rem 0.4rem 0.35rem;
+  color: var(--byline-faint);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.group:first-child {
+  margin-top: 0;
+}
+
+.files {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.file {
+  display: grid;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.6rem 0.65rem;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: var(--byline-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.file:hover {
+  background: rgb(255 255 255 / 4%);
+  color: var(--byline-text);
+}
+
+.active,
+.active:hover {
+  border-color: rgb(0 255 255 / 30%);
+  background: rgb(0 255 255 / 7%);
+  color: var(--byline-text);
+}
+
+.fileHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-family: var(--byline-mono);
+  font-size: 0.8rem;
+}
+
+.fileCount {
+  color: var(--byline-faint);
+}
+
+.commits {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.commits li {
+  display: flex;
+  gap: 0.55rem;
+  padding: 0.3rem 0.4rem;
+  overflow: hidden;
+  color: var(--byline-muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.commits code {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--byline-blue-light);
+  font-size: inherit;
+}
+
+.commits span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Main area */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--byline-border);
+}
+
+.views {
+  display: flex;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.2rem;
+  overflow-x: auto;
+  border: 1px solid var(--byline-border);
+  border-radius: 10px;
+  background: rgb(26 26 26 / 50%);
+}
+
+.view {
+  padding: 0.4rem 0.8rem;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--byline-muted);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.view:hover {
+  color: var(--byline-text);
+}
+
+.viewActive,
+.viewActive:hover {
+  background: var(--byline-raised-strong);
+  color: var(--byline-text);
+}
+
+.range {
+  flex: none;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--byline-border);
+  border-radius: 999px;
+  color: var(--byline-faint);
+  font-family: var(--byline-mono);
+  font-size: 0.75rem;
+}
+
+/* Fixed height, so switching files or views never moves the page. */
+.panel {
+  height: 36rem;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.status {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 1rem;
+  border-top: 1px solid var(--byline-border);
+  color: var(--byline-faint);
+  font-family: var(--byline-mono);
+  font-size: 0.72rem;
+}
+
+.status > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--byline-ai);
+  box-shadow: 0 0 8px var(--byline-ai);
+}
+
+/* Blame view */
+
+.blame {
+  padding: 1.1rem 0 1.25rem;
+  font-family: var(--byline-mono);
+  font-size: 0.78rem;
+}
+
+.command {
+  padding: 0 1.25rem;
+  color: var(--byline-text);
+}
+
+.prompt {
+  color: var(--byline-ai);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.1rem;
+  margin: 0.6rem 0 0.9rem;
+  padding: 0 1.25rem;
+  color: var(--byline-muted);
+  font-size: 0.75rem;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.legendItem b {
+  color: var(--byline-text);
+  font-weight: 600;
+}
+
+.swatch {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 3px;
+}
+
+.lines {
+  min-width: max-content;
+}
+
+.line {
+  display: grid;
+  grid-template-columns: var(--label) 2.5ch minmax(0, 1fr);
+  gap: 1.25ch;
+  padding: 0 1.25rem 0 calc(1.25rem - 3px);
+  border-left: 3px solid var(--tone);
+  line-height: 1.6;
+  animation: line-in 480ms var(--byline-ease) both;
+  animation-delay: calc(var(--index) * 16ms);
+}
+
+.line:hover {
+  background: rgb(255 255 255 / 5%);
+}
+
+.label {
+  color: var(--tone);
+  white-space: pre;
+}
+
+.number {
+  color: var(--byline-faint);
+  text-align: right;
+}
+
+.code {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--byline-text);
+  font-size: inherit;
+  white-space: pre;
+  tab-size: 4;
+}
+
+@keyframes line-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+
+@media (max-width: 996px) {
+  .window {
+    margin-top: 3rem;
+  }
+
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    padding: 0.75rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--byline-border);
+  }
+
+  .group,
+  .commits {
+    display: none;
+  }
+
+  .files {
+    grid-auto-columns: minmax(10.5rem, 1fr);
+    grid-auto-flow: column;
+    overflow-x: auto;
+  }
+
+  .panel {
+    height: 30rem;
+  }
+
+  .status > span:last-child {
+    display: none;
+  }
+}
+
+/* Phones: drop the range chip so all three view tabs stay visible. */
+@media (max-width: 640px) {
+  .toolbar {
+    padding: 0.6rem 0.75rem;
+  }
+
+  .range {
+    display: none;
+  }
+
+  .view {
+    padding: 0.4rem 0.6rem;
+  }
+}

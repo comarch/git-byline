@@ -1,0 +1,311 @@
+{
+  "generator": "website/scripts/demo-data.sh",
+  "repository": "docs/assets/demo/build-demo-repo.sh",
+  "range": "HEAD~6..HEAD",
+  "stats": {
+    "version": 3,
+    "from": "HEAD~6",
+    "to": "HEAD",
+    "commits": {
+      "total": 6,
+      "annotated": 6
+    },
+    "totals": {
+      "human": 41,
+      "ai": 39,
+      "untracked": 8,
+      "human_override": 10,
+      "lines": 98
+    },
+    "agents": [
+      {
+        "agent": "claude",
+        "human": 0,
+        "ai": 5,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 5,
+        "models": [
+          {
+            "model": "claude-opus-4-6",
+            "human": 0,
+            "ai": 5,
+            "untracked": 0,
+            "human_override": 0,
+            "lines": 5
+          }
+        ]
+      },
+      {
+        "agent": "codex",
+        "human": 0,
+        "ai": 16,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 16,
+        "models": [
+          {
+            "model": "gpt-5-codex",
+            "human": 0,
+            "ai": 16,
+            "untracked": 0,
+            "human_override": 0,
+            "lines": 16
+          }
+        ]
+      },
+      {
+        "agent": "droid",
+        "human": 0,
+        "ai": 18,
+        "untracked": 0,
+        "human_override": 10,
+        "lines": 28,
+        "models": [
+          {
+            "model": "claude-sonnet-4-5",
+            "human": 0,
+            "ai": 18,
+            "untracked": 0,
+            "human_override": 10,
+            "lines": 28
+          }
+        ]
+      }
+    ],
+    "authors": [
+      {
+        "identity": "john.doe",
+        "human": 38,
+        "ai": 0,
+        "untracked": 0,
+        "human_override": 10,
+        "lines": 48
+      },
+      {
+        "identity": "maya.chen",
+        "human": 3,
+        "ai": 0,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 3
+      }
+    ],
+    "files": [
+      {
+        "path": "src/invoice.go",
+        "human": 3,
+        "ai": 21,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 24
+      },
+      {
+        "path": "src/pricing.go",
+        "human": 33,
+        "ai": 18,
+        "untracked": 0,
+        "human_override": 10,
+        "lines": 61
+      },
+      {
+        "path": "src/tax.go",
+        "human": 5,
+        "ai": 0,
+        "untracked": 8,
+        "human_override": 0,
+        "lines": 13
+      }
+    ],
+    "sessions": [
+      {
+        "session": "pr-4812-codex",
+        "agent": "codex",
+        "model": "gpt-5-codex",
+        "human": 0,
+        "ai": 16,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 16
+      },
+      {
+        "session": "pr-4812-droid",
+        "agent": "droid",
+        "model": "claude-sonnet-4-5",
+        "human": 0,
+        "ai": 13,
+        "untracked": 0,
+        "human_override": 10,
+        "lines": 23
+      },
+      {
+        "session": "pr-4817-claude",
+        "agent": "claude",
+        "model": "claude-opus-4-6",
+        "human": 0,
+        "ai": 5,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 5
+      },
+      {
+        "session": "pr-4823-droid",
+        "agent": "droid",
+        "model": "claude-sonnet-4-5",
+        "human": 0,
+        "ai": 5,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 5
+      }
+    ],
+    "commit": [
+      {
+        "commit": "577fc953efea9ddb4acf8d1752b917b07cc93785",
+        "timestamp": "2026-02-05T09:30:00Z",
+        "human": 16,
+        "ai": 9,
+        "untracked": 4,
+        "human_override": 5,
+        "lines": 34
+      },
+      {
+        "commit": "5de1519ca4e5e7d59c0b50cb473dbb19eb3ddd6d",
+        "timestamp": "2026-02-03T14:40:00Z",
+        "human": 11,
+        "ai": 4,
+        "untracked": 0,
+        "human_override": 5,
+        "lines": 20
+      },
+      {
+        "commit": "810c3c67892f3af4f59fc0c70a527c1e59baaa4c",
+        "timestamp": "2026-02-04T15:45:00Z",
+        "human": 0,
+        "ai": 0,
+        "untracked": 4,
+        "human_override": 0,
+        "lines": 4
+      },
+      {
+        "commit": "825be355991d48fd4f18851ef13ee69574217639",
+        "timestamp": "2026-02-04T11:20:00Z",
+        "human": 3,
+        "ai": 13,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 16
+      },
+      {
+        "commit": "a9fcc7d120d93e81fbe98a36d8ab48cfb48fb72b",
+        "timestamp": "2026-02-04T08:05:00Z",
+        "human": 0,
+        "ai": 8,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 8
+      },
+      {
+        "commit": "f272f5bdfb37da6d56106cf4daccec3898fd5258",
+        "timestamp": "2026-02-03T10:15:00Z",
+        "human": 11,
+        "ai": 5,
+        "untracked": 0,
+        "human_override": 0,
+        "lines": 16
+      }
+    ]
+  },
+  "log": [
+    {
+      "commit": "577fc953efea9ddb4acf8d1752b917b07cc93785",
+      "author": "John Doe",
+      "date": "2026-02-05T09:30:00Z",
+      "subject": "feat(pricing): add annual price and tax helper"
+    },
+    {
+      "commit": "810c3c67892f3af4f59fc0c70a527c1e59baaa4c",
+      "author": "Maya Chen",
+      "date": "2026-02-04T15:45:00Z",
+      "subject": "merge: vendor tax rate"
+    },
+    {
+      "commit": "825be355991d48fd4f18851ef13ee69574217639",
+      "author": "Maya Chen",
+      "date": "2026-02-04T11:20:00Z",
+      "subject": "feat(pricing): add invoice summary"
+    },
+    {
+      "commit": "a9fcc7d120d93e81fbe98a36d8ab48cfb48fb72b",
+      "author": "John Doe",
+      "date": "2026-02-04T08:05:00Z",
+      "subject": "feat(pricing): render invoice line"
+    },
+    {
+      "commit": "5de1519ca4e5e7d59c0b50cb473dbb19eb3ddd6d",
+      "author": "John Doe",
+      "date": "2026-02-03T14:40:00Z",
+      "subject": "fix(pricing): apply volume discount"
+    },
+    {
+      "commit": "f272f5bdfb37da6d56106cf4daccec3898fd5258",
+      "author": "John Doe",
+      "date": "2026-02-03T10:15:00Z",
+      "subject": "feat(pricing): add period total"
+    }
+  ],
+  "blame": [
+    {
+      "path": "src/pricing.go",
+      "output": "human:john.doe                                    1 | package pricing\nhuman:john.doe                                    2 | \nhuman:john.doe                                    3 | // Plan is one billable customer plan.\nhuman:john.doe                                    4 | type Plan struct {\nhuman:john.doe                                    5 | \tName  string\nhuman:john.doe                                    6 | \tSeats int\nhuman:john.doe                                    7 | }\nhuman:john.doe                                    8 | \nhuman:john.doe                                    9 | func (p Plan) Valid() bool {\nhuman:john.doe                                   10 | \treturn p.Name != \"\" && p.Seats > 0\nhuman:john.doe                                   11 | }\nai:droid/claude-sonnet-4-5                       12 | \nai:droid/claude-sonnet-4-5                       13 | // Total returns the plan price for one billing period.\nai:droid/claude-sonnet-4-5                       14 | func (p Plan) Total(unit int) int {\nhuman-override:john.doe/droid/claude-sonnet-4-5  15 | \t// Volume discount applies from the eleventh seat.\nhuman-override:john.doe/droid/claude-sonnet-4-5  16 | \tif p.Seats > 10 {\nhuman-override:john.doe/droid/claude-sonnet-4-5  17 | \t\treturn unit * p.Seats * 9 / 10\nhuman-override:john.doe/droid/claude-sonnet-4-5  18 | \t}\nhuman-override:john.doe/droid/claude-sonnet-4-5  19 | \treturn unit * p.Seats\nai:droid/claude-sonnet-4-5                       20 | }\nai:droid/claude-sonnet-4-5                       21 | \nai:droid/claude-sonnet-4-5                       22 | // Annual returns the discounted price for a yearly commitment.\nai:droid/claude-sonnet-4-5                       23 | func (p Plan) Annual(unit int) int {\nai:droid/claude-sonnet-4-5                       24 | \treturn p.Total(unit) * 10\nai:droid/claude-sonnet-4-5                       25 | }"
+    },
+    {
+      "path": "src/invoice.go",
+      "output": "ai:codex/gpt-5-codex        1 | package pricing\nai:codex/gpt-5-codex        2 | \nai:codex/gpt-5-codex        3 | import \"fmt\"\nai:codex/gpt-5-codex        4 | \nai:codex/gpt-5-codex        5 | // Render formats one invoice line for a plan.\nai:codex/gpt-5-codex        6 | func Render(p Plan, unit int) string {\nai:codex/gpt-5-codex        7 | \treturn fmt.Sprintf(\"%s: %d seats, %d due\", p.Name, p.Seats, p.Total(unit))\nai:codex/gpt-5-codex        8 | }\nai:claude/claude-opus-4-6   9 | \nai:claude/claude-opus-4-6  10 | // Summary formats the invoice header.\nai:claude/claude-opus-4-6  11 | func Summary(count int) string {\nai:claude/claude-opus-4-6  12 | \treturn fmt.Sprintf(\"%d plans invoiced\", count)\nai:claude/claude-opus-4-6  13 | }\nhuman:maya.chen            14 | \nhuman:maya.chen            15 | // Footer is required by the billing team.\nhuman:maya.chen            16 | const Footer = \"questions: billing@example.com\""
+    },
+    {
+      "path": "src/tax.go",
+      "output": "untracked        1 | package pricing\nuntracked        2 | \nuntracked        3 | // TaxRate is the flat rate applied to every invoice.\nuntracked        4 | const TaxRate = 23\nhuman:john.doe   5 | \nhuman:john.doe   6 | // WithTax applies the flat rate to one amount.\nhuman:john.doe   7 | func WithTax(amount int) int {\nhuman:john.doe   8 | \treturn amount * (100 + TaxRate) / 100\nhuman:john.doe   9 | }"
+    }
+  ],
+  "terminal": {
+    "gate": [
+      {
+        "command": "git byline check HEAD~6..HEAD --max-ai-percent 30",
+        "output": "Range: HEAD~6..HEAD\nCommits: 6 total, 6 annotated\nLines: 98 (AI 39.80%, untracked 8.16%)\nFAIL max-ai-percent: AI attribution is 39.80%, above maximum 30% (39 of 98 lines)\npolicy failed with 1 violation(s)",
+        "exit": 1
+      },
+      {
+        "command": "git byline check HEAD~6..HEAD --max-ai-percent 60",
+        "output": "Range: HEAD~6..HEAD\nCommits: 6 total, 6 annotated\nLines: 98 (AI 39.80%, untracked 8.16%)\npolicy passed",
+        "exit": 0
+      }
+    ],
+    "verify": [
+      {
+        "command": "git byline verify HEAD~6..HEAD --deep",
+        "output": "verified 6 annotated commits (6 commits total)",
+        "exit": 0
+      }
+    ],
+    "disclosure": [
+      {
+        "command": "git byline disclosure --range HEAD~6..HEAD --output disclosure.json >/dev/null",
+        "output": "",
+        "exit": 0
+      },
+      {
+        "command": "jq -c '{ai_share: .totals.ai_share_percent, lines: .totals.lines, agents: [.agents[].agent]}' disclosure.json",
+        "output": "{\"ai_share\":50,\"lines\":98,\"agents\":[\"claude\",\"codex\",\"droid\"]}",
+        "exit": 0
+      }
+    ],
+    "json": [
+      {
+        "command": "git byline stats --json HEAD~6..HEAD | jq -c .totals",
+        "output": "{\"human\":41,\"ai\":39,\"untracked\":8,\"human_override\":10,\"lines\":98}",
+        "exit": 0
+      }
+    ]
+  }
+}

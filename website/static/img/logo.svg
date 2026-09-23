@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="git-byline">
+  <defs>
+    <linearGradient id="gutter" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#00FFFF"/>
+      <stop offset="0.5" stop-color="#6400BE"/>
+      <stop offset="1" stop-color="#FF0000"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#000000"/>
+  <rect x="104" y="119" width="20" height="274" rx="10" fill="url(#gutter)"/>
+  <rect x="158" y="119" width="250" height="46" rx="23" fill="#00FFFF"/>
+  <rect x="158" y="195" width="178" height="46" rx="23" fill="#B280DF"/>
+  <rect x="158" y="271" width="214" height="46" rx="23" fill="#FF009B"/>
+  <rect x="158" y="347" width="136" height="46" rx="23" fill="#A6A6A6"/>
+</svg>

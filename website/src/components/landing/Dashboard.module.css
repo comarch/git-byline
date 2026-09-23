@@ -1,0 +1,179 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.kpi,
+.card {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--byline-border);
+  border-radius: var(--byline-radius);
+  background: var(--byline-card);
+}
+
+.kpi {
+  grid-column: span 3;
+  padding: 1.1rem 1.25rem 1.25rem;
+  overflow: hidden;
+}
+
+.kpi::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 1.25rem;
+  left: 1.25rem;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--tone), transparent);
+  opacity: 0.8;
+}
+
+.kpiHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--byline-faint);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.kpiHead svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  color: var(--tone);
+}
+
+/* KPI type follows the report spec in docs/DESIGN.md. */
+.kpiValue {
+  margin-top: 0.6rem;
+  color: var(--tone);
+  font-size: 2.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.kpiNote {
+  margin-top: 0.3rem;
+  color: var(--byline-muted);
+  font-size: 0.875rem;
+}
+
+.kpiTrack {
+  height: 4px;
+  margin-top: 1rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 6%);
+}
+
+.kpiTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--tone);
+}
+
+.card {
+  padding: 1.25rem;
+}
+
+.wide {
+  grid-column: span 8;
+}
+
+.narrow,
+.third {
+  grid-column: span 4;
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.cardSubtitle {
+  margin: 0.2rem 0 0;
+  color: var(--byline-faint);
+  font-size: 0.85rem;
+}
+
+.toggle {
+  display: flex;
+  flex: none;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid var(--byline-border);
+  border-radius: 9px;
+  background: rgb(0 0 0 / 50%);
+}
+
+.toggleButton {
+  padding: 0.3rem 0.7rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--byline-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.toggleButton:hover {
+  color: var(--byline-text);
+}
+
+.toggleActive,
+.toggleActive:hover {
+  background: var(--byline-raised-strong);
+  color: var(--byline-text);
+}
+
+.dot {
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+}
+
+.footnote {
+  max-width: 46rem;
+  margin: 2rem auto 0;
+  color: var(--byline-faint);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+@media (max-width: 1100px) {
+  .kpi,
+  .third {
+    grid-column: span 6;
+  }
+
+  .wide,
+  .narrow,
+  .third:last-child {
+    grid-column: span 12;
+  }
+}
+
+@media (max-width: 640px) {
+  .kpi,
+  .third {
+    grid-column: span 12;
+  }
+}

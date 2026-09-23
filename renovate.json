@@ -9,7 +9,8 @@
   ],
   "enabledManagers": [
     "gomod",
-    "github-actions"
+    "github-actions",
+    "npm"
   ],
   "dependencyDashboard": true,
   "labels": [
@@ -64,6 +65,14 @@
         "github-actions"
       ],
       "semanticCommitScope": "ci"
+    },
+    {
+      "description": "Keep documentation site packages out of product releases",
+      "matchManagers": [
+        "npm"
+      ],
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "website"
     },
     {
       "description": "Keep major updates under manual review",

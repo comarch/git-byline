@@ -1,0 +1,75 @@
+.cta {
+  padding: 3rem 0 7rem;
+}
+
+.card {
+  position: relative;
+  padding: 4.5rem 2rem;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid rgb(0 255 255 / 22%);
+  border-radius: 24px;
+  background: var(--byline-card);
+  text-align: center;
+}
+
+/* Gradient hairline along the top edge, the same stops as the report. */
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 10%;
+  left: 10%;
+  height: 1px;
+  background: var(--byline-gradient);
+}
+
+.glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(50% 70% at 50% 0%, rgb(100 0 190 / 30%), transparent 70%),
+    radial-gradient(35% 50% at 15% 100%, rgb(0 255 255 / 10%), transparent 70%),
+    radial-gradient(35% 50% at 85% 100%, rgb(255 0 155 / 10%), transparent 70%);
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 3.6rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+}
+
+.text {
+  max-width: 38rem;
+  margin: 1.1rem auto 0;
+  color: var(--byline-muted);
+  font-size: 1.125rem;
+  line-height: 1.6;
+}
+
+.command {
+  max-width: 44rem;
+  margin: 2rem auto 0;
+  text-align: left;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+}
+
+@media (max-width: 996px) {
+  .cta {
+    padding-bottom: 4.5rem;
+  }
+
+  .card {
+    padding: 3rem 1.25rem;
+  }
+}

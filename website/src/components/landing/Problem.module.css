@@ -1,0 +1,176 @@
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.card {
+  overflow-x: auto;
+  border: 1px solid var(--byline-border);
+  border-radius: var(--byline-radius);
+  background: var(--byline-card);
+}
+
+.table {
+  display: table;
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.table tr,
+.table tr:nth-child(2n) {
+  border: 0;
+  background: none;
+}
+
+.table th,
+.table td {
+  padding: 1rem 1.25rem;
+  border: 0;
+  border-bottom: 1px solid var(--byline-border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child th,
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table thead th {
+  background: rgb(26 26 26 / 70%);
+  color: var(--byline-faint);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.table thead code {
+  font-size: 0.8rem;
+  text-transform: none;
+}
+
+.table tbody th {
+  font-weight: 600;
+}
+
+.table tbody tr {
+  transition: background-color 160ms ease;
+}
+
+.table tbody tr:hover {
+  background: rgb(255 255 255 / 3%);
+}
+
+.blame {
+  color: var(--byline-faint);
+}
+
+.byline {
+  color: var(--byline-text);
+}
+
+.yes,
+.no {
+  display: inline-grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+}
+
+.yes {
+  background: rgb(0 255 255 / 12%);
+  color: var(--byline-ai);
+}
+
+.no {
+  background: rgb(166 166 166 / 12%);
+  color: var(--byline-faint);
+}
+
+.yes svg,
+.no svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.states {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.state {
+  position: relative;
+  padding: 1.1rem 1.25rem 1.15rem 1.5rem;
+  overflow: hidden;
+  border: 1px solid var(--byline-border);
+  border-radius: var(--byline-radius);
+  background: var(--byline-card);
+}
+
+.state::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--tone);
+  box-shadow: 0 0 18px var(--tone);
+}
+
+.stateHead {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.stateIcon {
+  width: 1.15rem;
+  height: 1.15rem;
+  color: var(--tone);
+}
+
+.stateName {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tone);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.meaning {
+  margin: 0.5rem 0 0;
+  color: var(--byline-text);
+  line-height: 1.5;
+}
+
+.carries {
+  margin: 0.35rem 0 0;
+  color: var(--byline-faint);
+  font-size: 0.875rem;
+}
+
+.example {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 0.65rem;
+  overflow: hidden;
+  color: var(--tone);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+@media (max-width: 996px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

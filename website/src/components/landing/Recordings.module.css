@@ -1,0 +1,173 @@
+.tour {
+  max-width: 68rem;
+  margin: 0 auto;
+}
+
+.media {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.caption {
+  margin: 1rem 0 0;
+  color: var(--byline-faint);
+  font-size: 0.925rem;
+  text-align: center;
+}
+
+.chapters {
+  display: grid;
+  gap: 6rem;
+  margin-top: 6rem;
+}
+
+.chapter {
+  display: grid;
+  gap: 3rem;
+  align-items: center;
+}
+
+.side {
+  grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+}
+
+/* Alternate sides so the page reads as a zigzag. */
+.side:nth-child(3) {
+  grid-template-columns: minmax(0, 8fr) minmax(0, 4fr);
+}
+
+.side:nth-child(3) .copy {
+  order: 2;
+}
+
+/* The policy gate recording is a wide, short strip: give it the full width
+   and put the text above it in two columns. */
+.stacked {
+  gap: 2rem;
+}
+
+.stacked .copy {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  grid-template-areas:
+    'eyebrow code'
+    'title code'
+    'text code'
+    'more code';
+  column-gap: 3rem;
+  align-items: start;
+}
+
+.stacked .eyebrow {
+  grid-area: eyebrow;
+}
+
+.stacked .title {
+  grid-area: title;
+}
+
+.stacked .text {
+  grid-area: text;
+}
+
+.stacked .code {
+  grid-area: code;
+  align-self: center;
+  margin: 0;
+}
+
+.stacked .more {
+  grid-area: more;
+}
+
+.eyebrow {
+  margin: 0 0 0.75rem;
+  color: var(--byline-ai);
+  font-family: var(--byline-mono);
+  font-size: 0.8rem;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(1.5rem, 2.4vw, 2rem);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+
+.text {
+  margin: 0.9rem 0 0;
+  color: var(--byline-muted);
+  line-height: 1.6;
+}
+
+.code {
+  margin: 1.25rem 0 0;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  border: 1px solid var(--byline-border);
+  border-radius: 10px;
+  background: var(--byline-card);
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+
+.code code {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--byline-text);
+  font-size: inherit;
+}
+
+.more {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 1.1rem;
+  font-weight: 600;
+}
+
+.more svg {
+  width: 1rem;
+  height: 1rem;
+  transition: transform 160ms ease;
+}
+
+.more:hover svg {
+  transform: translateX(3px);
+}
+
+.footnote {
+  margin: 4rem 0 0;
+  color: var(--byline-faint);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+@media (max-width: 996px) {
+  .chapters {
+    gap: 4rem;
+    margin-top: 4rem;
+  }
+
+  .chapter,
+  .side,
+  .side:nth-child(3) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.75rem;
+  }
+
+  .side:nth-child(3) .copy {
+    order: 0;
+  }
+
+  .stacked .copy {
+    display: block;
+  }
+
+  .stacked .code {
+    margin-top: 1.25rem;
+  }
+}
