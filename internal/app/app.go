@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/runner"
 	"github.com/comarch/git-byline/internal/version"
@@ -147,6 +148,18 @@ func commands() []*command {
 			usage: "Usage: git-byline rewrite --mode <post-rewrite|post-checkout|post-merge|ref-txn|stash-apply> --hook-input stdin [hook arguments]\n\n" +
 				"Reproject attribution for Git history and worktree transitions.",
 			run: runRewrite,
+		},
+		{
+			name:  "merge-notes",
+			short: "merge fetched remote attribution notes",
+			usage: "Usage: git-byline merge-notes [--remote NAME]\n\n" +
+				"Merge the attribution notes that the managed pre-push hook fetched\n" +
+				"into " + gitcmd.RemoteNotesRef + ". Local notes that are behind\n" +
+				"fast-forward; diverged notes merge unless both sides changed the\n" +
+				"note of one commit. A conflict changes nothing, prints the manual\n" +
+				"merge steps, and exits 1. --remote only names the remote in those\n" +
+				"steps; the command never contacts a remote.",
+			run: runMergeNotes,
 		},
 		{
 			name:  "ci",

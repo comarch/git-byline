@@ -13,9 +13,13 @@ import (
 	"github.com/comarch/git-byline/internal/gitcmd"
 )
 
+// TestMain lets installed hooks call the test binary as git-byline. With
+// BYLINE_TEST_HOOK_HELPER set, it logs its arguments to BYLINE_TEST_HOOK_LOG
+// and exits 1 when BYLINE_TEST_HOOK_FAIL is set. Tests that run a hook which
+// calls git-byline must set the helper, or the hook runs this test suite.
 func TestMain(m *testing.M) {
-	if os.Getenv("BYLINE_TEST_TEMPLATE_HOOK_HELPER") == "1" {
-		path := os.Getenv("BYLINE_TEST_TEMPLATE_HOOK_LOG")
+	if os.Getenv("BYLINE_TEST_HOOK_HELPER") == "1" {
+		path := os.Getenv("BYLINE_TEST_HOOK_LOG")
 		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 		if err != nil {
 			os.Exit(1)
@@ -24,7 +28,7 @@ func TestMain(m *testing.M) {
 		if closeErr := file.Close(); err == nil {
 			err = closeErr
 		}
-		if err != nil {
+		if err != nil || os.Getenv("BYLINE_TEST_HOOK_FAIL") == "1" {
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -847,8 +851,8 @@ func TestInstallTemplateIntoNewRepositories(t *testing.T) {
 		}
 	}
 	hookLog := filepath.Join(work, "hook.log")
-	t.Setenv("BYLINE_TEST_TEMPLATE_HOOK_HELPER", "1")
-	t.Setenv("BYLINE_TEST_TEMPLATE_HOOK_LOG", hookLog)
+	t.Setenv("BYLINE_TEST_HOOK_HELPER", "1")
+	t.Setenv("BYLINE_TEST_HOOK_LOG", hookLog)
 	templateGit(t, initRepo,
 		"-c", "user.email=byline@example.com",
 		"-c", "user.name=byline",

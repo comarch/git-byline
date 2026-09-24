@@ -37,7 +37,7 @@ Every other command runs offline. Both fetch only from the pinned GitHub
 release repository over HTTPS, with update downloads checksum-verified.
 There is no account, API key, service, daemon, or telemetry
 endpoint. Prompts and transcripts stay outside the data model. A managed
-pre-push hook uses Git to publish attribution notes by default;
+pre-push hook uses Git to sync and publish attribution notes by default;
 `--local-notes` disables that sharing.
 
 ### Tool choice without one analytics vendor

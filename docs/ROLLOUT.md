@@ -263,19 +263,31 @@ commit (**Verify in pilot**, P9).
 
 ## Daily routine
 
-Developers commit and push as usual. The `pre-push` hook sends
-`refs/notes/byline` before each branch push, without force. When another
-clone or the job pushed notes since the last sync, the push stops before the
-branch goes out:
+Developers commit and push as usual. Before each branch push, the
+`pre-push` hook fetches the notes from the same remote, merges them into the
+local notes, and sends `refs/notes/byline` without force. Every
+reconstructed merge and every notes push of a teammate moves the remote
+notes, and the next push merges them:
 
 ```text
- ! [rejected]        refs/notes/byline -> refs/notes/byline (fetch first)
+git-byline: merged remote attribution notes
 ```
 
-The reason can also read `(non-fast-forward)`. [Sync notes](#sync-notes),
-then push again. Every reconstructed merge and every notes push of a
-teammate moves the remote notes, so expect this often in an active project.
-The pilot measures how often it happens and how long recovery takes.
+The push stops before the branch goes out only when both sides changed the
+note of the same commit in different ways:
+
+```text
+git-byline merge-notes: local and remote attribution notes differ for the same commit; nothing was changed
+```
+
+Then [sync notes](#sync-notes) by hand. A push can also stop with
+`! [rejected] refs/notes/byline -> refs/notes/byline (fetch first)`, or
+`(non-fast-forward)`, when the notes on GitLab moved during the push. Push
+again. `git byline update` refreshes the hooks only in the clone where it
+runs, and hooks from a release without the merge step stop this way on every
+push after a merge. Run `install-hooks` from
+[developer setup](#set-up-developer-machines) again in each older clone. The
+pilot measures how often pushes stop and how long recovery takes.
 
 After a `git pull` that fast-forwards, git-byline prints:
 
@@ -293,7 +305,9 @@ and `--autostash` counts as a stash
 
 ### Sync notes
 
-Run all three lines:
+Sync by hand after a fast-forward pull and when a push stops on a notes
+conflict. The hook merges the same way before each push, but it aborts a
+conflict instead of leaving the merge open. Run all three lines:
 
 ```sh
 git fetch origin refs/notes/byline:refs/notes/byline-remote

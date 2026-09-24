@@ -74,7 +74,8 @@ attached directly to `HEAD`, with limits of 16 MiB for the note, 500 files,
 9. Canonical note JSON is written to `refs/notes/byline`.
 10. State advances atomically, then the retention ref is compacted.
 11. Unless installed with `--local-notes`, a managed `pre-push` hook
-    publishes the notes ref before an ordinary branch push.
+    merges the remote notes into the notes ref and publishes it before an
+    ordinary branch push.
 
 If annotation starts after new edits already happened on the new `HEAD`,
 checkpoints based on that `HEAD` are carried into pending state for the next
@@ -304,11 +305,25 @@ when a process exits.
 ## Sharing notes
 
 `install-hooks --git` installs a managed `pre-push` hook. Before an ordinary
-branch push, it sends `refs/notes/byline` to the same remote. The internal
-notes push uses `--no-verify` to avoid recursively running the hook. Unrelated
-`pre-push` checks still run once for the outer branch push. A notes failure
-stops the branch push, but a successful notes push cannot guarantee that the
-later branch update will be accepted.
+branch push, it syncs and sends `refs/notes/byline` to the same remote:
+
+1. Git fetches the remote `refs/notes/byline` into the per-worktree ref
+   `refs/worktree/byline/remote-notes`, so concurrent pushes from linked
+   worktrees never share it. The fetch passes an empty `--refmap`, so a
+   configured notes refspec such as `+refs/notes/*:refs/notes/*` cannot
+   overwrite local notes. When the remote has no notes yet, the fetch fails
+   quietly and the hook goes on to step 3.
+2. `git-byline merge-notes` takes the common notes lock, so `annotate` in
+   another worktree cannot write a note the merge would drop. It
+   fast-forwards local notes that are behind and merges diverged notes with
+   the manual strategy. It removes the fetched ref and never contacts the
+   remote.
+3. Git pushes `refs/notes/byline` without force. The internal push uses
+   `--no-verify` to avoid recursively running the hook.
+
+Unrelated `pre-push` checks still run once for the outer branch push. A
+notes failure stops the branch push, but a successful notes push cannot
+guarantee that the later branch update will be accepted.
 
 When the origin remote is github.com or gitlab.com, `install-hooks --git`
 also creates the forge attribution workflow, so squash and rebase merges
@@ -325,11 +340,15 @@ hook. Fetch shared notes into another clone explicitly:
 git fetch origin refs/notes/byline:refs/notes/byline
 ```
 
-Concurrent clones can create divergent notes histories. The managed hook
-refuses a non-fast-forward notes update and stops the branch push. A
-fast-forward pull writes no local notes for the pulled commits, so their notes
-from another clone or the forge workflow merge without conflicting entries.
-Merge the remote notes explicitly, review conflicts, then retry:
+Concurrent clones and the forge workflow create divergent notes histories.
+The merge in step 2 joins them. A fast-forward pull writes no local notes for
+the pulled commits, so their notes from another clone or the forge workflow
+merge without conflicting entries. When both sides changed the note of the
+same commit in different ways, `merge-notes` aborts the merge, leaves local
+notes unchanged, prints the manual steps, and stops the push. It never picks
+a side. The push also stops when the remote notes move between the fetch and
+the push; the next push syncs again. Merge conflicting notes explicitly,
+review each conflict, then retry:
 
 ```sh
 git fetch origin refs/notes/byline:refs/notes/byline-remote

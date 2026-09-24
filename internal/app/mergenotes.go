@@ -1,0 +1,69 @@
+package app
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"strings"
+
+	"github.com/comarch/git-byline/internal/gitcmd"
+	"github.com/comarch/git-byline/internal/provenance"
+)
+
+const notesConflictHelp = `git-byline %[1]s: %[2]v; nothing was changed
+Merge the notes by hand, review the conflicts, then push again:
+  git fetch %[3]s refs/notes/byline:refs/notes/byline-remote
+  git notes --ref=refs/notes/byline merge refs/notes/byline-remote
+  git update-ref -d refs/notes/byline-remote
+`
+
+func runMergeNotes(env *Env, command *command, args []string) (int, error) {
+	flags := flag.NewFlagSet(command.name, flag.ContinueOnError)
+	var output strings.Builder
+	flags.SetOutput(&output)
+	remote := flags.String("remote", "", "remote name shown in the manual merge steps")
+	if err := flags.Parse(args); err != nil {
+		return flagError(env, command, output.String(), err)
+	}
+	if flags.NArg() != 0 {
+		return commandUsageError(env, command, fmt.Errorf("merge-notes takes no arguments, got %q", flags.Arg(0)))
+	}
+	repo, err := discoverForEnv(env)
+	if err != nil {
+		return operationalError(env, command.name, err)
+	}
+	result, err := provenance.MergeRemoteNotes(repo)
+	writeWarnings(env, result.Warnings)
+	if errors.Is(err, gitcmd.ErrNotesConflict) {
+		fmt.Fprintf(env.Stderr, notesConflictHelp, command.name, err, printableRemote(*remote))
+		return ExitFailure, fmt.Errorf("git-byline %s: %w", command.name, err)
+	}
+	if err != nil {
+		return operationalError(env, command.name, err)
+	}
+	// The pre-push hook is the usual caller, so the name marks the line in
+	// the push output.
+	if result.FastForwarded {
+		fmt.Fprintln(env.Stdout, "git-byline: updated attribution notes from the remote")
+	}
+	if result.Merged {
+		fmt.Fprintln(env.Stdout, "git-byline: merged remote attribution notes")
+	}
+	return ExitSuccess, nil
+}
+
+// printableRemote returns the remote for the manual merge steps. The hook
+// passes the push remote as given, which can be a URL with credentials, so
+// anything beyond a plain remote name prints as a placeholder.
+func printableRemote(name string) string {
+	for index, char := range name {
+		plain := char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9'
+		if !plain && (index == 0 || !strings.ContainsRune("._-/", char)) {
+			return "<remote>"
+		}
+	}
+	if name == "" {
+		return "<remote>"
+	}
+	return name
+}

@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/comarch/git-byline/internal/gitcmd"
 )
 
 func TestInstallAndUninstallProjectHooks(t *testing.T) {
@@ -622,7 +625,7 @@ func TestInstallUpdatesManagedGitHook(t *testing.T) {
 	t.Parallel()
 	root := hookRepo(t)
 	path := filepath.Join(root, ".git", "hooks", "pre-push")
-	stale := "#!/bin/sh\nexit 0\n\n" + blockStart + "\n" + notesPushCommand() + "\n" + blockEnd + "\n"
+	stale := "#!/bin/sh\nexit 0\n\n" + blockStart + "\n" + legacyNotesPushCommand + "\n" + blockEnd + "\n"
 	if err := os.WriteFile(path, []byte(stale), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -637,13 +640,75 @@ func TestInstallUpdatesManagedGitHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	executable, err := hookExecutable(true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.HasPrefix(string(data), "#!/bin/sh\n"+blockStart) ||
-		!strings.Contains(string(data), notesPushCommand()) ||
+		!strings.Contains(string(data), notesPushCommand(executable)) ||
+		strings.Contains(string(data), legacyNotesPushCommand) ||
 		!strings.Contains(string(data), "exit 0") {
 		t.Fatalf("updated hook = %q", data)
 	}
 	if result, err := Install(root, Options{Agent: "none", Git: true}); err != nil || len(result.Changed) != 0 {
 		t.Fatalf("second Install() = %+v, %v", result, err)
+	}
+}
+
+func TestUninstallRemovesLegacyNotesPushBlock(t *testing.T) {
+	t.Parallel()
+	root := hookRepo(t)
+	path := filepath.Join(root, ".git", "hooks", "pre-push")
+	custom := "#!/bin/sh\necho custom push\n"
+	legacy := "#!/bin/sh\n" + blockStart + "\n" + legacyNotesPushCommand + "\n" + blockEnd + "\necho custom push\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Uninstall(root, Options{Agent: "none", Git: true})
+	if err != nil || len(result.Changed) != 1 {
+		t.Fatalf("Uninstall() = %+v, %v", result, err)
+	}
+	if got := string(mustRead(t, path)); got != custom {
+		t.Fatalf("uninstalled pre-push hook = %q, want %q", got, custom)
+	}
+}
+
+func TestNotesPushBlockRecognition(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{name: "legacy block", command: legacyNotesPushCommand, want: true},
+		{name: "other git-byline path", command: notesPushCommand("/old/bin/git-byline"), want: true},
+		{name: "windows git-byline path", command: notesPushCommand(`C:\Tools\git-byline.exe`), want: true},
+		{name: "foreign executable", command: notesPushCommand("/usr/local/bin/audit-wrapper"), want: false},
+		{
+			name:    "unquoted executable",
+			command: notesPushPrefix + "/old/bin/git-byline" + notesPushSuffix,
+			want:    false,
+		},
+		{
+			name:    "extra command",
+			command: notesPushPrefix + "'/old/bin/git-byline'; rm -rf /tmp/x;" + notesPushSuffix,
+			want:    false,
+		},
+		{
+			name:    "changed push line",
+			command: strings.Replace(notesPushCommand("/old/bin/git-byline"), "--no-verify", "--force", 1),
+			want:    false,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			block := blockStart + "\n" + test.command + "\n" + blockEnd
+			if got := managedGitHookBlock(block); got != test.want {
+				t.Fatalf("managedGitHookBlock() = %t, want %t for %q", got, test.want, test.command)
+			}
+		})
 	}
 }
 
@@ -777,7 +842,13 @@ func TestPrePushSharesNotes(t *testing.T) {
 	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
-	hookGit(t, root, "push", "origin", "main")
+	calls, err := hookPush(t, root, false, "origin", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != "" {
+		t.Fatalf("git-byline calls without remote notes = %q", calls)
+	}
 	localNote := strings.TrimSpace(hookGit(t, root, "rev-parse", "refs/notes/byline"))
 	remoteNote := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/notes/byline"))
 	if localNote != remoteNote {
@@ -787,6 +858,60 @@ func TestPrePushSharesNotes(t *testing.T) {
 	remoteHead := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/heads/main"))
 	if localHead != remoteHead {
 		t.Fatalf("remote HEAD = %q, want %q", remoteHead, localHead)
+	}
+}
+
+func TestPrePushMergesRemoteNotesBeforePush(t *testing.T) {
+	t.Parallel()
+	root, remote, _ := pushFixture(t)
+	hookGit(t, root, "push", "origin", "refs/notes/byline:refs/notes/byline")
+	remoteNotes := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/notes/byline"))
+	hookGit(t, root, "notes", "--ref=refs/notes/byline", "add", "-m", "local", "HEAD~1")
+	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
+		t.Fatal(err)
+	}
+	calls, err := hookPush(t, root, false, "origin", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != "merge-notes --remote origin\n" {
+		t.Fatalf("git-byline calls = %q", calls)
+	}
+	// The helper merges nothing, so the fetched ref stays for inspection.
+	if fetched := strings.TrimSpace(hookGit(t, root, "rev-parse", gitcmd.RemoteNotesRef)); fetched != remoteNotes {
+		t.Fatalf("fetched notes = %q, want %q", fetched, remoteNotes)
+	}
+	localNotes := strings.TrimSpace(hookGit(t, root, "rev-parse", "refs/notes/byline"))
+	if got := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/notes/byline")); got != localNotes {
+		t.Fatalf("remote notes = %q, want %q", got, localNotes)
+	}
+	localHead := strings.TrimSpace(hookGit(t, root, "rev-parse", "HEAD"))
+	if got := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/heads/main")); got != localHead {
+		t.Fatalf("remote HEAD = %q, want %q", got, localHead)
+	}
+}
+
+func TestPrePushStopsBranchWhenNotesMergeFails(t *testing.T) {
+	t.Parallel()
+	root, remote, oldRemoteHead := pushFixture(t)
+	hookGit(t, root, "push", "origin", "refs/notes/byline:refs/notes/byline")
+	remoteNotes := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/notes/byline"))
+	hookGit(t, root, "notes", "--ref=refs/notes/byline", "add", "-m", "local", "HEAD~1")
+	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
+		t.Fatal(err)
+	}
+	calls, err := hookPush(t, root, true, "origin", "main")
+	if err == nil {
+		t.Fatal("push succeeded after merge-notes failed")
+	}
+	if calls != "merge-notes --remote origin\n" {
+		t.Fatalf("git-byline calls = %q", calls)
+	}
+	if got := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/heads/main")); got != oldRemoteHead {
+		t.Fatalf("remote HEAD advanced to %q, want %q", got, oldRemoteHead)
+	}
+	if got := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/notes/byline")); got != remoteNotes {
+		t.Fatalf("remote notes moved to %q, want %q", got, remoteNotes)
 	}
 }
 
@@ -801,7 +926,9 @@ func TestPrePushRunsCustomHookOnce(t *testing.T) {
 	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
-	hookGit(t, root, "push", "origin", "main")
+	if _, err := hookPush(t, root, false, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(filepath.Join(root, ".git", "pre-push-runs"))
 	if err != nil {
 		t.Fatal(err)
@@ -824,16 +951,8 @@ func TestPrePushStopsBranchWhenNotesFail(t *testing.T) {
 	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command("git", "push", "origin", "main")
-	command.Dir = root
-	command.Env = append(os.Environ(),
-		"GIT_CONFIG_GLOBAL="+os.DevNull,
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_BYLINE_NESTED=1",
-	)
-	if out, err := command.CombinedOutput(); err == nil {
-		t.Fatalf("push succeeded despite rejected notes: %s", out)
+	if _, err := hookPush(t, root, false, "origin", "main"); err == nil {
+		t.Fatal("push succeeded despite rejected notes")
 	}
 	remoteHead := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/heads/main"))
 	if remoteHead != oldRemoteHead {
@@ -847,7 +966,10 @@ func TestPrePushStopsBranchWhenNotesFail(t *testing.T) {
 	}
 }
 
-func TestPrePushRejectsDivergentNotes(t *testing.T) {
+// TestPrePushNeverOverwritesNotes leaves the notes diverged after merge-notes,
+// with a notes fetch refspec configured. Neither the hook fetch nor the notes
+// push may replace notes on either side, and the branch must not go out.
+func TestPrePushNeverOverwritesNotes(t *testing.T) {
 	t.Parallel()
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	first := hookRepo(t)
@@ -860,12 +982,6 @@ func TestPrePushRejectsDivergentNotes(t *testing.T) {
 	hookGit(t, first, "add", "file.txt")
 	hookGit(t, first, "commit", "-m", "base")
 	base := strings.TrimSpace(hookGit(t, first, "rev-parse", "HEAD"))
-	if err := os.WriteFile(filepath.Join(first, "file.txt"), []byte("base\nchange\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	hookGit(t, first, "add", "file.txt")
-	hookGit(t, first, "commit", "-m", "change")
-	head := strings.TrimSpace(hookGit(t, first, "rev-parse", "HEAD"))
 	hookGit(t, first, "remote", "add", "origin", remote)
 	hookGit(t, first, "push", "-u", "origin", "main")
 
@@ -873,31 +989,66 @@ func TestPrePushRejectsDivergentNotes(t *testing.T) {
 	hookGit(t, t.TempDir(), "clone", "--branch", "main", remote, second)
 	hookGit(t, second, "config", "user.name", "Test User")
 	hookGit(t, second, "config", "user.email", "test@example.invalid")
+	hookGit(t, second, "config", "--add", "remote.origin.fetch", "+refs/notes/*:refs/notes/*")
+	if err := os.WriteFile(filepath.Join(second, "file.txt"), []byte("base\nchange\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hookGit(t, second, "commit", "-am", "change")
+	head := strings.TrimSpace(hookGit(t, second, "rev-parse", "HEAD"))
 	hookGit(t, first, "notes", "--ref=refs/notes/byline", "add", "-m", "first note", base)
 	hookGit(t, first, "push", "origin", "refs/notes/byline:refs/notes/byline")
+	remoteNotes := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/notes/byline"))
 	hookGit(t, second, "notes", "--ref=refs/notes/byline", "add", "-m", "second note", head)
+	localNotes := strings.TrimSpace(hookGit(t, second, "rev-parse", "refs/notes/byline"))
 	if _, err := Install(second, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command("git", "push", "origin", "main")
-	command.Dir = second
+	calls, err := hookPush(t, second, false, "origin", "main")
+	if err == nil {
+		t.Fatal("push accepted divergent notes")
+	}
+	if calls != "merge-notes --remote origin\n" {
+		t.Fatalf("git-byline calls = %q", calls)
+	}
+	if got := strings.TrimSpace(hookGit(t, second, "rev-parse", "refs/notes/byline")); got != localNotes {
+		t.Fatalf("hook fetch replaced local notes with %q, want %q", got, localNotes)
+	}
+	if got := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/notes/byline")); got != remoteNotes {
+		t.Fatalf("remote notes moved to %q, want %q", got, remoteNotes)
+	}
+	if got := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/heads/main")); got != base {
+		t.Fatalf("remote HEAD advanced to %q, want %q", got, base)
+	}
+}
+
+// hookPush runs git push in root with the test binary standing in for
+// git-byline in the installed hooks. It returns the git-byline calls the
+// hooks made; failMerge makes each call exit 1.
+func hookPush(t *testing.T, root string, failMerge bool, args ...string) (string, error) {
+	t.Helper()
+	calls := filepath.Join(t.TempDir(), "git-byline-calls")
+	command := exec.Command("git", append([]string{"push"}, args...)...)
+	command.Dir = root
 	command.Env = append(os.Environ(),
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_BYLINE_NESTED=1",
+		"BYLINE_TEST_HOOK_HELPER=1",
+		"BYLINE_TEST_HOOK_LOG="+calls,
 	)
-	if out, err := command.CombinedOutput(); err == nil {
-		t.Fatalf("push accepted divergent notes: %s", out)
+	if failMerge {
+		command.Env = append(command.Env, "BYLINE_TEST_HOOK_FAIL=1")
 	}
-	if got := strings.TrimSpace(hookGit(t, remote, "notes", "--ref=refs/notes/byline", "show", base)); got != "first note" {
-		t.Fatalf("remote first note = %q", got)
+	out, err := command.CombinedOutput()
+	if err != nil {
+		err = fmt.Errorf("git push %s: %w\n%s", strings.Join(args, " "), err, out)
 	}
-	show := exec.Command("git", "notes", "--ref=refs/notes/byline", "show", head)
-	show.Dir = remote
-	if err := show.Run(); err == nil {
-		t.Fatal("remote received note from divergent push")
+	data, readErr := os.ReadFile(calls)
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		t.Fatal(readErr)
 	}
+	return string(data), err
 }
 
 func pushFixture(t *testing.T) (root, remote, oldRemoteHead string) {

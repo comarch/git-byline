@@ -118,7 +118,8 @@ user-level or project-level agent hooks; the other agents use the template
 files above.
 
 Git hook installation adds a managed `pre-push` hook. It publishes
-`refs/notes/byline` to the same remote before each ordinary push.
+`refs/notes/byline` to the same remote before each ordinary push, after it
+merges the notes already on that remote.
 Attribution notes contain repository paths, line ranges, agent and model
 names, human identity tokens, session identifiers, timestamps, and blob IDs.
 To disable automatic note sharing:

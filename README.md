@@ -458,11 +458,11 @@ Uninstalling hooks stops new attribution. It does not delete existing notes.
 
 ## Commands
 
-Nineteen commands, one binary:
+Twenty commands, one binary:
 
 | Capability | Commands |
 | --- | --- |
-| Track | `checkpoint`, `annotate`, `rewrite`, `install-hooks`, `uninstall` |
+| Track | `checkpoint`, `annotate`, `rewrite`, `merge-notes`, `install-hooks`, `uninstall` |
 | Inspect | `blame`, `status`, `stats`, `dashboard`, `verify` |
 | Enforce | `check`, `disclosure` |
 | Interoperate | `export`, `import`, `ci` |
@@ -482,6 +482,7 @@ Nineteen commands, one binary:
 | `check [<rev-range>] [--max-ai-percent N] [--max-untracked-percent N] [--require-note] [--json]` | Check attribution policy limits |
 | `disclosure [--range <rev-range>] [--format json\|spdx\|cyclonedx] [--output FILE]` | Write machine-readable AI content disclosure input |
 | `rewrite --mode MODE --hook-input stdin` | Preserve attribution across rewrites, resets, switches, and stash transitions |
+| `merge-notes [--remote NAME]` | Merge the remote notes the `pre-push` hook fetched; a conflict stops the push and changes nothing |
 | `export --format gitai\|agent-trace [--commit <rev>] [--output FILE]` | Export attribution to an interop format |
 | `import --format gitai [--range <rev-range>] [--dry-run]` | Import Git AI attribution notes |
 | `ci install\|run --provider github\|gitlab` | Install or run forge merge attribution workflows |
@@ -694,7 +695,7 @@ What makes it different:
 - **Narrow trust boundary.** No account, cloud service, daemon, telemetry,
   prompt storage, or transcript storage. All commands run offline; `update`
   and `version --check` fetch only the pinned release repository, and the
-  managed pre-push hook invokes Git to publish notes.
+  managed pre-push hook invokes Git to fetch and publish notes.
 - **Built for real Git behavior.** Partial commits, renames, linked worktrees,
   restarts, history rewrites, and Git garbage collection are covered.
 - **Portable.** One pure Go binary, no CGo or language runtime, six release
@@ -727,6 +728,8 @@ git-byline stores:
 - `.git/byline/state.json`
 - pending snapshot blobs in the Git object database
 - `refs/worktree/byline/checkpoints`
+- `refs/worktree/byline/remote-notes`, only while the `pre-push` hook merges
+  the remote notes
 - `refs/notes/byline`
 - `refs/notes/byline-stash`
 - `refs/notes/byline-stash-owner`
@@ -734,6 +737,9 @@ git-byline stores:
 Linked worktrees keep checkpoint state separate. Notes are shared within the
 common repository. After `install-hooks --git`, the managed `pre-push` hook
 publishes `refs/notes/byline` to the same remote before the branch push.
+It first fetches the notes already on that remote and merges them, so notes
+from another clone or the forge workflow do not stop the push. Two different
+notes for the same commit stop the push and change nothing.
 Notes disclose repository paths, agent and model names, human identity
 tokens, session identifiers, timestamps, blob IDs, and line ranges. The
 identity token is derived from the commit author Git already publishes in

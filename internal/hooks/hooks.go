@@ -244,7 +244,7 @@ func changeSelectedGitHooks(
 ) ([]string, error) {
 	specs := []gitHookChange{
 		{name: "post-commit", command: postCommitCommand(executable), install: install},
-		{name: "pre-push", command: notesPushCommand(), install: install && !options.LocalNotes},
+		{name: "pre-push", command: notesPushCommand(executable), install: install && !options.LocalNotes},
 		{name: "post-rewrite", command: rewriteHookCommand(executable, "post-rewrite", true), install: install},
 		{name: "post-merge", command: postMergeCommand(executable), install: install},
 		{name: "post-checkout", command: rewriteHookCommand(executable, "post-checkout", false), install: install},
@@ -301,10 +301,40 @@ func acquireTemplateLock() (*lock.File, error) {
 	return templateLock, nil
 }
 
-func notesPushCommand() string {
-	return `if git show-ref --verify --quiet refs/notes/byline; then
+// legacyNotesPushCommand is the pre-push block from before the notes sync.
+// It stays recognized so install replaces it and uninstall removes it.
+const legacyNotesPushCommand = `if git show-ref --verify --quiet refs/notes/byline; then
   git push --no-verify -- "$1" refs/notes/byline:refs/notes/byline || exit 1
 fi`
+
+// The notes fetch is the only network step besides the notes push;
+// merge-notes merges the fetched ref offline under the notes lock. The empty
+// --refmap keeps a configured notes fetch refspec, like
+// +refs/notes/*:refs/notes/*, from overwriting the local notes during the
+// fetch. A failed fetch, for example when the remote has no notes yet, falls
+// back to the plain notes push.
+const (
+	notesPushPrefix = `if git show-ref --verify --quiet refs/notes/byline; then
+  if git fetch --quiet --no-tags --no-recurse-submodules --no-write-fetch-head \
+    --no-auto-maintenance --refmap= -- "$1" \
+    "+refs/notes/byline:` + gitcmd.RemoteNotesRef + `" 2>/dev/null; then
+    `
+	notesPushSuffix = ` merge-notes --remote "$1" || exit 1
+  fi
+  git push --no-verify -- "$1" refs/notes/byline:refs/notes/byline || exit 1
+fi`
+)
+
+func notesPushCommand(executable string) string {
+	return notesPushPrefix + quoteExecutable(executable) + notesPushSuffix
+}
+
+func isNotesPushCommand(command string) bool {
+	if command == legacyNotesPushCommand {
+		return true
+	}
+	return strings.HasPrefix(command, notesPushPrefix) &&
+		commandHasGitBylineExecutable(strings.TrimPrefix(command, notesPushPrefix), notesPushSuffix)
 }
 
 func postCommitCommand(executable string) string {
@@ -1903,7 +1933,7 @@ func managedGitHookBlock(block string) bool {
 		return false
 	}
 	command := strings.TrimSuffix(strings.TrimPrefix(block, prefix), suffix)
-	return command == notesPushCommand() ||
+	return isNotesPushCommand(command) ||
 		isPostCommitCommand(command) ||
 		isPostMergeCommand(command) ||
 		commandHasGitBylineExecutable(command, " annotate || exit 1") ||
