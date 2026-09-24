@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +143,31 @@ func hasInitializingWarning(warnings []string) bool {
 	return false
 }
 
+func assertNoNotes(t *testing.T, repo *gitcmd.Repo, commits ...string) {
+	t.Helper()
+	for _, id := range commits {
+		if _, found, err := repo.ReadNote(id); err != nil || found {
+			t.Fatalf("note on fast-forwarded commit %s: found=%t err=%v", id, found, err)
+		}
+	}
+}
+
+// assertBlameAuthors checks the author of every line of path, in order.
+func assertBlameAuthors(t *testing.T, repo *gitcmd.Repo, path string, want ...model.Author) {
+	t.Helper()
+	blame, err := Blame(repo, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authors := make([]model.Author, 0, len(blame.Lines))
+	for _, line := range blame.Lines {
+		authors = append(authors, line.Attribution.Author)
+	}
+	if !slices.Equal(authors, want) {
+		t.Fatalf("%s blame = %+v, want authors %v", path, blame.Lines, want)
+	}
+}
+
 func TestFastForwardDoesNotAnnotateForeignCommits(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -160,15 +186,8 @@ func TestFastForwardDoesNotAnnotateForeignCommits(t *testing.T) {
 			root, repo, base, tip := fastForwardRepo(t, tc.commits)
 			git(t, root, tc.move...)
 			runFastForwardHooks(t, repo, base, tip)
-			for _, forged := range strings.Fields(git(t, root, "rev-list", base+".."+tip)) {
-				if _, found, err := repo.ReadNote(forged); err != nil || found {
-					t.Fatalf("note on fast-forwarded commit %s: found=%t err=%v", forged, found, err)
-				}
-			}
-			state, err := store.New(repo.GitDir).ReadState()
-			if err != nil {
-				t.Fatal(err)
-			}
+			assertNoNotes(t, repo, strings.Fields(git(t, root, "rev-list", base+".."+tip))...)
+			_, state := readCheckpointsAndState(t, repo)
 			if state.LastAnnotatedCommit != "" {
 				t.Fatalf("boundary after fast-forward = %q, want cleared", state.LastAnnotatedCommit)
 			}
@@ -178,19 +197,8 @@ func TestFastForwardDoesNotAnnotateForeignCommits(t *testing.T) {
 			if !hasInitializingWarning(result.Warnings) {
 				t.Fatalf("annotate without a parent note = %+v, want initializing warning", result)
 			}
-			blame, err := Blame(repo, "forge.txt")
-			if err != nil {
-				t.Fatal(err)
-			}
-			last := len(blame.Lines) - 1
-			for _, line := range blame.Lines[:last] {
-				if line.Attribution.Author != model.AuthorUntracked {
-					t.Fatalf("fast-forwarded line = %+v, want untracked", line)
-				}
-			}
-			if blame.Lines[last].Attribution.Author != model.AuthorHuman {
-				t.Fatalf("local line = %+v, want human", blame.Lines[last])
-			}
+			untracked := slices.Repeat([]model.Author{model.AuthorUntracked}, tc.commits+1)
+			assertBlameAuthors(t, repo, "forge.txt", append(untracked, model.AuthorHuman)...)
 		})
 	}
 }
@@ -222,28 +230,13 @@ func TestFastForwardStartsFromFetchedNote(t *testing.T) {
 	if err != nil || !found || !bytes.Equal(after, before) {
 		t.Fatalf("forge note changed by fast-forward: found=%t err=%v", found, err)
 	}
-	state, err := store.New(repo.GitDir).ReadState()
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, state := readCheckpointsAndState(t, repo)
 	if state.LastAnnotatedCommit != tip {
 		t.Fatalf("boundary after fast-forward = %q, want %s", state.LastAnnotatedCommit, tip)
 	}
 
 	commitLocalLine(t, root, repo, "forge.txt", tip)
-	blame, err := Blame(repo, "forge.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []model.Author{model.AuthorHuman, model.AuthorAI, model.AuthorHuman}
-	if len(blame.Lines) != len(want) {
-		t.Fatalf("blame lines = %+v", blame.Lines)
-	}
-	for i, author := range want {
-		if blame.Lines[i].Attribution.Author != author {
-			t.Fatalf("line %d = %+v, want %s", i+1, blame.Lines[i], author)
-		}
-	}
+	assertBlameAuthors(t, repo, "forge.txt", model.AuthorHuman, model.AuthorAI, model.AuthorHuman)
 }
 
 func TestFastForwardContinuesFromLaterFetchedNote(t *testing.T) {
@@ -261,18 +254,7 @@ func TestFastForwardContinuesFromLaterFetchedNote(t *testing.T) {
 	if hasInitializingWarning(result.Warnings) {
 		t.Fatalf("annotate over a noted parent = %+v, want no initializing warning", result)
 	}
-	blame, err := Blame(repo, "forge.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(blame.Lines) != 3 {
-		t.Fatalf("blame lines = %+v", blame.Lines)
-	}
-	for i, line := range blame.Lines {
-		if line.Attribution.Author != model.AuthorHuman {
-			t.Fatalf("line %d = %+v, want human from the fetched note", i+1, line)
-		}
-	}
+	assertBlameAuthors(t, repo, "forge.txt", model.AuthorHuman, model.AuthorHuman, model.AuthorHuman)
 }
 
 func TestFastForwardKeepsUncommittedAIEvidence(t *testing.T) {
@@ -294,13 +276,7 @@ func TestFastForwardKeepsUncommittedAIEvidence(t *testing.T) {
 	if result.ParkedCheckpoints != 0 {
 		t.Fatalf("annotate parked the agent edit: %+v", result)
 	}
-	blame, err := Blame(repo, "local.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(blame.Lines) != 1 || blame.Lines[0].Attribution.Author != model.AuthorAI {
-		t.Fatalf("local.txt = %+v, want ai", blame.Lines)
-	}
+	assertBlameAuthors(t, repo, "local.txt", model.AuthorAI)
 }
 
 func TestFastForwardConsumesCheckpointsOnChangedPaths(t *testing.T) {
@@ -381,18 +357,7 @@ func TestFastForwardMovesOnlyCheckpointsOnUntouchedPaths(t *testing.T) {
 	}
 
 	assertNoParkedCheckpoints(t, repo, commitAndAnnotate(t, root, repo, tip, "local ai"))
-	blame, err := Blame(repo, "local.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(blame.Lines) != 2 {
-		t.Fatalf("local.txt blame = %+v", blame.Lines)
-	}
-	for i, line := range blame.Lines {
-		if line.Attribution.Author != model.AuthorAI {
-			t.Fatalf("local.txt line %d = %+v, want ai", i+1, line)
-		}
-	}
+	assertBlameAuthors(t, repo, "local.txt", model.AuthorAI, model.AuthorAI)
 }
 
 func TestFastForwardKeepsLegacyCheckpointsParked(t *testing.T) {
@@ -546,7 +511,5 @@ func TestFastForwardSkipsForeignCherryPickMarker(t *testing.T) {
 
 	git(t, root, "merge", "-q", "--ff-only", "forge")
 	runFastForwardHooks(t, repo, base, tip)
-	if _, found, err := repo.ReadNote(tip); err != nil || found {
-		t.Fatalf("note on fast-forwarded cherry-pick: found=%t err=%v", found, err)
-	}
+	assertNoNotes(t, repo, tip)
 }

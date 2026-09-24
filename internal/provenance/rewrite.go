@@ -1245,24 +1245,11 @@ func splitFastForwardCheckpoints(
 	if err != nil {
 		return fastForwardCheckpoints{}, err
 	}
-	changed := map[string]bool{}
-	for _, change := range changes {
-		changed[change.Path] = true
-		if change.OldPath != "" {
-			changed[change.OldPath] = true
-		}
-	}
+	changed := changedPathSet(changes)
 	hit := map[string]bool{}
 	for _, record := range oldTip {
 		split.legacy = split.legacy || recordUsesLegacyContext(record)
-		touched := false
-		for _, file := range record.Files {
-			if changed[file.Path] {
-				touched = true
-				hit[file.Path] = true
-			}
-		}
-		if touched {
+		if markChangedPaths(record, changed, hit) {
 			split.touched = append(split.touched, record)
 		} else {
 			split.untouched = append(split.untouched, record)
@@ -1270,6 +1257,31 @@ func splitFastForwardCheckpoints(
 	}
 	split.changedPaths = len(hit)
 	return split, nil
+}
+
+// changedPathSet returns every path in changes, including rename sources.
+func changedPathSet(changes []gitcmd.Change) map[string]bool {
+	changed := make(map[string]bool, len(changes))
+	for _, change := range changes {
+		changed[change.Path] = true
+		if change.OldPath != "" {
+			changed[change.OldPath] = true
+		}
+	}
+	return changed
+}
+
+// markChangedPaths adds the paths of record that are in changed to hit and
+// reports whether there was any.
+func markChangedPaths(record model.Checkpoint, changed, hit map[string]bool) bool {
+	touched := false
+	for _, file := range record.Files {
+		if changed[file.Path] {
+			touched = true
+			hit[file.Path] = true
+		}
+	}
+	return touched
 }
 
 func writeRewriteState(repo *gitcmd.Repo, dataStore store.Store, state model.State) error {

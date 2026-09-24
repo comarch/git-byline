@@ -81,7 +81,7 @@ func (store Store) DropCheckpointRecords(sequences map[uint64]bool) (int, error)
 	if dropped == 0 {
 		return 0, nil
 	}
-	if err := writeAtomicFile(store.Dir, store.CheckpointPath(), "checkpoints-*.tmp", "checkpoint log", kept.Bytes()); err != nil {
+	if err := store.writeCheckpointLog(kept.Bytes()); err != nil {
 		return 0, err
 	}
 	return dropped, nil
@@ -113,16 +113,7 @@ func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]str
 	if !changed {
 		return nil
 	}
-	if err := writeAtomicFile(
-		store.Dir,
-		store.CheckpointPath(),
-		"checkpoints-*.tmp",
-		"checkpoint log",
-		rewritten,
-	); err != nil {
-		return err
-	}
-	return nil
+	return store.writeCheckpointLog(rewritten)
 }
 
 func baseRewrite(branchRef string, bases map[string]string) checkpointRewrite {
@@ -156,6 +147,33 @@ func (store Store) MoveCheckpoints(branchRef string, moves map[uint64]Checkpoint
 	if err := model.ValidateBranchRef(branchRef); err != nil {
 		return err
 	}
+	sequences, err := validateCheckpointMoves(moves)
+	if err != nil {
+		return err
+	}
+	data, err := readBoundedFile(store.CheckpointPath(), maxCheckpointBytes)
+	if err != nil {
+		return fmt.Errorf("read checkpoint log for move: %w", err)
+	}
+	found := make(map[uint64]bool, len(moves))
+	rewritten, changed, err := rewriteCheckpointBaseData(data, moveRewrite(branchRef, moves, found))
+	if err != nil {
+		return err
+	}
+	for _, seq := range sequences {
+		if !found[seq] {
+			return fmt.Errorf("checkpoint %d is missing from the checkpoint log", seq)
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return store.writeCheckpointLog(rewritten)
+}
+
+// validateCheckpointMoves returns the moved sequences in ascending order
+// after checking every move target and lane.
+func validateCheckpointMoves(moves map[uint64]CheckpointMove) ([]uint64, error) {
 	sequences := make([]uint64, 0, len(moves))
 	for seq := range moves {
 		sequences = append(sequences, seq)
@@ -164,18 +182,19 @@ func (store Store) MoveCheckpoints(branchRef string, moves map[uint64]Checkpoint
 	for _, seq := range sequences {
 		move := moves[seq]
 		if !model.ValidObjectID(move.BaseCommit) {
-			return fmt.Errorf("move target for checkpoint %d is not a valid object ID", seq)
+			return nil, fmt.Errorf("move target for checkpoint %d is not a valid object ID", seq)
 		}
 		if err := model.ValidateCheckpointLaneID(move.LaneID); err != nil || model.IsLegacyCheckpointLaneID(move.LaneID) {
-			return fmt.Errorf("move lane for checkpoint %d is not a branch lane", seq)
+			return nil, fmt.Errorf("move lane for checkpoint %d is not a branch lane", seq)
 		}
 	}
-	data, err := readBoundedFile(store.CheckpointPath(), maxCheckpointBytes)
-	if err != nil {
-		return fmt.Errorf("read checkpoint log for move: %w", err)
-	}
-	found := make(map[uint64]bool, len(moves))
-	rewritten, changed, err := rewriteCheckpointBaseData(data, func(record model.Checkpoint) (model.Checkpoint, bool, error) {
+	return sequences, nil
+}
+
+// moveRewrite applies moves and marks every listed record it reads in
+// found, so the caller can reject moves of missing records.
+func moveRewrite(branchRef string, moves map[uint64]CheckpointMove, found map[uint64]bool) checkpointRewrite {
+	return func(record model.Checkpoint) (model.Checkpoint, bool, error) {
 		move, listed := moves[record.Seq]
 		if !listed {
 			return record, false, nil
@@ -192,19 +211,11 @@ func (store Store) MoveCheckpoints(branchRef string, moves map[uint64]Checkpoint
 		record.BaseCommit = move.BaseCommit
 		record.LaneID = move.LaneID
 		return record, true, nil
-	})
-	if err != nil {
-		return err
 	}
-	for _, seq := range sequences {
-		if !found[seq] {
-			return fmt.Errorf("checkpoint %d is missing from the checkpoint log", seq)
-		}
-	}
-	if !changed {
-		return nil
-	}
-	return writeAtomicFile(store.Dir, store.CheckpointPath(), "checkpoints-*.tmp", "checkpoint log", rewritten)
+}
+
+func (store Store) writeCheckpointLog(data []byte) error {
+	return writeAtomicFile(store.Dir, store.CheckpointPath(), "checkpoints-*.tmp", "checkpoint log", data)
 }
 
 func validateCheckpointBaseTargets(bases map[string]string) error {
