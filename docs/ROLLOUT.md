@@ -103,7 +103,8 @@ downloads as described in
 [mirrors for closed networks](#mirrors-for-closed-networks).
 
 The job sends the token in an HTTP basic auth header with every Git request
-to `CI_PROJECT_URL`, so the instance must serve HTTPS. The job also sets
+to `CI_PROJECT_URL`, or to `GIT_BYLINE_REMOTE_URL` when it is set, so that
+address must use HTTPS. The job also sets
 `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL`, and `GIT_CONFIG_SYSTEM` for the
 whole job, so system and global Git configuration do not apply. If the
 instance or a mirror uses a certificate from an internal certificate
@@ -173,7 +174,7 @@ without editing the file (**Verify in pilot**, P6):
 
 | Variable | Default | Use |
 | --- | --- | --- |
-| `GIT_BYLINE_VERSION` | The release that generated the file | Pin another release tag, like `v1.2.3` |
+| `GIT_BYLINE_VERSION` | The release that generated the file | Pin another release tag newer than v1.4.2, like `v1.4.3` |
 | `GIT_BYLINE_RELEASES_URL` | `https://github.com/comarch/git-byline/releases/download` | An internal mirror of the release assets |
 
 The job downloads `$GIT_BYLINE_RELEASES_URL/<tag>/<archive>` and
@@ -203,7 +204,9 @@ awk, and GNU coreutils. The job has only run in its image.
 
 If runners reach GitLab at another address than `CI_PROJECT_URL`, for
 example through the runner `clone_url` setting, set `GIT_BYLINE_REMOTE_URL`
-as a project variable to that address (**Verify in pilot**, P6).
+as a project variable to that HTTPS address (**Verify in pilot**, P6). The
+job sends the token header to this address, so never set an `http://` URL.
+The job does not check the scheme itself.
 
 ## Set up developer machines
 
