@@ -10,16 +10,16 @@ import (
 
 	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
+	"github.com/comarch/git-byline/internal/rewrite"
 	"github.com/comarch/git-byline/internal/store"
 )
 
-// fastForwardRepo returns an annotated repository on main and the tip of
-// branch forge, count commits ahead without notes. The forge commits stand
-// for commits made in another clone or on the forge.
-func fastForwardRepo(t *testing.T, count int) (string, *gitcmd.Repo, string, string) {
+// annotatedRepo returns a repository on main whose base commit adds path
+// and carries a note.
+func annotatedRepo(t *testing.T, path string) (string, *gitcmd.Repo, string) {
 	t.Helper()
 	root := testRepo(t)
-	write(t, root, "forge.txt", "base\n")
+	write(t, root, path, "base\n")
 	base := commit(t, root, "base")
 	repo, err := gitcmd.Discover(root)
 	if err != nil {
@@ -28,6 +28,15 @@ func fastForwardRepo(t *testing.T, count int) (string, *gitcmd.Repo, string, str
 	if _, err := Annotate(repo); err != nil {
 		t.Fatal(err)
 	}
+	return root, repo, base
+}
+
+// fastForwardRepo returns an annotated repository on main and the tip of
+// branch forge, count commits ahead without notes. The forge commits stand
+// for commits made in another clone or on the forge.
+func fastForwardRepo(t *testing.T, count int) (string, *gitcmd.Repo, string, string) {
+	t.Helper()
+	root, repo, base := annotatedRepo(t, "forge.txt")
 	git(t, root, "checkout", "-q", "-b", "forge")
 	content := "base\n"
 	for i := 1; i <= count; i++ {
@@ -100,13 +109,11 @@ func assertNoParkedCheckpoints(t *testing.T, repo *gitcmd.Repo, result AnnotateR
 	}
 }
 
-// commitLocalLine appends a line to forge.txt, commits it, and runs the
+// commitAndAnnotate commits the worktree on main over parent and runs the
 // post-commit flow.
-func commitLocalLine(t *testing.T, root string, repo *gitcmd.Repo, parent string) AnnotateResult {
+func commitAndAnnotate(t *testing.T, root string, repo *gitcmd.Repo, parent, message string) AnnotateResult {
 	t.Helper()
-	content := git(t, root, "show", "HEAD:forge.txt") + "local\n"
-	write(t, root, "forge.txt", content)
-	local := commit(t, root, "local")
+	local := commit(t, root, message)
 	input := parent + " " + local + " refs/heads/main\n"
 	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
 		t.Fatal(err)
@@ -116,6 +123,14 @@ func commitLocalLine(t *testing.T, root string, repo *gitcmd.Repo, parent string
 		t.Fatal(err)
 	}
 	return result
+}
+
+// commitLocalLine appends a line to path, commits it, and runs the
+// post-commit flow.
+func commitLocalLine(t *testing.T, root string, repo *gitcmd.Repo, path, parent string) AnnotateResult {
+	t.Helper()
+	write(t, root, path, git(t, root, "show", "HEAD:"+path)+"local\n")
+	return commitAndAnnotate(t, root, repo, parent, "local")
 }
 
 func hasInitializingWarning(warnings []string) bool {
@@ -159,7 +174,7 @@ func TestFastForwardDoesNotAnnotateForeignCommits(t *testing.T) {
 			}
 			// Without a note for the fast-forwarded lines, the next local
 			// commit keeps them untracked instead of claiming them as human.
-			result := commitLocalLine(t, root, repo, tip)
+			result := commitLocalLine(t, root, repo, "forge.txt", tip)
 			if !hasInitializingWarning(result.Warnings) {
 				t.Fatalf("annotate without a parent note = %+v, want initializing warning", result)
 			}
@@ -182,23 +197,12 @@ func TestFastForwardDoesNotAnnotateForeignCommits(t *testing.T) {
 
 func TestFastForwardStartsFromFetchedNote(t *testing.T) {
 	t.Parallel()
-	root := testRepo(t)
-	write(t, root, "forge.txt", "base\n")
-	base := commit(t, root, "base")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
+	root, repo, base := annotatedRepo(t, "forge.txt")
 	// The forge branch annotates an AI commit, like the clone that made it;
 	// main then has the commit and its note before the fast-forward.
 	git(t, root, "checkout", "-q", "-b", "forge")
 	write(t, root, "forge.txt", "base\nforge ai\n")
-	if _, err := Capture(repo, presetAI("forge-session", "forge.txt"), time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	captureAI(t, repo, "forge-session", "forge.txt")
 	tip := commit(t, root, "forge ai")
 	if _, err := Annotate(repo); err != nil {
 		t.Fatal(err)
@@ -226,7 +230,7 @@ func TestFastForwardStartsFromFetchedNote(t *testing.T) {
 		t.Fatalf("boundary after fast-forward = %q, want %s", state.LastAnnotatedCommit, tip)
 	}
 
-	commitLocalLine(t, root, repo, tip)
+	commitLocalLine(t, root, repo, "forge.txt", tip)
 	blame, err := Blame(repo, "forge.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +257,7 @@ func TestFastForwardContinuesFromLaterFetchedNote(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := commitLocalLine(t, root, repo, tip)
+	result := commitLocalLine(t, root, repo, "forge.txt", tip)
 	if hasInitializingWarning(result.Warnings) {
 		t.Fatalf("annotate over a noted parent = %+v, want no initializing warning", result)
 	}
@@ -276,30 +280,17 @@ func TestFastForwardKeepsUncommittedAIEvidence(t *testing.T) {
 	root, repo, base, tip := fastForwardRepo(t, 1)
 	// An agent edit in progress on a path the fast-forward does not touch.
 	write(t, root, "local.txt", "ai\n")
-	if _, err := Capture(repo, presetAI("local-session", "local.txt"), time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	captureAI(t, repo, "local-session", "local.txt")
 	git(t, root, "merge", "-q", "--ff-only", "forge")
 	runFastForwardHooks(t, repo, base, tip)
-	records, _, err := store.New(repo.GitDir).ReadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
+	records, _ := readCheckpointsAndState(t, repo)
 	for _, record := range records {
 		if record.BaseCommit != tip {
 			t.Fatalf("checkpoint %d base = %s, want fast-forwarded %s", record.Seq, record.BaseCommit, tip)
 		}
 	}
 
-	local := commit(t, root, "local ai")
-	input := tip + " " + local + " refs/heads/main\n"
-	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
-		t.Fatal(err)
-	}
-	result, err := Annotate(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := commitAndAnnotate(t, root, repo, tip, "local ai")
 	if result.ParkedCheckpoints != 0 {
 		t.Fatalf("annotate parked the agent edit: %+v", result)
 	}
@@ -314,24 +305,47 @@ func TestFastForwardKeepsUncommittedAIEvidence(t *testing.T) {
 
 func TestFastForwardConsumesCheckpointsOnChangedPaths(t *testing.T) {
 	t.Parallel()
-	root, repo, base, tip := fastForwardRepo(t, 1)
-	// A reverted agent edit leaves one checkpoint on a path the
-	// fast-forward then changes. That checkpoint also opened the lane.
-	write(t, root, "forge.txt", "base\nai\n")
-	captureAI(t, repo, "reverted-session", "forge.txt")
-	write(t, root, "forge.txt", "base\n")
-	git(t, root, "merge", "-q", "--ff-only", "forge")
-	transaction := runFastForwardHooks(t, repo, base, tip)
-	if len(transaction.Warnings) != 1 ||
-		!strings.Contains(transaction.Warnings[0], "changed 1 paths") ||
-		!strings.Contains(transaction.Warnings[0], "consumed 1 checkpoints") {
-		t.Fatalf("fast-forward warnings = %q, want consumed checkpoints", transaction.Warnings)
+	cases := []struct {
+		name    string
+		commits int
+		rename  string
+	}{
+		{"edited path", 1, ""},
+		// Rename detection reports the edited path only as the rename source.
+		{"renamed path", 0, "renamed.txt"},
 	}
-	records, state := readCheckpointsAndState(t, repo)
-	if len(records) != 1 || records[0].BaseCommit != base || !checkpointConsumed(records[0], state) {
-		t.Fatalf("checkpoints after fast-forward = %+v, want one consumed on %s", records, base)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root, repo, base, tip := fastForwardRepo(t, tc.commits)
+			path := "forge.txt"
+			if tc.rename != "" {
+				git(t, root, "checkout", "-q", "forge")
+				git(t, root, "mv", path, tc.rename)
+				tip = commit(t, root, "rename")
+				git(t, root, "checkout", "-q", "main")
+				path = tc.rename
+			}
+			// A reverted agent edit leaves one checkpoint on a path the
+			// fast-forward then changes. That checkpoint also opened the lane.
+			write(t, root, "forge.txt", "base\nai\n")
+			captureAI(t, repo, "reverted-session", "forge.txt")
+			write(t, root, "forge.txt", "base\n")
+			git(t, root, "merge", "-q", "--ff-only", "forge")
+			transaction := runFastForwardHooks(t, repo, base, tip)
+			if len(transaction.Warnings) != 1 ||
+				!strings.Contains(transaction.Warnings[0], "changed 1 paths") ||
+				!strings.Contains(transaction.Warnings[0], "consumed 1 checkpoints") {
+				t.Fatalf("fast-forward warnings = %q, want consumed checkpoints", transaction.Warnings)
+			}
+			records, state := readCheckpointsAndState(t, repo)
+			if len(records) != 1 || records[0].BaseCommit != base || !checkpointConsumed(records[0], state) {
+				t.Fatalf("checkpoints after fast-forward = %+v, want one consumed on %s", records, base)
+			}
+			assertNoParkedCheckpoints(t, repo, commitLocalLine(t, root, repo, path, tip))
+		})
 	}
-	assertNoParkedCheckpoints(t, repo, commitLocalLine(t, root, repo, tip))
 }
 
 func TestFastForwardMovesOnlyCheckpointsOnUntouchedPaths(t *testing.T) {
@@ -366,16 +380,7 @@ func TestFastForwardMovesOnlyCheckpointsOnUntouchedPaths(t *testing.T) {
 		}
 	}
 
-	local := commit(t, root, "local ai")
-	input := tip + " " + local + " refs/heads/main\n"
-	if _, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed"); err != nil {
-		t.Fatal(err)
-	}
-	result, err := Annotate(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertNoParkedCheckpoints(t, repo, result)
+	assertNoParkedCheckpoints(t, repo, commitAndAnnotate(t, root, repo, tip, "local ai"))
 	blame, err := Blame(repo, "local.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -474,23 +479,58 @@ func TestFastForwardCheckpointMoveFailure(t *testing.T) {
 	})
 }
 
+func TestFastForwardReportsFailures(t *testing.T) {
+	cases := []struct {
+		name string
+		mode string
+		// dir returns a store path that is replaced by a directory.
+		dir  func(store.Store) string
+		want string
+	}{
+		{"reflog", "reflog-error", nil, "forced reflog failure"},
+		{"worktree lock", "", store.Store.LockPath, "open lock"},
+		{"state", "", store.Store.StatePath, "read state"},
+		{"branch", "branch-error", nil, "forced branch failure"},
+		{"checkpoint log", "", store.Store.CheckpointPath, "read checkpoint"},
+		{"changed paths", "changes-error", nil, "forced changes failure"},
+		{"target note", "notes-read-error", nil, "forced notes read failure"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Two forge commits keep the tip parent off the old tip, so
+			// only the fast-forward check reads the reflog.
+			root, repo, base, tip := fastForwardRepo(t, 2)
+			// A checkpoint on the old tip makes the fast-forward read the
+			// changed paths.
+			write(t, root, "local.txt", "ai\n")
+			captureAI(t, repo, "local-session", "local.txt")
+			git(t, root, "merge", "-q", "--ff-only", "forge")
+			if tc.mode != "" {
+				repo = fakeRewriteRepo(t, root, tc.mode, tip)
+			}
+			if tc.dir != nil {
+				path := tc.dir(store.New(repo.GitDir))
+				if err := os.RemoveAll(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			update := rewrite.RefUpdate{Ref: "refs/heads/main", Old: base, New: tip}
+			if _, err := handleHeadMove(repo, update); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("handleHeadMove() = %v, want error with %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestFastForwardSkipsForeignCherryPickMarker(t *testing.T) {
 	t.Parallel()
-	root := testRepo(t)
-	write(t, root, "file.txt", "base\n")
-	base := commit(t, root, "base")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
+	root, repo, base := annotatedRepo(t, "file.txt")
 	git(t, root, "checkout", "-q", "-b", "topic")
 	write(t, root, "file.txt", "base\nsource\n")
-	if _, err := Capture(repo, presetAI("cherry-session", "file.txt"), time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	captureAI(t, repo, "cherry-session", "file.txt")
 	source := commit(t, root, "source")
 	if _, err := Annotate(repo); err != nil {
 		t.Fatal(err)
