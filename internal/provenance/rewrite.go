@@ -1132,12 +1132,14 @@ func headFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (bool, error) 
 // handleFastForward follows a merge or pull fast-forward. The new commits
 // were made elsewhere, so the boundary moves to the new tip only when that
 // tip already carries a valid note. Git refuses a fast-forward that would
-// overwrite local changes, so pending ranges and the branch checkpoints
-// taken on the old tip still describe the worktree, and they move to the
-// new tip. A path the fast-forward changed was clean, so its checkpoints
-// describe reverted or stashed edits. Replaying them over the incoming
-// content would attribute lines they never produced, so they move to their
-// own lane, which is consumed at once.
+// overwrite local changes, and --autostash applies them again only after
+// the branch moves. So a path the fast-forward changed was clean, and its
+// pending ranges and checkpoints describe reverted or stashed edits. On
+// other paths they still describe the worktree and move to the new tip.
+// Stale pending ranges are dropped, so the next commit reads those paths
+// from the new tip. Replaying stale checkpoints over the incoming content
+// would attribute lines they never produced, so they move to their own
+// lane, which is consumed at once.
 func handleFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult, error) {
 	dataStore := store.New(repo.GitDir)
 	held, err := lock.Acquire(dataStore.LockPath(), lockTimeout)
@@ -1162,6 +1164,7 @@ func handleFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResu
 		return RewriteResult{}, err
 	}
 	originalState := state
+	state.Pending.Files = unchangedPendingFiles(state.Pending.Files, split.changed)
 	remaps := map[string]string{}
 	moves := map[uint64]store.CheckpointMove{}
 	var warnings []string
@@ -1216,8 +1219,10 @@ func handleFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResu
 }
 
 // fastForwardCheckpoints holds the unconsumed checkpoints taken on the old
-// tip, split by whether the fast-forward changed one of their paths.
+// tip, split by whether the fast-forward changed one of their paths. The
+// changed paths are read only when checkpoints or pending files need them.
 type fastForwardCheckpoints struct {
+	changed      map[string]bool
 	untouched    []model.Checkpoint
 	touched      []model.Checkpoint
 	changedPaths int
@@ -1238,18 +1243,18 @@ func splitFastForwardCheckpoints(
 		}
 	}
 	split := fastForwardCheckpoints{}
-	if len(oldTip) == 0 {
+	if len(oldTip) == 0 && len(state.Pending.Files) == 0 {
 		return split, nil
 	}
 	changes, err := repo.Changes(update.New, update.Old)
 	if err != nil {
 		return fastForwardCheckpoints{}, err
 	}
-	changed := changedPathSet(changes)
+	split.changed = changedPathSet(changes)
 	hit := map[string]bool{}
 	for _, record := range oldTip {
 		split.legacy = split.legacy || recordUsesLegacyContext(record)
-		if markChangedPaths(record, changed, hit) {
+		if markChangedPaths(record, split.changed, hit) {
 			split.touched = append(split.touched, record)
 		} else {
 			split.untouched = append(split.untouched, record)
@@ -1269,6 +1274,17 @@ func changedPathSet(changes []gitcmd.Change) map[string]bool {
 		}
 	}
 	return changed
+}
+
+// unchangedPendingFiles returns the pending files on paths outside changed.
+func unchangedPendingFiles(files map[string]model.PendingFile, changed map[string]bool) map[string]model.PendingFile {
+	kept := make(map[string]model.PendingFile, len(files))
+	for path, file := range files {
+		if !changed[path] {
+			kept[path] = file
+		}
+	}
+	return kept
 }
 
 // markChangedPaths adds the paths of record that are in changed to hit and

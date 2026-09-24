@@ -279,6 +279,52 @@ func TestFastForwardKeepsUncommittedAIEvidence(t *testing.T) {
 	assertBlameAuthors(t, repo, "local.txt", model.AuthorAI)
 }
 
+func TestFastForwardDropsStalePendingOnChangedPaths(t *testing.T) {
+	t.Parallel()
+	root, repo, _ := annotatedRepo(t, "forge.txt")
+	// A partial commit leaves pending lines on both paths. git restore runs
+	// no hook, so the pending lines of forge.txt go stale.
+	write(t, root, "forge.txt", "base\nai\n")
+	captureAI(t, repo, "local-session", "forge.txt")
+	write(t, root, "local.txt", "one\n")
+	captureAI(t, repo, "local-session", "local.txt")
+	git(t, root, "add", "forge.txt", "local.txt")
+	write(t, root, "forge.txt", "base\nai\nstale\n")
+	captureAI(t, repo, "local-session", "forge.txt")
+	write(t, root, "local.txt", "one\ntwo\n")
+	captureAI(t, repo, "local-session", "local.txt")
+	git(t, root, "commit", "-q", "-m", "partial")
+	partial := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "restore", "forge.txt")
+	// The fetched tip note is the only evidence for the pulled forge.txt.
+	git(t, root, "checkout", "-q", "-b", "forge")
+	write(t, root, "forge.txt", "base\nai\nforge\n")
+	git(t, root, "commit", "-q", "-m", "forge", "forge.txt")
+	tip := strings.TrimSpace(git(t, root, "rev-parse", "HEAD"))
+	git(t, root, "checkout", "-q", "main")
+	fetched := makeCoverageNoteForContent(mustBlob(t, repo, tip, "forge.txt"), "forge.txt", 3)
+	if err := repo.WriteNote(tip, encodeCoverageNote(t, fetched)); err != nil {
+		t.Fatal(err)
+	}
+
+	git(t, root, "merge", "-q", "--ff-only", "forge")
+	runFastForwardHooks(t, repo, partial, tip)
+	_, state := readCheckpointsAndState(t, repo)
+	_, stale := state.Pending.Files["forge.txt"]
+	_, kept := state.Pending.Files["local.txt"]
+	if stale || !kept || state.LastAnnotatedCommit != tip {
+		t.Fatalf("state after fast-forward = %+v, want only local.txt pending on %s", state, tip)
+	}
+
+	commitLocalLine(t, root, repo, "forge.txt", tip)
+	assertBlameAuthors(t, repo, "forge.txt",
+		model.AuthorHuman, model.AuthorHuman, model.AuthorHuman, model.AuthorHuman)
+	assertBlameAuthors(t, repo, "local.txt", model.AuthorAI, model.AuthorAI)
+}
+
 func TestFastForwardConsumesCheckpointsOnChangedPaths(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

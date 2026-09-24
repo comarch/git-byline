@@ -167,15 +167,17 @@ A commit made before those notes arrive marks lines it inherits from the
 pulled commits as `untracked` in the files it changes. The attribution
 boundary moves to the new tip only when that tip already carries a valid note.
 
-Git refuses a fast-forward that would overwrite local changes, so pending
-ranges and checkpoints taken on the old tip still describe the worktree and
-move to the new tip. A path the pulled commits changed was clean, so its
-checkpoints describe edits that were reverted or stashed before the pull.
-Replaying them over the incoming content would attribute lines they never
-produced, so the pull consumes them with a warning. Agent edits stashed before
-such a pull, including by `--autostash`, lose agent attribution on those paths
-and commit as `human` lines after the stash is applied. Checkpoints on paths
-the pull did not change keep their attribution.
+Git refuses a fast-forward that would overwrite local changes, and
+`--autostash` applies the stash only after the branch moves. So a path the
+pulled commits changed was clean, and its pending ranges and checkpoints
+describe edits that were reverted or stashed before the pull. The pull drops
+those pending ranges, so the next commit reads the path from the new tip and
+its note. Replaying the checkpoints over the incoming content would attribute
+lines they never produced, so the pull consumes them with a warning. Agent
+edits stashed before such a pull, including by `--autostash`, lose agent
+attribution on those paths and commit as `human` lines after the stash is
+applied. Pending ranges and checkpoints on paths the pull did not change move
+to the new tip and keep their attribution.
 
 ## Attribution matching
 

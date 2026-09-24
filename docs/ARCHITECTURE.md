@@ -84,8 +84,9 @@ match again. Post-rewrite handling remaps checkpoint and lane bases for the
 rewritten branch. A merge or pull fast-forward brings commits made elsewhere,
 so annotation skips them instead of guessing, and the boundary moves only to a
 tip that already carries a valid note. Pending ranges and checkpoints on the
-old tip move to the new tip, except checkpoints on paths the fast-forward
-changed, which are consumed with a warning. `recover` previews each parked
+old tip move to the new tip, except on paths the fast-forward changed: there
+pending ranges are dropped and checkpoints are consumed with a warning.
+`recover` previews each parked
 checkpoint, its recorded branch context, object availability, and branches
 that still reach its base without changing state. `recover --drop` first
 validates ordinary annotation, then rechecks reachability, drops only parked
