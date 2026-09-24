@@ -1204,11 +1204,25 @@ func TestCwdRelative(t *testing.T) {
 }
 
 func TestHeadReflogAction(t *testing.T) {
+	// withSide returns a repository on main one commit behind branch side.
+	withSide := func(t *testing.T) string {
+		root := initRepository(t)
+		writeFile(t, root, "f.txt", "one\n")
+		runGit(t, root, "add", "f.txt")
+		runGit(t, root, "commit", "-m", "one")
+		runGit(t, root, "checkout", "-q", "-b", "side")
+		writeFile(t, root, "side.txt", "side\n")
+		runGit(t, root, "add", "side.txt")
+		runGit(t, root, "commit", "-m", "side")
+		runGit(t, root, "checkout", "-q", "main")
+		return root
+	}
 	cases := []struct {
-		name       string
-		prepare    func(t *testing.T) string
-		wantAction string
-		wantErr    bool
+		name            string
+		prepare         func(t *testing.T) string
+		wantAction      string
+		wantFastForward bool
+		wantErr         bool
 	}{
 		{
 			name:       "unborn repository errors",
@@ -1244,6 +1258,56 @@ func TestHeadReflogAction(t *testing.T) {
 			},
 			wantAction: "",
 		},
+		{
+			name: "merge fast-forward",
+			prepare: func(t *testing.T) string {
+				root := withSide(t)
+				runGit(t, root, "merge", "-q", "--ff-only", "side")
+				return root
+			},
+			wantAction:      "merge side",
+			wantFastForward: true,
+		},
+		{
+			// The refspec colon must not hide the fast-forward suffix.
+			name: "pull fast-forward with a colon in the refspec",
+			prepare: func(t *testing.T) string {
+				root := withSide(t)
+				runGit(t, root, "pull", "-q", "--ff-only", ".", "side:refs/remotes/local/side")
+				return root
+			},
+			wantAction:      "pull",
+			wantFastForward: true,
+		},
+		{
+			name: "merge fast-forward ignoring a message",
+			prepare: func(t *testing.T) string {
+				root := withSide(t)
+				runGit(t, root, "merge", "-q", "--ff", "-m", "ignored", "side")
+				return root
+			},
+			wantAction:      "merge side",
+			wantFastForward: true,
+		},
+		{
+			name: "merge commit is not a fast-forward",
+			prepare: func(t *testing.T) string {
+				root := withSide(t)
+				runGit(t, root, "merge", "-q", "--no-ff", "-m", "merge side", "side")
+				return root
+			},
+			wantAction: "merge side",
+		},
+		{
+			name: "commit subject ending like a fast-forward",
+			prepare: func(t *testing.T) string {
+				root := withSide(t)
+				writeFile(t, root, "f.txt", "one\ntwo\n")
+				runGit(t, root, "commit", "-am", "docs: Fast-forward")
+				return root
+			},
+			wantAction: "commit",
+		},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -1254,14 +1318,14 @@ func TestHeadReflogAction(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			assertHeadReflogAction(t, repo, tc.wantAction, tc.wantErr)
+			assertHeadReflogAction(t, repo, tc.wantAction, tc.wantFastForward, tc.wantErr)
 		})
 	}
 }
 
-func assertHeadReflogAction(t *testing.T, repo *Repo, wantAction string, wantErr bool) {
+func assertHeadReflogAction(t *testing.T, repo *Repo, wantAction string, wantFastForward, wantErr bool) {
 	t.Helper()
-	action, err := repo.HeadReflogAction()
+	action, fastForward, err := repo.HeadReflogAction()
 	if wantErr {
 		if err == nil {
 			t.Fatalf("HeadReflogAction() = %q, want an error", action)
@@ -1270,6 +1334,9 @@ func assertHeadReflogAction(t *testing.T, repo *Repo, wantAction string, wantErr
 	}
 	if err != nil {
 		t.Fatal(err)
+	}
+	if fastForward != wantFastForward {
+		t.Fatalf("HeadReflogAction() fast-forward = %v, want %v (action %q)", fastForward, wantFastForward, action)
 	}
 	if wantAction == "" {
 		if action != "" {

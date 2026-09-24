@@ -426,7 +426,7 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	// A rebase replay creates commits without fresh checkpoint evidence.
 	// Annotating them would guess attribution and then block the post-rewrite
 	// remap of the real evidence, so replayed commits wait for post-rewrite.
-	action, err := repo.HeadReflogAction()
+	action, fastForward, err := repo.HeadReflogAction()
 	if err != nil {
 		return AnnotateResult{}, err
 	}
@@ -436,6 +436,19 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 			Skipped: true,
 			Warnings: []string{
 				"skipped annotate: rebase replay created this commit; post-rewrite will remap attribution",
+			},
+		}, nil
+	}
+	// A fast-forward brings commits made in another clone or on the forge.
+	// This clone has no evidence for them, and pre-push would share a
+	// guessed note that conflicts with the note from their author or the
+	// forge workflow.
+	if fastForward {
+		return AnnotateResult{
+			Commit:  head,
+			Skipped: true,
+			Warnings: []string{
+				"skipped annotate: HEAD fast-forwarded to existing commits; fetch refs/notes/byline for their attribution",
 			},
 		}, nil
 	}
@@ -469,7 +482,9 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 	if state.LastAnnotatedCommit != "" && state.LastAnnotatedCommit != parent {
 		return AnnotateResult{}, fmt.Errorf("commit gap or divergent history: last annotated %s, HEAD parent %s", state.LastAnnotatedCommit, parent)
 	}
-	if state.LastAnnotatedCommit == "" && parent != "" {
+	// A parent note fetched after HEAD moved, such as the forge note for a
+	// pulled commit, continues attribution even though the boundary is empty.
+	if state.LastAnnotatedCommit == "" && parent != "" && annotationBoundary(repo, parent) == "" {
 		warnings = append(warnings, "initializing attribution on a repository with existing history")
 	}
 

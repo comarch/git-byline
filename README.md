@@ -504,8 +504,11 @@ marks every listed parked checkpoint `droppable true`. Any blocked checkpoint
 refuses the whole cleanup; restore its recorded branch and base to consume the
 evidence, or delete every listed branch, then preview again. The command
 validates ordinary annotation before deletion, rechecks reachability, drops
-only unreachable records, and retries annotation. Hook-driven annotation
-never drops evidence automatically.
+only unreachable records, and retries annotation. Hooks never delete
+checkpoint records or drop parked evidence. A fast-forward pull does consume,
+with a warning, checkpoints on paths the pulled commits changed, because those
+edits were reverted or stashed before the pull; see
+[fast-forward pulls](docs/COMPATIBILITY.md#fast-forward-pulls).
 
 `git byline stats` abbreviates commit identifiers in its text report and
 prints the full identifiers in `--json` output, so tooling never depends on
@@ -597,6 +600,7 @@ hooks carry the same markers, backups, and uninstall symmetry everywhere:
 | --- | --- |
 | rebase, amend, cherry-pick | `post-rewrite` and `post-commit` hooks |
 | merge, pull | `post-merge` hook, first-parent authoritative |
+| fast-forward pull | `reference-transaction` hook, pulled commits keep their original notes |
 | reset soft/mixed/hard, branch switch | `reference-transaction` and `post-checkout` hooks |
 | stash push/pop/apply | stash notes under `refs/notes/byline-stash` |
 
@@ -769,6 +773,11 @@ content was reviewed for sharing.
   ID and `1` to keep its pending attribution note.
 - Merge commits use first-parent history. Unmatched merge result content is
   `untracked`, and a later commit touching that content keeps it untracked.
+- A fast-forward pull writes no local notes for the pulled commits. Fetch
+  `refs/notes/byline` before the next commit, or lines it inherits from them
+  stay `untracked` in the files it changes. Agent edits stashed before the
+  pull, including by `--autostash`, lose agent attribution on paths the pulled
+  commits changed.
 - Human identity is the commit author, not a proof of keystrokes. Lines from
   notes written before identities existed aggregate as `(unidentified)`.
 - Duplicate equal lines in partial commits are resolved deterministically, but

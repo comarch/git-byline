@@ -11,6 +11,7 @@ import styles from './Workflows.module.css';
 const rewrites = [
   {operation: 'rebase, amend, cherry-pick', via: ['post-rewrite', 'post-commit']},
   {operation: 'merge, pull', via: ['post-merge'], note: 'first parent is authoritative'},
+  {operation: 'fast-forward pull', via: ['reference-transaction'], note: 'pulled commits keep their original notes'},
   {operation: 'reset, branch switch', via: ['reference-transaction', 'post-checkout']},
   {operation: 'stash push, pop, apply', via: ['refs/notes/byline-stash']},
 ];

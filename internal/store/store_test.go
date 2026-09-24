@@ -139,6 +139,132 @@ func TestRewriteCheckpointBasesUsesBranchContext(t *testing.T) {
 	}
 }
 
+func TestMoveCheckpointsRewritesListedRecords(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	for seq := uint64(1); seq <= 4; seq++ {
+		record := validCheckpoint(seq)
+		record.LaneID = model.CheckpointLaneID(1)
+		record.BaseCommit = "aaaa"
+		record.BranchRef = "refs/heads/main"
+		if err := value.AppendCheckpoint(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := value.MoveCheckpoints("refs/heads/main", map[uint64]CheckpointMove{
+		1: {BaseCommit: "aaaa", LaneID: model.CheckpointLaneID(3)},
+		2: {BaseCommit: "bbbb", LaneID: model.CheckpointLaneID(1)},
+		3: {BaseCommit: "aaaa", LaneID: model.CheckpointLaneID(3)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	records, _, err := value.ReadCheckpoints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		base string
+		lane string
+	}{
+		{"aaaa", model.CheckpointLaneID(3)},
+		{"bbbb", model.CheckpointLaneID(1)},
+		{"aaaa", model.CheckpointLaneID(3)},
+		{"aaaa", model.CheckpointLaneID(1)},
+	}
+	for i, expected := range want {
+		if records[i].BaseCommit != expected.base || records[i].LaneID != expected.lane ||
+			records[i].BranchRef != "refs/heads/main" || records[i].Seq != uint64(i+1) {
+			t.Fatalf("record %d = %+v, want base %s lane %s", i+1, records[i], expected.base, expected.lane)
+		}
+	}
+
+	before, err := os.ReadFile(value.CheckpointPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := value.MoveCheckpoints("refs/heads/main", nil); err != nil {
+		t.Fatalf("empty move = %v", err)
+	}
+	if err := value.MoveCheckpoints("refs/heads/main", map[uint64]CheckpointMove{
+		4: {BaseCommit: "aaaa", LaneID: model.CheckpointLaneID(1)},
+	}); err != nil {
+		t.Fatalf("identity move = %v", err)
+	}
+	after, err := os.ReadFile(value.CheckpointPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("identity move changed checkpoint log")
+	}
+}
+
+func TestMoveCheckpointsRejectsInvalidMovesWithoutMutation(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	legacy := validCheckpoint(1)
+	legacy.Version = model.CheckpointVersionV1
+	legacy.LaneID = ""
+	legacy.BaseCommit = "aaaa"
+	feature := validCheckpoint(2)
+	feature.BaseCommit = "aaaa"
+	feature.BranchRef = "refs/heads/feature"
+	current := validCheckpoint(3)
+	current.BaseCommit = "aaaa"
+	current.BranchRef = "refs/heads/main"
+	for _, record := range []model.Checkpoint{legacy, feature, current} {
+		if err := value.AppendCheckpoint(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := os.ReadFile(value.CheckpointPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane := model.CheckpointLaneID(3)
+	tests := []struct {
+		name   string
+		branch string
+		moves  map[uint64]CheckpointMove
+		want   string
+	}{
+		{"invalid branch", "main", map[uint64]CheckpointMove{3: {BaseCommit: "bbbb", LaneID: lane}}, "branch"},
+		{"symbolic target", "refs/heads/main", map[uint64]CheckpointMove{3: {BaseCommit: "main", LaneID: lane}}, "move target for checkpoint 3"},
+		{"invalid lane", "refs/heads/main", map[uint64]CheckpointMove{3: {BaseCommit: "bbbb", LaneID: "lane"}}, "move lane for checkpoint 3"},
+		{"legacy lane", "refs/heads/main", map[uint64]CheckpointMove{3: {BaseCommit: "bbbb", LaneID: model.LegacyCheckpointLaneID("aaaa")}}, "move lane for checkpoint 3"},
+		{"version one record", "refs/heads/main", map[uint64]CheckpointMove{1: {BaseCommit: "bbbb", LaneID: lane}}, "checkpoint 1 is outside branch context"},
+		{"other branch", "refs/heads/main", map[uint64]CheckpointMove{2: {BaseCommit: "bbbb", LaneID: lane}}, "checkpoint 2 is outside branch context"},
+		{"missing record", "refs/heads/main", map[uint64]CheckpointMove{3: {BaseCommit: "bbbb", LaneID: lane}, 9: {BaseCommit: "bbbb", LaneID: lane}}, "checkpoint 9 is missing"},
+	}
+	for _, test := range tests {
+		err := value.MoveCheckpoints(test.branch, test.moves)
+		if err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("%s: MoveCheckpoints() = %v, want %q", test.name, err, test.want)
+		}
+		after, readErr := os.ReadFile(value.CheckpointPath())
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if !bytes.Equal(after, before) {
+			t.Fatalf("%s: rejected move changed checkpoint log", test.name)
+		}
+	}
+
+	absent := New(t.TempDir())
+	if err := absent.MoveCheckpoints("refs/heads/main", map[uint64]CheckpointMove{
+		1: {BaseCommit: "bbbb", LaneID: lane},
+	}); err == nil {
+		t.Fatal("MoveCheckpoints accepted a missing checkpoint log")
+	}
+	invalid := New(t.TempDir())
+	writeStoreFile(t, invalid.CheckpointPath(), checkpointJSON(t, validCheckpoint(0)))
+	if err := invalid.MoveCheckpoints("refs/heads/main", map[uint64]CheckpointMove{
+		1: {BaseCommit: "bbbb", LaneID: lane},
+	}); err == nil {
+		t.Fatal("MoveCheckpoints accepted an invalid checkpoint log")
+	}
+}
+
 func TestDropCheckpointRecordsPreservesOtherLines(t *testing.T) {
 	t.Parallel()
 	value := New(t.TempDir())

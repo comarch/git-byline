@@ -81,15 +81,20 @@ checkpoints based on that `HEAD` are carried into pending state for the next
 commit. A checkpoint from another branch or base parks with a warning instead
 of blocking annotation; its lane resumes only when both branch ref and base
 match again. Post-rewrite handling remaps checkpoint and lane bases for the
-rewritten branch. `recover` previews each parked checkpoint, its recorded
-branch context, object availability, and branches that still reach its base
-without changing state. `recover --drop` first validates ordinary annotation,
-then rechecks reachability, drops only parked checkpoints whose base no local
-or remote-tracking branch can reach, and retries annotation. Every unrelated
-checkpoint must be stranded; one blocked checkpoint refuses the whole cleanup
-without dropping records or retrying annotation. Hook-driven annotation never
-selects this destructive mode. `annotate --drop-stranded` performs the same
-destructive removal without a preview, so users should run `recover` first.
+rewritten branch. A merge or pull fast-forward brings commits made elsewhere,
+so annotation skips them instead of guessing, and the boundary moves only to a
+tip that already carries a valid note. Pending ranges and checkpoints on the
+old tip move to the new tip, except checkpoints on paths the fast-forward
+changed, which are consumed with a warning. `recover` previews each parked
+checkpoint, its recorded branch context, object availability, and branches
+that still reach its base without changing state. `recover --drop` first
+validates ordinary annotation, then rechecks reachability, drops only parked
+checkpoints whose base no local or remote-tracking branch can reach, and
+retries annotation. Every unrelated checkpoint must be stranded; one blocked
+checkpoint refuses the whole cleanup without dropping records or retrying
+annotation. Hook-driven annotation never selects this destructive mode.
+`annotate --drop-stranded` performs the same destructive removal without a
+preview, so users should run `recover` first.
 
 ## Checkpoint log
 
@@ -103,7 +108,9 @@ One JSON object per line:
 
 Properties:
 
-- append-only except for truncated-tail recovery;
+- new records are appended; existing records change only through
+  truncated-tail recovery, base and lane rewrites, and explicit
+  `recover --drop` or `annotate --drop-stranded` removal;
 - streamed with a 64 MiB total limit and 100,000-record limit;
 - sequence order is authoritative;
 - one truncated final line is ignored with a warning;
@@ -137,16 +144,28 @@ remain reachable through `refs/worktree/byline/checkpoints`.
 Version 3 nests stable lane IDs below their attached local branch ref in
 `lanes`. Each lane stores the highest sequence annotation consumed in that
 branch context. Base commits remain on checkpoint records and may change when
-history is rewritten; lane IDs do not. This prevents squash or split rewrites
-from merging independent consumption watermarks. Annotation selects records
-whose branch matches the current branch and whose base matches `HEAD` or its
-first parent. Records based on the parent replay into the commit, records based
-on `HEAD` carry as pending worktree provenance, and every other unconsumed
+history is rewritten; lane IDs change only when a fast-forward splits a lane.
+This prevents squash or split rewrites from merging independent consumption
+watermarks. Annotation selects records whose branch matches the current branch
+and whose base matches `HEAD` or its first parent. Records based on the parent
+replay into the commit, records based on `HEAD` carry as pending worktree
+provenance, and every other unconsumed
 record parks with a warning. This keeps sibling branches created from one base
 independent. Parked lanes stay protected by the retention ref, are never
 deleted automatically, and resume only when branch and base match again.
 `annotate --drop-stranded` and `recover --drop` are the only paths that remove
 records, and both refuse while any branch still reaches a parked base.
+
+A fast-forward that changes a path with checkpoints on the old tip splits
+their lanes. Checkpoints on unchanged paths keep their lane and move to the
+new tip. Checkpoints on changed paths stay on the old tip and move to a lane
+named after the last of them, which is consumed up to that sequence at once.
+Lane IDs name the checkpoint that opened the lane, so the new name matches an
+existing lane only when that last checkpoint opened it. Every unchanged-path
+checkpoint in that lane then comes after it and stays above the watermark.
+Version 1 checkpoints and `legacy:<base>` lanes cannot be split. When the
+fast-forward changes one of their paths, every checkpoint on the old tip stays
+parked there.
 
 `last_checkpoint_seq` is the version 1 scalar watermark, kept as a frozen
 consumption floor. Version 1 could only consume an unbroken journal prefix,
@@ -306,8 +325,10 @@ git fetch origin refs/notes/byline:refs/notes/byline
 ```
 
 Concurrent clones can create divergent notes histories. The managed hook
-refuses a non-fast-forward notes update and stops the branch push. Merge the
-remote notes explicitly, review conflicts, then retry:
+refuses a non-fast-forward notes update and stops the branch push. A
+fast-forward pull writes no local notes for the pulled commits, so their notes
+from another clone or the forge workflow merge without conflicting entries.
+Merge the remote notes explicitly, review conflicts, then retry:
 
 ```sh
 git fetch origin refs/notes/byline:refs/notes/byline-remote

@@ -52,6 +52,7 @@ func TestCoveragePostMergeAndCherryPickBranches(t *testing.T) {
 	t.Run("unborn", coveragePostMergeUnborn)
 	t.Run("parent error", coveragePostMergeParentError)
 	t.Run("root commit", coveragePostMergeRootCommit)
+	t.Run("reflog error", coveragePostMergeReflogError)
 	t.Run("previous HEAD error", coveragePostMergePreviousHeadError)
 	t.Run("amend parent error", coveragePostMergeAmendError)
 	t.Run("commit message error", coveragePostMergeCommitMessageError)
@@ -1182,6 +1183,17 @@ func coveragePostMergeRootCommit(t *testing.T) {
 	result, err := HandlePostMerge(repo)
 	if err != nil || result.Mapped != 0 || result.Written != 0 {
 		t.Fatalf("root post merge = %+v, %v", result, err)
+	}
+}
+
+func coveragePostMergeReflogError(t *testing.T) {
+	root := testRepo(t)
+	write(t, root, coverageFile, "content\n")
+	commit(t, root, "base")
+	commitWithMessage(t, root, "target")
+	repo := fakeRewriteRepo(t, root, "reflog-error", "")
+	if _, err := HandlePostMerge(repo); err == nil {
+		t.Fatal("HandlePostMerge accepted a reflog failure")
 	}
 }
 

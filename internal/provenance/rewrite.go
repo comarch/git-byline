@@ -529,6 +529,15 @@ func HandlePostMerge(repo *gitcmd.Repo) (RewriteResult, error) {
 	if len(parents) == 0 || len(parents) > 1 {
 		return RewriteResult{}, nil
 	}
+	// Commits reached by a fast-forward were made elsewhere. The clone that
+	// made them maps their amend and cherry-pick attribution.
+	_, fastForward, err := repo.HeadReflogAction()
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	if fastForward {
+		return RewriteResult{}, nil
+	}
 	if previous, found, previousErr := repo.PreviousHead(); previousErr != nil {
 		return RewriteResult{}, previousErr
 	} else if found {
@@ -943,9 +952,10 @@ func isSymrefShadow(updates []rewrite.RefUpdate, update rewrite.RefUpdate, attac
 // which validates them. A commit that already carries a note or an invalid
 // note falls through to reset handling. The HEAD reflog action must prove
 // that Git just created the commit through its commit machinery; moving an
-// existing object into place by reset or update-ref runs reset handling
-// instead. Parent lookup errors fail closed so a broken read never clears
-// or rewrites state.
+// existing object into place by reset or update-ref runs reset handling,
+// and a merge or pull fast-forward runs fast-forward handling instead.
+// Parent lookup errors fail closed so a broken read never clears or
+// rewrites state.
 func commitAdvance(repo *gitcmd.Repo, update rewrite.RefUpdate) (bool, error) {
 	if update.Old == "" || update.New == "" || isZero(update.Old) || isZero(update.New) {
 		return false, nil
@@ -957,11 +967,11 @@ func commitAdvance(repo *gitcmd.Repo, update rewrite.RefUpdate) (bool, error) {
 	if len(parents) == 0 || parents[0] != update.Old {
 		return false, nil
 	}
-	action, err := repo.HeadReflogAction()
+	action, fastForward, err := repo.HeadReflogAction()
 	if err != nil {
 		return false, err
 	}
-	if !commitCreatingAction(action) {
+	if fastForward || !commitCreatingAction(action) {
 		return false, nil
 	}
 	_, found, err := repo.ReadNote(update.New)
@@ -997,6 +1007,13 @@ func handleHeadMove(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult,
 	}
 	if advance {
 		return RewriteResult{}, nil
+	}
+	fastForward, err := headFastForward(repo, update)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	if fastForward {
+		return handleFastForward(repo, update)
 	}
 	dataStore := store.New(repo.GitDir)
 	held, err := lock.Acquire(dataStore.LockPath(), lockTimeout)
@@ -1100,6 +1117,159 @@ func handleHeadMove(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult,
 		return RewriteResult{}, err
 	}
 	return result, nil
+}
+
+// headFastForward reports whether update is the branch move of a merge or
+// pull fast-forward.
+func headFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (bool, error) {
+	if update.Old == "" || update.New == "" || isZero(update.Old) || isZero(update.New) {
+		return false, nil
+	}
+	_, fastForward, err := repo.HeadReflogAction()
+	return fastForward, err
+}
+
+// handleFastForward follows a merge or pull fast-forward. The new commits
+// were made elsewhere, so the boundary moves to the new tip only when that
+// tip already carries a valid note. Git refuses a fast-forward that would
+// overwrite local changes, so pending ranges and the branch checkpoints
+// taken on the old tip still describe the worktree, and they move to the
+// new tip. A path the fast-forward changed was clean, so its checkpoints
+// describe reverted or stashed edits. Replaying them over the incoming
+// content would attribute lines they never produced, so they move to their
+// own lane, which is consumed at once.
+func handleFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult, error) {
+	dataStore := store.New(repo.GitDir)
+	held, err := lock.Acquire(dataStore.LockPath(), lockTimeout)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	defer held.Release()
+	state, err := dataStore.ReadState()
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	branchRef, _, err := repo.CurrentBranchRef()
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	records, _, err := dataStore.ReadCheckpoints()
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	split, err := splitFastForwardCheckpoints(repo, update, branchRef, records, state)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	originalState := state
+	remaps := map[string]string{}
+	moves := map[uint64]store.CheckpointMove{}
+	var warnings []string
+	switch {
+	case len(split.touched) == 0:
+		if len(split.untouched) > 0 {
+			remaps[update.Old] = update.New
+		}
+	case split.legacy:
+		// Legacy checkpoints have no branch lane to split.
+		warnings = append(warnings,
+			"fast-forward changed paths with pending checkpoints; they stay parked on the previous commit")
+	default:
+		last := split.touched[len(split.touched)-1].Seq
+		// A lane is named after the checkpoint that opened it, so this name
+		// matches an existing lane only when the last touched checkpoint
+		// opened it. No untouched checkpoint precedes it then, and
+		// consuming the lane up to it still consumes only touched ones.
+		consumedLane := model.CheckpointLaneID(last)
+		for _, record := range split.touched {
+			moves[record.Seq] = store.CheckpointMove{BaseCommit: update.Old, LaneID: consumedLane}
+		}
+		for _, record := range split.untouched {
+			moves[record.Seq] = store.CheckpointMove{BaseCommit: update.New, LaneID: record.LaneID}
+		}
+		state.Lanes = advanceLanes(state.Lanes, laneSelection{Consumed: map[laneContext]uint64{
+			{BranchRef: branchRef, LaneID: consumedLane}: last,
+		}})
+		warnings = append(warnings, fmt.Sprintf(
+			"fast-forward changed %d paths with pending checkpoints; consumed %d checkpoints that no longer match the worktree",
+			split.changedPaths, len(split.touched)))
+	}
+	result, err := rebasePendingLocked(repo, update.New, dataStore, state)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	var moveErr error
+	if len(moves) > 0 {
+		moveErr = dataStore.MoveCheckpoints(branchRef, moves)
+	} else {
+		moveErr = dataStore.RewriteCheckpointBases(branchRef, remaps)
+	}
+	if moveErr != nil {
+		moveErr = fmt.Errorf("move checkpoints to fast-forwarded commit: %w", moveErr)
+		if rollbackErr := writeRewriteState(repo, dataStore, originalState); rollbackErr != nil {
+			return RewriteResult{}, fmt.Errorf("%w; rollback state: %w", moveErr, rollbackErr)
+		}
+		return RewriteResult{}, moveErr
+	}
+	result.Warnings = append(result.Warnings, warnings...)
+	return result, nil
+}
+
+// fastForwardCheckpoints holds the unconsumed checkpoints taken on the old
+// tip, split by whether the fast-forward changed one of their paths.
+type fastForwardCheckpoints struct {
+	untouched    []model.Checkpoint
+	touched      []model.Checkpoint
+	changedPaths int
+	legacy       bool
+}
+
+func splitFastForwardCheckpoints(
+	repo *gitcmd.Repo,
+	update rewrite.RefUpdate,
+	branchRef string,
+	records []model.Checkpoint,
+	state model.State,
+) (fastForwardCheckpoints, error) {
+	var oldTip []model.Checkpoint
+	for _, record := range records {
+		if !checkpointConsumed(record, state) && recordMatchesContext(record, branchRef, update.Old) {
+			oldTip = append(oldTip, record)
+		}
+	}
+	split := fastForwardCheckpoints{}
+	if len(oldTip) == 0 {
+		return split, nil
+	}
+	changes, err := repo.Changes(update.New, update.Old)
+	if err != nil {
+		return fastForwardCheckpoints{}, err
+	}
+	changed := map[string]bool{}
+	for _, change := range changes {
+		changed[change.Path] = true
+		if change.OldPath != "" {
+			changed[change.OldPath] = true
+		}
+	}
+	hit := map[string]bool{}
+	for _, record := range oldTip {
+		split.legacy = split.legacy || recordUsesLegacyContext(record)
+		touched := false
+		for _, file := range record.Files {
+			if changed[file.Path] {
+				touched = true
+				hit[file.Path] = true
+			}
+		}
+		if touched {
+			split.touched = append(split.touched, record)
+		} else {
+			split.untouched = append(split.untouched, record)
+		}
+	}
+	split.changedPaths = len(hit)
+	return split, nil
 }
 
 func writeRewriteState(repo *gitcmd.Repo, dataStore store.Store, state model.State) error {

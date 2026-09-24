@@ -215,20 +215,28 @@ func (repo *Repo) Parents(commit string) ([]string, error) {
 }
 
 // HeadReflogAction returns the action that created HEAD, such as "commit",
-// "rebase (pick)", or "cherry-pick". It distinguishes sequencer replays
+// "rebase (pick)", or "cherry-pick", and whether that entry is a merge or
+// pull fast-forward. It distinguishes sequencer replays and fast-forwards
 // from user-created commits. A bare ref update without a message, such as
 // git update-ref, yields an empty action rather than a guess.
-func (repo *Repo) HeadReflogAction() (string, error) {
+func (repo *Repo) HeadReflogAction() (string, bool, error) {
 	out, err := repo.run("read HEAD reflog action", nil, "log", "-g", "-1", "--pretty=%gs", "HEAD")
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	subject := strings.TrimSpace(string(out))
 	if subject == "" {
-		return "", nil
+		return "", false, nil
 	}
 	action, _, _ := strings.Cut(subject, ":")
-	return strings.TrimSpace(action), nil
+	action = strings.TrimSpace(action)
+	// git merge, and git pull through it, logs "<action>: Fast-forward" when
+	// the branch only moves to existing commits. Checking the action keeps
+	// a commit whose subject ends the same way from matching.
+	fastForward := (strings.HasPrefix(action, "merge") || strings.HasPrefix(action, "pull")) &&
+		(strings.HasSuffix(subject, ": Fast-forward") ||
+			strings.HasSuffix(subject, ": Fast-forward (no commit created; -m option ignored)"))
+	return action, fastForward, nil
 }
 
 // Changes returns changed paths for commit relative to its first parent.

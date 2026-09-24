@@ -124,6 +124,7 @@ Track native support in
 | Amend | Supported | `post-rewrite` and `post-commit` | Unstaged and partially staged amend |
 | Cherry-pick | Supported | `post-commit` | Normal `-x` cherry-pick; `--no-commit` requires a commit message marker |
 | Merge | Supported | `post-merge` and `post-commit` | First parent authoritative; conflict resolution is untracked |
+| Fast-forward pull or merge | Supported | `reference-transaction` | Pulled commits keep their original notes; pending work moves to the new tip |
 | Pull with rebase | Supported | `post-rewrite` | Rewritten local commits |
 | Reset soft | Supported | `reference-transaction` | Pending ranges reproject onto worktree |
 | Reset mixed | Supported | `reference-transaction` | Pending ranges reproject onto worktree |
@@ -149,6 +150,32 @@ Restored stash ranges merge with existing pending state. Existing entries win
 for a path already present; restored entries fill paths not already pending.
 The operation lock covers the complete read, projection, retention, and state
 write sequence.
+
+## Fast-forward pulls
+
+A fast-forward pull or merge moves the branch to commits made in another clone
+or by the forge merge workflow. This clone has no evidence for them, so
+`post-merge` annotation skips them with a warning. A guessed local note would
+conflict with their real note on the next notes push. Fetch their notes after
+the pull and before the next commit:
+
+```sh
+git fetch origin refs/notes/byline:refs/notes/byline
+```
+
+A commit made before those notes arrive marks lines it inherits from the
+pulled commits as `untracked` in the files it changes. The attribution
+boundary moves to the new tip only when that tip already carries a valid note.
+
+Git refuses a fast-forward that would overwrite local changes, so pending
+ranges and checkpoints taken on the old tip still describe the worktree and
+move to the new tip. A path the pulled commits changed was clean, so its
+checkpoints describe edits that were reverted or stashed before the pull.
+Replaying them over the incoming content would attribute lines they never
+produced, so the pull consumes them with a warning. Agent edits stashed before
+such a pull, including by `--autostash`, lose agent attribution on those paths
+and commit as `human` lines after the stash is applied. Checkpoints on paths
+the pull did not change keep their attribution.
 
 ## Attribution matching
 

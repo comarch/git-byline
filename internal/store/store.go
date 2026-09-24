@@ -106,7 +106,7 @@ func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]str
 	if err != nil {
 		return fmt.Errorf("read checkpoint log for base rewrite: %w", err)
 	}
-	rewritten, changed, err := rewriteCheckpointBaseData(data, branchRef, bases)
+	rewritten, changed, err := rewriteCheckpointBaseData(data, baseRewrite(branchRef, bases))
 	if err != nil {
 		return err
 	}
@@ -125,6 +125,88 @@ func (store Store) RewriteCheckpointBases(branchRef string, bases map[string]str
 	return nil
 }
 
+func baseRewrite(branchRef string, bases map[string]string) checkpointRewrite {
+	return func(record model.Checkpoint) (model.Checkpoint, bool, error) {
+		target, mapped := bases[record.BaseCommit]
+		if !mapped || !checkpointMatchesRewriteBranch(record, branchRef) {
+			return record, false, nil
+		}
+		if record.Version == model.CheckpointVersionV1 {
+			record.Version = model.CheckpointVersion
+			record.LaneID = model.LegacyCheckpointLaneID(record.BaseCommit)
+		}
+		record.BaseCommit = target
+		return record, true, nil
+	}
+}
+
+// CheckpointMove is the new base commit and lane of one checkpoint.
+type CheckpointMove struct {
+	BaseCommit string
+	LaneID     string
+}
+
+// MoveCheckpoints rewrites the base commit and lane of the listed records.
+// Every listed record must be a current-version record on branchRef with
+// a branch lane, so splitting a lane never rewrites a legacy context.
+func (store Store) MoveCheckpoints(branchRef string, moves map[uint64]CheckpointMove) error {
+	if len(moves) == 0 {
+		return nil
+	}
+	if err := model.ValidateBranchRef(branchRef); err != nil {
+		return err
+	}
+	sequences := make([]uint64, 0, len(moves))
+	for seq := range moves {
+		sequences = append(sequences, seq)
+	}
+	sort.Slice(sequences, func(i, j int) bool { return sequences[i] < sequences[j] })
+	for _, seq := range sequences {
+		move := moves[seq]
+		if !model.ValidObjectID(move.BaseCommit) {
+			return fmt.Errorf("move target for checkpoint %d is not a valid object ID", seq)
+		}
+		if err := model.ValidateCheckpointLaneID(move.LaneID); err != nil || model.IsLegacyCheckpointLaneID(move.LaneID) {
+			return fmt.Errorf("move lane for checkpoint %d is not a branch lane", seq)
+		}
+	}
+	data, err := readBoundedFile(store.CheckpointPath(), maxCheckpointBytes)
+	if err != nil {
+		return fmt.Errorf("read checkpoint log for move: %w", err)
+	}
+	found := make(map[uint64]bool, len(moves))
+	rewritten, changed, err := rewriteCheckpointBaseData(data, func(record model.Checkpoint) (model.Checkpoint, bool, error) {
+		move, listed := moves[record.Seq]
+		if !listed {
+			return record, false, nil
+		}
+		found[record.Seq] = true
+		if record.Version != model.CheckpointVersion ||
+			model.IsLegacyCheckpointLaneID(record.LaneID) ||
+			record.BranchRef != branchRef {
+			return record, false, fmt.Errorf("checkpoint %d is outside branch context %q", record.Seq, branchRef)
+		}
+		if record.BaseCommit == move.BaseCommit && record.LaneID == move.LaneID {
+			return record, false, nil
+		}
+		record.BaseCommit = move.BaseCommit
+		record.LaneID = move.LaneID
+		return record, true, nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, seq := range sequences {
+		if !found[seq] {
+			return fmt.Errorf("checkpoint %d is missing from the checkpoint log", seq)
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return writeAtomicFile(store.Dir, store.CheckpointPath(), "checkpoints-*.tmp", "checkpoint log", rewritten)
+}
+
 func validateCheckpointBaseTargets(bases map[string]string) error {
 	invalidSource := ""
 	for source, target := range bases {
@@ -141,11 +223,11 @@ func validateCheckpointBaseTargets(bases map[string]string) error {
 	return fmt.Errorf("rewrite target for base %q is not a valid object ID", invalidSource)
 }
 
-func rewriteCheckpointBaseData(
-	data []byte,
-	branchRef string,
-	bases map[string]string,
-) ([]byte, bool, error) {
+// checkpointRewrite returns the replacement for one valid supported record
+// and whether it changed.
+type checkpointRewrite func(model.Checkpoint) (model.Checkpoint, bool, error)
+
+func rewriteCheckpointBaseData(data []byte, rewrite checkpointRewrite) ([]byte, bool, error) {
 	reader := bufio.NewReaderSize(bytes.NewReader(data), checkpointBufferBytes)
 	var rewritten bytes.Buffer
 	changed := false
@@ -163,8 +245,7 @@ func rewriteCheckpointBaseData(
 		next, err := rewriteCheckpointBaseLine(
 			raw,
 			errors.Is(readErr, io.EOF) && !bytes.HasSuffix(raw, []byte{'\n'}),
-			branchRef,
-			bases,
+			rewrite,
 		)
 		if err != nil {
 			return nil, false, err
@@ -224,8 +305,7 @@ type checkpointBaseRewriteLine struct {
 func rewriteCheckpointBaseLine(
 	raw []byte,
 	finalTruncated bool,
-	branchRef string,
-	bases map[string]string,
+	rewrite checkpointRewrite,
 ) (checkpointBaseRewriteLine, error) {
 	line := bytes.TrimSuffix(raw, []byte{'\n'})
 	var header struct {
@@ -252,17 +332,15 @@ func rewriteCheckpointBaseLine(
 		sequence:  record.Seq,
 		supported: true,
 	}
-	target, mapped := bases[record.BaseCommit]
-	if !mapped || !checkpointMatchesRewriteBranch(record, branchRef) {
+	next, changed, err := rewrite(record)
+	if err != nil {
+		return checkpointBaseRewriteLine{}, err
+	}
+	if !changed {
 		return result, nil
 	}
-	if record.Version == model.CheckpointVersionV1 {
-		record.Version = model.CheckpointVersion
-		record.LaneID = model.LegacyCheckpointLaneID(record.BaseCommit)
-	}
-	record.BaseCommit = target
 	// Checkpoint contains only JSON-safe scalar and slice fields.
-	encoded, _ := json.Marshal(record)
+	encoded, _ := json.Marshal(next)
 	if bytes.HasSuffix(raw, []byte{'\n'}) {
 		encoded = append(encoded, '\n')
 	}

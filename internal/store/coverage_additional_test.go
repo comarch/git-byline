@@ -307,8 +307,7 @@ func TestRewriteCheckpointBaseLineRejectsInvalidCurrentRecord(t *testing.T) {
 	if _, err := rewriteCheckpointBaseLine(
 		[]byte(`{"version":2,"unknown":true}`),
 		false,
-		"refs/heads/main",
-		map[string]string{"aaaa": "bbbb"},
+		baseRewrite("refs/heads/main", map[string]string{"aaaa": "bbbb"}),
 	); err == nil {
 		t.Fatal("rewriteCheckpointBaseLine accepted an invalid current record")
 	}
