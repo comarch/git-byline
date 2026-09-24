@@ -86,16 +86,18 @@ authentication with the user name `oauth2`, which Git over HTTPS accepts;
 the `PRIVATE-TOKEN` header works only for REST calls. The encoded credential
 is passed through Git's in-memory `http.extraHeader` for each command, the
 token is removed from the shell environment before the binary runs, and
-neither is written to the repository. It is not used by the binary. GitLab
-masks the raw token in job logs, not the encoded header, so do not enable
-`CI_DEBUG_TRACE` for this job. The generated GitLab job is stored under
-`.gitlab/ci/git-byline.yml` and must be included from the project's
-`.gitlab-ci.yml`. It installs the release named by `GIT_BYLINE_VERSION`
-from `GIT_BYLINE_RELEASES_URL`, the pinned git-byline repository by default,
-over HTTPS only. It verifies the archive against that release's
-`checksums.txt` and the binary's reported version, and deletes the download
-after the run, also when a check or the run fails. A mirror URL moves trust
-for both files to the mirror.
+neither is written to the repository. It is not used by the binary. The job
+stops before it builds the header when `GIT_BYLINE_REMOTE_URL`, which is
+`CI_PROJECT_URL` by default, is not an `https://` URL, so the header never
+travels without TLS. GitLab masks the raw token in job logs, not the encoded
+header, so do not enable `CI_DEBUG_TRACE` for this job. The generated
+GitLab job is stored under `.gitlab/ci/git-byline.yml` and must be included
+from the project's `.gitlab-ci.yml`. It installs the release named by
+`GIT_BYLINE_VERSION` from `GIT_BYLINE_RELEASES_URL`, the pinned git-byline
+repository by default, over HTTPS only. It verifies the archive against that
+release's `checksums.txt` and the binary's reported version, and deletes the
+download after the run, also when a check or the run fails. A mirror URL
+moves trust for both files to the mirror.
 
 Both workflows reconstruct from the actual post-merge target commit. The
 GitHub workflow uses the merge commit's second parent as the source tip for a

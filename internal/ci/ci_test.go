@@ -134,6 +134,9 @@ func TestTemplatesSecurityContract(t *testing.T) {
 				// token as password; PRIVATE-TOKEN is a REST header.
 				`auth_value="$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 | tr -d '\n')"`,
 				`GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_value"`,
+				// The token header must never go to a remote without TLS.
+				`https://*) ;;`,
+				`echo "git-byline: GIT_BYLINE_REMOTE_URL must be an https:// URL" >&2`,
 				// A squash merge keeps notes only on the merge request
 				// head, used when its diff matches the target commit.
 				`awk -v prefix="${CI_PROJECT_PATH}!"`,
@@ -170,6 +173,56 @@ func TestTemplatesSecurityContract(t *testing.T) {
 				if strings.Contains(template, value) {
 					t.Errorf("template contains forbidden %q", value)
 				}
+			}
+		})
+	}
+}
+
+func TestGitLabTemplateRefusesRemoteWithoutTLS(t *testing.T) {
+	t.Parallel()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh is not available")
+	}
+	data, err := Template(ProviderGitLab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := string(data)
+	start := strings.Index(template, "set -eu")
+	end := strings.Index(template, `auth_value="$(`)
+	if start < 0 || end < start {
+		t.Fatal("GitLab script lacks set -eu before auth_value")
+	}
+	// Only the part before the token header is built runs, so a check
+	// moved after auth_value fails here too. Windows checkouts may use CRLF.
+	prefix := strings.ReplaceAll(template[start:end], "\r\n", "\n")
+	tests := []struct {
+		name   string
+		url    string
+		wantOK bool
+	}{
+		{"https", "https://gitlab.example.invalid/group/project", true},
+		{"http", "http://gitlab.example.invalid/group/project", false},
+		{"ssh", "ssh://git@gitlab.example.invalid/group/project.git", false},
+		{"scp-like", "git@gitlab.example.invalid:group/project.git", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			command := exec.Command(sh, "-c", prefix)
+			command.Env = append(os.Environ(), "GITLAB_TOKEN=token", "GIT_BYLINE_REMOTE_URL="+tt.url)
+			output, err := command.CombinedOutput()
+			if tt.wantOK {
+				if err != nil {
+					t.Fatalf("remote %q refused: %v\n%s", tt.url, err, output)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(string(output), "GIT_BYLINE_REMOTE_URL must be an https:// URL") {
+				t.Fatalf("remote %q: error = %v, output = %q, want refusal", tt.url, err, output)
 			}
 		})
 	}

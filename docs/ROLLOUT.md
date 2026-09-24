@@ -206,7 +206,8 @@ If runners reach GitLab at another address than `CI_PROJECT_URL`, for
 example through the runner `clone_url` setting, set `GIT_BYLINE_REMOTE_URL`
 as a project variable to that HTTPS address (**Verify in pilot**, P6). The
 job sends the token header to this address, so never set an `http://` URL.
-The job does not check the scheme itself.
+When the address is not HTTPS, the job stops with
+`git-byline: GIT_BYLINE_REMOTE_URL must be an https:// URL`.
 
 ## Set up developer machines
 
@@ -353,6 +354,7 @@ The pilot owner checks this every few days:
 | `git-byline: merge request !7 does not match ...; using commit parents` | The named merge request brings a different diff, so squashed lines stay `untracked` |
 | `warning: inconsistent CI merge ranges; no attribution notes written` | Expected after a fast-forward merge without squash. After a squash merge, the message named no merge request |
 | `git-byline: set GITLAB_TOKEN to a token with the write_repository scope` | The variable is missing, or it is protected and the branch is not |
+| `git-byline: GIT_BYLINE_REMOTE_URL must be an https:// URL` | `GIT_BYLINE_REMOTE_URL`, or `CI_PROJECT_URL` when that variable is not set, is not an HTTPS address. The job stops before it sends the token |
 | `git-byline: checksum mismatch for ...` | The download does not match the release `checksums.txt` |
 | `! [rejected] refs/notes/byline -> refs/notes/byline` | A developer pushed notes while the job ran. Retry the job. It fetches the latest notes first |
 

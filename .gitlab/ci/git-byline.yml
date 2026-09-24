@@ -31,6 +31,15 @@ git-byline-reconstruct:
         echo "git-byline: set GITLAB_TOKEN to a token with the write_repository scope" >&2
         exit 1
       }
+      # Every Git request below carries the token in a header, so a remote
+      # without TLS would send it in cleartext.
+      case "$GIT_BYLINE_REMOTE_URL" in
+        https://*) ;;
+        *)
+          echo "git-byline: GIT_BYLINE_REMOTE_URL must be an https:// URL" >&2
+          exit 1
+          ;;
+      esac
       # Git over HTTPS takes HTTP basic auth, PRIVATE-TOKEN works only for
       # REST calls. GitLab accepts any user name with an access token as the
       # password, and oauth2 also covers OAuth tokens.
