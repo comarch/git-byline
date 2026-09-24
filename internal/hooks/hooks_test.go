@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -842,7 +843,7 @@ func TestPrePushSharesNotes(t *testing.T) {
 	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
-	calls, err := hookPush(t, root, false, "origin", "main")
+	calls, err := hookPush(t, root, 0, "origin", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -870,7 +871,7 @@ func TestPrePushMergesRemoteNotesBeforePush(t *testing.T) {
 	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
-	calls, err := hookPush(t, root, false, "origin", "main")
+	calls, err := hookPush(t, root, 0, "origin", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -900,7 +901,7 @@ func TestPrePushStopsBranchWhenNotesMergeFails(t *testing.T) {
 	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
-	calls, err := hookPush(t, root, true, "origin", "main")
+	calls, err := hookPush(t, root, 1, "origin", "main")
 	if err == nil {
 		t.Fatal("push succeeded after merge-notes failed")
 	}
@@ -915,6 +916,143 @@ func TestPrePushStopsBranchWhenNotesMergeFails(t *testing.T) {
 	}
 }
 
+// TestPrePushPushesWithoutMergeNotes covers a hook that outlived its binary:
+// a missing git-byline exits 127 and an older one without merge-notes exits
+// 2. Neither may stop the push, because the notes push after the sync never
+// forces.
+func TestPrePushPushesWithoutMergeNotes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		install  func(t *testing.T, root string)
+		callExit int
+		calls    string
+	}{
+		{
+			name: "older binary",
+			install: func(t *testing.T, root string) {
+				if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			callExit: 2,
+			calls:    "merge-notes --remote origin\n",
+		},
+		{
+			name: "missing binary",
+			install: func(t *testing.T, root string) {
+				writeNotesPushHook(t, filepath.Join(root, ".git", "hooks"), filepath.Join(t.TempDir(), "missing", "git-byline"))
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root, remote, _ := pushFixture(t)
+			hookGit(t, root, "push", "origin", "refs/notes/byline:refs/notes/byline")
+			remoteNotes := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/notes/byline"))
+			hookGit(t, root, "notes", "--ref=refs/notes/byline", "add", "-m", "local", "HEAD~1")
+			test.install(t, root)
+			calls, err := hookPush(t, root, test.callExit, "origin", "main")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if calls != test.calls {
+				t.Fatalf("git-byline calls = %q, want %q", calls, test.calls)
+			}
+			// Nothing merged, so the fetched ref shows that the hook got
+			// past the fetch to the merge step.
+			if fetched := strings.TrimSpace(hookGit(t, root, "rev-parse", gitcmd.RemoteNotesRef)); fetched != remoteNotes {
+				t.Fatalf("fetched notes = %q, want %q", fetched, remoteNotes)
+			}
+			localNotes := strings.TrimSpace(hookGit(t, root, "rev-parse", "refs/notes/byline"))
+			if got := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/notes/byline")); got != localNotes {
+				t.Fatalf("remote notes = %q, want %q", got, localNotes)
+			}
+			localHead := strings.TrimSpace(hookGit(t, root, "rev-parse", "HEAD"))
+			if got := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/heads/main")); got != localHead {
+				t.Fatalf("remote HEAD = %q, want %q", got, localHead)
+			}
+		})
+	}
+}
+
+// TestPrePushSkipsNotesSyncInBareRepository pushes from a bare mirror.
+// merge-notes needs a work tree, so the hook must not call it and pushes the
+// notes as they are.
+func TestPrePushSkipsNotesSyncInBareRepository(t *testing.T) {
+	t.Parallel()
+	root, remote, _ := pushFixture(t)
+	hookGit(t, root, "push", "origin", "refs/notes/byline:refs/notes/byline")
+	bare := filepath.Join(t.TempDir(), "mirror.git")
+	hookGit(t, root, "clone", "--quiet", "--mirror", root, bare)
+	hookGit(t, bare, "remote", "add", "target", remote)
+	hookGit(t, bare, "-c", "user.name=Test User", "-c", "user.email=test@example.invalid",
+		"notes", "--ref=refs/notes/byline", "add", "-m", "mirror", "HEAD~1")
+	executable, err := hookExecutable(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeNotesPushHook(t, filepath.Join(bare, "hooks"), executable)
+	calls, err := hookPush(t, bare, 0, "target", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != "" {
+		t.Fatalf("git-byline calls in a bare repository = %q", calls)
+	}
+	bareNotes := strings.TrimSpace(hookGit(t, bare, "rev-parse", "refs/notes/byline"))
+	if got := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/notes/byline")); got != bareNotes {
+		t.Fatalf("remote notes = %q, want %q", got, bareNotes)
+	}
+	bareHead := strings.TrimSpace(hookGit(t, bare, "rev-parse", "refs/heads/main"))
+	if got := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/heads/main")); got != bareHead {
+		t.Fatalf("remote HEAD = %q, want %q", got, bareHead)
+	}
+}
+
+// TestPrePushFetchesNotesFromPushURL uses a remote with a separate push URL.
+// The hook must sync with the repository that gets the push, not with the
+// one the remote fetches from.
+func TestPrePushFetchesNotesFromPushURL(t *testing.T) {
+	t.Parallel()
+	root, pushTarget, _ := pushFixture(t)
+	fetchSource := filepath.Join(t.TempDir(), "fetch.git")
+	hookGit(t, root, "init", "--quiet", "--bare", fetchSource)
+	hookGit(t, root, "push", fetchSource, "main", "refs/notes/byline:refs/notes/byline")
+	hookGit(t, root, "notes", "--ref=refs/notes/byline", "add", "-m", "local", "HEAD~1")
+	hookGit(t, root, "push", pushTarget, "refs/notes/byline:refs/notes/byline")
+	pushNotes := strings.TrimSpace(hookGit(t, pushTarget, "rev-parse", "refs/notes/byline"))
+	hookGit(t, root, "remote", "set-url", "origin", fetchSource)
+	hookGit(t, root, "remote", "set-url", "--push", "origin", pushTarget)
+	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
+		t.Fatal(err)
+	}
+	calls, err := hookPush(t, root, 0, "origin", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != "merge-notes --remote origin\n" {
+		t.Fatalf("git-byline calls = %q", calls)
+	}
+	if fetched := strings.TrimSpace(hookGit(t, root, "rev-parse", gitcmd.RemoteNotesRef)); fetched != pushNotes {
+		t.Fatalf("fetched notes = %q, want the push URL notes %q", fetched, pushNotes)
+	}
+	localHead := strings.TrimSpace(hookGit(t, root, "rev-parse", "HEAD"))
+	if got := strings.TrimSpace(hookGit(t, pushTarget, "rev-parse", "refs/heads/main")); got != localHead {
+		t.Fatalf("push URL HEAD = %q, want %q", got, localHead)
+	}
+}
+
+func writeNotesPushHook(t *testing.T, hooksDir, executable string) {
+	t.Helper()
+	hook := "#!/bin/sh\n" + blockStart + "\n" + notesPushCommand(executable) + "\n" + blockEnd + "\n"
+	if err := os.WriteFile(filepath.Join(hooksDir, "pre-push"), []byte(hook), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPrePushRunsCustomHookOnce(t *testing.T) {
 	t.Parallel()
 	root, _, _ := pushFixture(t)
@@ -926,7 +1064,7 @@ func TestPrePushRunsCustomHookOnce(t *testing.T) {
 	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := hookPush(t, root, false, "origin", "main"); err != nil {
+	if _, err := hookPush(t, root, 0, "origin", "main"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, ".git", "pre-push-runs"))
@@ -951,7 +1089,7 @@ func TestPrePushStopsBranchWhenNotesFail(t *testing.T) {
 	if _, err := Install(root, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := hookPush(t, root, false, "origin", "main"); err == nil {
+	if _, err := hookPush(t, root, 0, "origin", "main"); err == nil {
 		t.Fatal("push succeeded despite rejected notes")
 	}
 	remoteHead := strings.TrimSpace(hookGit(t, remote, "rev-parse", "refs/heads/main"))
@@ -1003,7 +1141,7 @@ func TestPrePushNeverOverwritesNotes(t *testing.T) {
 	if _, err := Install(second, Options{Agent: "none", Git: true}); err != nil {
 		t.Fatal(err)
 	}
-	calls, err := hookPush(t, second, false, "origin", "main")
+	calls, err := hookPush(t, second, 0, "origin", "main")
 	if err == nil {
 		t.Fatal("push accepted divergent notes")
 	}
@@ -1023,8 +1161,8 @@ func TestPrePushNeverOverwritesNotes(t *testing.T) {
 
 // hookPush runs git push in root with the test binary standing in for
 // git-byline in the installed hooks. It returns the git-byline calls the
-// hooks made; failMerge makes each call exit 1.
-func hookPush(t *testing.T, root string, failMerge bool, args ...string) (string, error) {
+// hooks made; each call exits with callExit.
+func hookPush(t *testing.T, root string, callExit int, args ...string) (string, error) {
 	t.Helper()
 	calls := filepath.Join(t.TempDir(), "git-byline-calls")
 	command := exec.Command("git", append([]string{"push"}, args...)...)
@@ -1036,10 +1174,8 @@ func hookPush(t *testing.T, root string, failMerge bool, args ...string) (string
 		"GIT_BYLINE_NESTED=1",
 		"BYLINE_TEST_HOOK_HELPER=1",
 		"BYLINE_TEST_HOOK_LOG="+calls,
+		"BYLINE_TEST_HOOK_EXIT="+strconv.Itoa(callExit),
 	)
-	if failMerge {
-		command.Env = append(command.Env, "BYLINE_TEST_HOOK_FAIL=1")
-	}
 	out, err := command.CombinedOutput()
 	if err != nil {
 		err = fmt.Errorf("git push %s: %w\n%s", strings.Join(args, " "), err, out)

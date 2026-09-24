@@ -154,11 +154,13 @@ func commands() []*command {
 			short: "merge fetched remote attribution notes",
 			usage: "Usage: git-byline merge-notes [--remote NAME]\n\n" +
 				"Merge the attribution notes that the managed pre-push hook fetched\n" +
-				"into " + gitcmd.RemoteNotesRef + ". Local notes that are behind\n" +
-				"fast-forward; diverged notes merge unless both sides changed the\n" +
-				"note of one commit. A conflict changes nothing, prints the manual\n" +
-				"merge steps, and exits 1. --remote only names the remote in those\n" +
-				"steps; the command never contacts a remote.",
+				"into " + gitcmd.RemoteNotesRef + ". Remote notes may only add\n" +
+				"notes: local notes that are behind fast-forward and diverged notes\n" +
+				"merge. When the remote side changed or removed a local note, or both\n" +
+				"sides wrote different notes for one commit, nothing changes, the\n" +
+				"manual merge steps are printed, and the command exits 1. --remote\n" +
+				"only names the remote in those steps; the command never contacts a\n" +
+				"remote.",
 			run: runMergeNotes,
 		},
 		{

@@ -308,18 +308,28 @@ const legacyNotesPushCommand = `if git show-ref --verify --quiet refs/notes/byli
 fi`
 
 // The notes fetch is the only network step besides the notes push;
-// merge-notes merges the fetched ref offline under the notes lock. The empty
-// --refmap keeps a configured notes fetch refspec, like
-// +refs/notes/*:refs/notes/*, from overwriting the local notes during the
-// fetch. A failed fetch, for example when the remote has no notes yet, falls
-// back to the plain notes push.
+// merge-notes merges the fetched ref offline under the notes lock.
+//   - The fetch reads "$2", the URL this push goes to, so a remote with a
+//     separate pushurl never syncs against the fetch URL.
+//   - The empty --refmap keeps a configured notes fetch refspec, like
+//     +refs/notes/*:refs/notes/*, from overwriting the local notes.
+//   - --no-filter brings the note blobs into a partial clone, so nothing
+//     later has to fetch them lazily.
+//   - Only exit status 1 from merge-notes, a conflict or a failed merge,
+//     stops the push. A missing binary (127) or an older one without
+//     merge-notes (2) falls back to the plain notes push, which never
+//     forces, so it cannot overwrite remote notes.
+//   - Bare repositories skip the sync, because merge-notes needs a work
+//     tree. A failed fetch, for example when the remote has no notes yet,
+//     falls back to the plain notes push too.
 const (
 	notesPushPrefix = `if git show-ref --verify --quiet refs/notes/byline; then
-  if git fetch --quiet --no-tags --no-recurse-submodules --no-write-fetch-head \
-    --no-auto-maintenance --refmap= -- "$1" \
-    "+refs/notes/byline:` + gitcmd.RemoteNotesRef + `" 2>/dev/null; then
+  if [ "$(git rev-parse --is-bare-repository)" = false ] &&
+    git fetch --quiet --no-tags --no-recurse-submodules --no-write-fetch-head \
+      --no-auto-maintenance --no-filter --refmap= -- "$2" \
+      "+refs/notes/byline:` + gitcmd.RemoteNotesRef + `" 2>/dev/null; then
     `
-	notesPushSuffix = ` merge-notes --remote "$1" || exit 1
+	notesPushSuffix = ` merge-notes --remote "$1" || [ $? -ne 1 ] || exit 1
   fi
   git push --no-verify -- "$1" refs/notes/byline:refs/notes/byline || exit 1
 fi`

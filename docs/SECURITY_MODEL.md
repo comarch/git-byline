@@ -28,8 +28,10 @@ against `checksums.txt`, then checks the staged binary's reported version
 before the swap. The managed `pre-push` hook invokes Git to fetch
 attribution notes from the selected remote and to publish them there unless
 installation used `--local-notes`. The hook reads only `refs/notes/byline`,
-and only from the remote the user pushes to. `git-byline merge-notes`
-merges the fetched notes offline and never contacts the remote. Fetched
+and only from the URL the push goes to. `git-byline merge-notes` merges the
+fetched notes offline and never contacts the remote. It accepts only notes
+commits whose trees hold note blobs, and only notes that the remote side
+adds; a remote change or removal of a local note stops the push. Fetched
 notes are untrusted input, validated when read, like notes fetched by hand.
 
 Droid and Claude Code hook payloads do not name a model. When an AI checkpoint
@@ -147,7 +149,8 @@ warning and writes no notes.
 | Oversized attribution note exhausts memory | Reject notes above 16 MiB or 500 files before full decode | Note limit regression tests | Inspect or replace the invalid note |
 | Attribution metadata is shared unexpectedly | Installation output and documentation disclose default note sharing; `--local-notes` opts out | Inspect managed `pre-push` hook and remote notes ref | Reinstall with `--local-notes`, then remove remote notes deliberately |
 | Note publication fails | Managed pre-push exits non-zero and stops the branch push | Git push error | Fix remote access or opt out with `--local-notes` |
-| Remote notes replace a different local note | Pre-push merge uses the manual strategy under the notes lock, aborts every conflict, and pushes without force; the fetch writes only a per-worktree ref with an empty `--refmap` | Conflict message with the manual merge steps | Local notes stay unchanged; merge by hand, then push again |
+| Remote notes replace or remove a local note | Pre-push merge accepts only notes the remote side adds, uses the manual strategy under the notes lock, aborts every conflict, and pushes without force; the fetch writes only a per-worktree ref with an empty `--refmap` | Conflict message names the commit and prints the manual merge steps | Local notes stay unchanged; review, merge by hand, then push again |
+| Fetched notes carry a tag, a tree, or other files | Both notes refs must point to commits, and every notes tree entry must be a note blob named by an object ID | Merge error stops the push | Local notes stay unchanged; inspect the remote notes ref |
 | Reference transaction attribution fails | Nested and irrelevant refs exit immediately; all other failures are swallowed and hook exits zero | Hook and rewrite tests | Run `git byline rewrite` manually after the repository operation |
 | Dashboard content injects HTML or script | Validate attribution, escape untrusted values with `html/template`, restrictive CSP | Renderer and CLI tests | Delete report and regenerate |
 | Dashboard exposes source or metadata | Private temporary file mode, no external resources, no automatic publication | User review and repository scans | Delete local report |

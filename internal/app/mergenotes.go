@@ -10,10 +10,15 @@ import (
 	"github.com/comarch/git-byline/internal/provenance"
 )
 
+// notesConflictHelp keeps the protections of the hook: the empty --refmap
+// stops a configured notes fetch refspec from overwriting local notes, and
+// the manual strategy stops notes.mergeStrategy from picking a side.
 const notesConflictHelp = `git-byline %[1]s: %[2]v; nothing was changed
-Merge the notes by hand, review the conflicts, then push again:
-  git fetch %[3]s refs/notes/byline:refs/notes/byline-remote
-  git notes --ref=refs/notes/byline merge refs/notes/byline-remote
+Review the notes, merge them by hand, then push again:
+  git fetch --no-tags --refmap= %[3]s +refs/notes/byline:refs/notes/byline-remote
+  git notes --ref=refs/notes/byline merge --strategy=manual refs/notes/byline-remote
+  (on a conflict, fix the files Git names, then run
+   git notes --ref=refs/notes/byline merge --commit, or --abort to stop)
   git update-ref -d refs/notes/byline-remote
 `
 
@@ -44,10 +49,10 @@ func runMergeNotes(env *Env, command *command, args []string) (int, error) {
 	// The pre-push hook is the usual caller, so the name marks the line in
 	// the push output.
 	if result.FastForwarded {
-		fmt.Fprintln(env.Stdout, "git-byline: updated attribution notes from the remote")
+		fmt.Fprintf(env.Stdout, "git-byline: updated attribution notes from the remote, %d added\n", result.Added)
 	}
 	if result.Merged {
-		fmt.Fprintln(env.Stdout, "git-byline: merged remote attribution notes")
+		fmt.Fprintf(env.Stdout, "git-byline: merged remote attribution notes, %d added\n", result.Added)
 	}
 	return ExitSuccess, nil
 }

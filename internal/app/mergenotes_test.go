@@ -75,7 +75,7 @@ func TestMergeNotesCommandOutcomes(t *testing.T) {
 				addNote(t, root, sideNotesRef, commits[1], "remote")
 				fetchSideNotes(t, root)
 			},
-			stdout: "git-byline: updated attribution notes from the remote\n",
+			stdout: "git-byline: updated attribution notes from the remote, 1 added\n",
 		},
 		{
 			name: "diverged",
@@ -84,7 +84,7 @@ func TestMergeNotesCommandOutcomes(t *testing.T) {
 				addNote(t, root, sideNotesRef, commits[2], "remote")
 				fetchSideNotes(t, root)
 			},
-			stdout: "git-byline: merged remote attribution notes\n",
+			stdout: "git-byline: merged remote attribution notes, 1 added\n",
 		},
 	}
 	for _, test := range tests {
@@ -139,10 +139,13 @@ func TestMergeNotesCommandConflictHelp(t *testing.T) {
 			if code != ExitFailure || !errors.Is(err, gitcmd.ErrNotesConflict) || stdout != "" {
 				t.Fatalf("merge-notes = %d, %q, %v", code, stdout, err)
 			}
-			want := "git-byline merge-notes: local and remote attribution notes differ for the same commit; nothing was changed\n" +
-				"Merge the notes by hand, review the conflicts, then push again:\n" +
-				"  git fetch " + test.fetch + " refs/notes/byline:refs/notes/byline-remote\n" +
-				"  git notes --ref=refs/notes/byline merge refs/notes/byline-remote\n" +
+			want := "git-byline merge-notes: local and remote attribution notes differ for commit " + commits[1] +
+				"; nothing was changed\n" +
+				"Review the notes, merge them by hand, then push again:\n" +
+				"  git fetch --no-tags --refmap= " + test.fetch + " +refs/notes/byline:refs/notes/byline-remote\n" +
+				"  git notes --ref=refs/notes/byline merge --strategy=manual refs/notes/byline-remote\n" +
+				"  (on a conflict, fix the files Git names, then run\n" +
+				"   git notes --ref=refs/notes/byline merge --commit, or --abort to stop)\n" +
 				"  git update-ref -d refs/notes/byline-remote\n"
 			if stderr != want {
 				t.Fatalf("conflict help = %q, want %q", stderr, want)

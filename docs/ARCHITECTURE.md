@@ -307,17 +307,24 @@ when a process exits.
 `install-hooks --git` installs a managed `pre-push` hook. Before an ordinary
 branch push, it syncs and sends `refs/notes/byline` to the same remote:
 
-1. Git fetches the remote `refs/notes/byline` into the per-worktree ref
+1. Git fetches the remote `refs/notes/byline` from the URL the push goes to,
+   so a remote with a separate push URL syncs with the repository that gets
+   the push. The notes land in the per-worktree ref
    `refs/worktree/byline/remote-notes`, so concurrent pushes from linked
    worktrees never share it. The fetch passes an empty `--refmap`, so a
    configured notes refspec such as `+refs/notes/*:refs/notes/*` cannot
-   overwrite local notes. When the remote has no notes yet, the fetch fails
-   quietly and the hook goes on to step 3.
+   overwrite local notes, and `--no-filter`, so a partial clone gets the
+   note blobs too. When the remote has no notes yet, the fetch fails
+   quietly and the hook goes on to step 3. Bare repositories skip steps 1
+   and 2, because `merge-notes` needs a work tree.
 2. `git-byline merge-notes` takes the common notes lock, so `annotate` in
-   another worktree cannot write a note the merge would drop. It
-   fast-forwards local notes that are behind and merges diverged notes with
-   the manual strategy. It removes the fetched ref and never contacts the
-   remote.
+   another worktree cannot write a note the merge would drop. Both notes
+   refs must point to notes commits whose trees hold only notes. Remote
+   notes may only add notes for commits without a local note: local notes
+   that are behind fast-forward, and diverged notes merge with the manual
+   strategy. It removes the fetched ref and never contacts the remote. Only
+   its exit status 1 stops the push. A missing binary or an older one
+   without `merge-notes` goes on to step 3.
 3. Git pushes `refs/notes/byline` without force. The internal push uses
    `--no-verify` to avoid recursively running the hook.
 
@@ -343,19 +350,24 @@ git fetch origin refs/notes/byline:refs/notes/byline
 Concurrent clones and the forge workflow create divergent notes histories.
 The merge in step 2 joins them. A fast-forward pull writes no local notes for
 the pulled commits, so their notes from another clone or the forge workflow
-merge without conflicting entries. When both sides changed the note of the
-same commit in different ways, `merge-notes` aborts the merge, leaves local
-notes unchanged, prints the manual steps, and stops the push. It never picks
-a side. The push also stops when the remote notes move between the fetch and
-the push; the next push syncs again. Merge conflicting notes explicitly,
-review each conflict, then retry:
+merge as additions. When the remote side changed or removed a note that the
+local notes hold, or both sides wrote different notes for one commit,
+`merge-notes` leaves local notes unchanged, prints the manual steps with the
+commit, and stops the push. It never picks a side. `git notes merge` alone
+takes a remote change without a conflict when the local side left that note
+alone, and a fast-forward takes every change. The push also stops when the
+remote notes move between the fetch and the push; the next push syncs again.
+Compare both notes of the named commit, merge explicitly, then retry:
 
 ```sh
-git fetch origin refs/notes/byline:refs/notes/byline-remote
-git notes --ref=refs/notes/byline merge refs/notes/byline-remote
+git fetch --no-tags --refmap= origin +refs/notes/byline:refs/notes/byline-remote
+git notes --ref=refs/notes/byline merge --strategy=manual refs/notes/byline-remote
 git update-ref -d refs/notes/byline-remote
 git push
 ```
+
+On a conflict, fix the files Git names, then run
+`git notes --ref=refs/notes/byline merge --commit`, or `--abort` to stop.
 
 Checkpoint logs, state files, retention refs, and generated HTML dashboards
 remain local. They are not included when attribution notes are pushed.

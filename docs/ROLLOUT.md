@@ -270,14 +270,15 @@ reconstructed merge and every notes push of a teammate moves the remote
 notes, and the next push merges them:
 
 ```text
-git-byline: merged remote attribution notes
+git-byline: merged remote attribution notes, 1 added
 ```
 
-The push stops before the branch goes out only when both sides changed the
-note of the same commit in different ways:
+The push stops before the branch goes out only when the remote notes changed
+or removed a note that the local notes hold, or both sides wrote different
+notes for one commit:
 
 ```text
-git-byline merge-notes: local and remote attribution notes differ for the same commit; nothing was changed
+git-byline merge-notes: local and remote attribution notes differ for commit <commit>; nothing was changed
 ```
 
 Then [sync notes](#sync-notes) by hand. A push can also stop with
@@ -306,18 +307,32 @@ and `--autostash` counts as a stash
 ### Sync notes
 
 Sync by hand after a fast-forward pull and when a push stops on a notes
-conflict. The hook merges the same way before each push, but it aborts a
-conflict instead of leaving the merge open. Run all three lines:
+conflict. The hook merges the same way before each push, but it stops
+instead of leaving a merge open. Run all three lines:
 
 ```sh
-git fetch origin refs/notes/byline:refs/notes/byline-remote
-git notes --ref=refs/notes/byline merge refs/notes/byline-remote
+git fetch --no-tags --refmap= origin +refs/notes/byline:refs/notes/byline-remote
+git notes --ref=refs/notes/byline merge --strategy=manual refs/notes/byline-remote
 git update-ref -d refs/notes/byline-remote
 ```
 
-The merge fast-forwards when only the remote moved, and it writes a notes
-merge commit when both sides moved. Until the first notes push reaches the
-project, the fetch fails with `couldn't find remote ref refs/notes/byline`.
+The empty `--refmap` keeps a configured notes refspec from overwriting the
+local notes during the fetch. The merge fast-forwards when only the remote
+moved, and it writes a notes merge commit when both sides moved. Until the
+first notes push reaches the project, the fetch fails with
+`couldn't find remote ref refs/notes/byline`.
+
+When the hook stopped a push, compare both notes of the commit it named
+before the merge. Git takes a remote change to a note without a conflict
+when the local side left that note alone:
+
+```sh
+git notes --ref=refs/notes/byline show <commit>
+git notes --ref=refs/notes/byline-remote show <commit>
+```
+
+When the remote note looks wrong or is missing, skip the merge, run the third
+line, and send the commit ID to the pilot owner.
 
 The merge never picks between two different notes for one commit. It stops
 with:
@@ -329,8 +344,9 @@ CONFLICT (content): Merge conflict in notes for object <commit>
 Then run `git notes --ref=refs/notes/byline merge --abort` and the third
 line. The local notes stay as they were. Send the commit ID to the pilot
 owner, who decides which note is right. The developer then runs the three
-lines again, with `-s theirs` added to the merge to keep the remote note, or
-`-s ours` to keep the local one. Until then the developer cannot push.
+lines again, with `--strategy=theirs` in the merge to keep the remote note,
+or `--strategy=ours` to keep the local one. Until then the developer cannot
+push.
 Conflicts are not expected in normal work, so
 [report each one](https://github.com/comarch/git-byline/issues/new/choose).
 

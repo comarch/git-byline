@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,8 +16,9 @@ import (
 
 // TestMain lets installed hooks call the test binary as git-byline. With
 // BYLINE_TEST_HOOK_HELPER set, it logs its arguments to BYLINE_TEST_HOOK_LOG
-// and exits 1 when BYLINE_TEST_HOOK_FAIL is set. Tests that run a hook which
-// calls git-byline must set the helper, or the hook runs this test suite.
+// and exits with the status in BYLINE_TEST_HOOK_EXIT, 0 when unset. Tests
+// that run a hook which calls git-byline must set the helper, or the hook
+// runs this test suite.
 func TestMain(m *testing.M) {
 	if os.Getenv("BYLINE_TEST_HOOK_HELPER") == "1" {
 		path := os.Getenv("BYLINE_TEST_HOOK_LOG")
@@ -28,10 +30,11 @@ func TestMain(m *testing.M) {
 		if closeErr := file.Close(); err == nil {
 			err = closeErr
 		}
-		if err != nil || os.Getenv("BYLINE_TEST_HOOK_FAIL") == "1" {
+		if err != nil {
 			os.Exit(1)
 		}
-		os.Exit(0)
+		status, _ := strconv.Atoi(os.Getenv("BYLINE_TEST_HOOK_EXIT"))
+		os.Exit(status)
 	}
 	os.Exit(m.Run())
 }
