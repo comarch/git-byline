@@ -15,6 +15,7 @@ Choose the shortest path to your question.
 | Task | Document |
 | --- | --- |
 | Install the binary or Factory plugin | [Installation](INSTALL.md) |
+| Roll out to a team on self-hosted GitLab | [Rollout on self-hosted GitLab](ROLLOUT.md) |
 | Understand hooks, checkpoints, and notes | [Architecture and data formats](ARCHITECTURE.md) |
 | Exchange attribution with Git AI or Agent Trace | [Interoperability](INTEROP.md) |
 | Generate a private local HTML report | [README dashboard guide](../README.md#local-dashboard-no-hosted-service) |

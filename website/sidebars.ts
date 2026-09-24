@@ -23,6 +23,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         {type: 'doc', id: 'docs/install', label: 'Installation'},
+        {type: 'doc', id: 'docs/rollout', label: 'Rollout on GitLab'},
         {type: 'doc', id: 'marketplace/harness/agent-templates', label: 'Agent templates'},
         {type: 'doc', id: 'action/github-action', label: 'GitHub Action'},
         {type: 'doc', id: 'docs/architecture', label: 'Architecture'},

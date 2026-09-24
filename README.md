@@ -816,6 +816,7 @@ Start with the [documentation map](docs/README.md).
 | --- | --- |
 | Product fit and alternatives | [Why git-byline](docs/WHY_GIT_BYLINE.md) |
 | Installation paths | [Installation](docs/INSTALL.md) |
+| Team rollout on self-hosted GitLab | [Rollout](docs/ROLLOUT.md) |
 | Supported systems and agents | [Compatibility](docs/COMPATIBILITY.md) |
 | Runtime and data formats | [Architecture](docs/ARCHITECTURE.md) |
 | Interop formats and mapping | [Interop](docs/INTEROP.md) |
