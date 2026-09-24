@@ -129,6 +129,7 @@ func TestTemplatesSecurityContract(t *testing.T) {
 				`[ "$("$byline_dir/git-byline" version)" = "git-byline $GIT_BYLINE_VERSION" ]`,
 				`"$byline_dir/git-byline" ci run --provider gitlab`,
 				`rm -rf "$byline_dir"`,
+				`trap 'rm -rf "$byline_dir"' EXIT`,
 				// GitLab Git over HTTPS takes HTTP basic auth with the
 				// token as password; PRIVATE-TOKEN is a REST header.
 				`auth_value="$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 | tr -d '\n')"`,

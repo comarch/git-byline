@@ -94,7 +94,8 @@ masks the raw token in job logs, not the encoded header, so do not enable
 from `GIT_BYLINE_RELEASES_URL`, the pinned git-byline repository by default,
 over HTTPS only. It verifies the archive against that release's
 `checksums.txt` and the binary's reported version, and deletes the download
-after the run. A mirror URL moves trust for both files to the mirror.
+after the run, also when a check or the run fails. A mirror URL moves trust
+for both files to the mirror.
 
 Both workflows reconstruct from the actual post-merge target commit. The
 GitHub workflow uses the merge commit's second parent as the source tip for a

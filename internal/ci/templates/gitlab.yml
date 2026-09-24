@@ -39,6 +39,9 @@ git-byline-reconstruct:
       clean_home="${CI_BUILDS_DIR:-/tmp}/git-byline-home-${CI_JOB_ID}"
       byline_dir="${CI_BUILDS_DIR:-/tmp}/git-byline-bin-${CI_JOB_ID}"
       mkdir -p "$empty_hooks" "$clean_home" "$byline_dir"
+      # CI_BUILDS_DIR can outlive the job, so a failed check or run must not
+      # leave the download behind.
+      trap 'rm -rf "$byline_dir"' EXIT
       export HOME="$clean_home"
       export XDG_CONFIG_HOME="$clean_home/config"
       mkdir -p "$XDG_CONFIG_HOME"
