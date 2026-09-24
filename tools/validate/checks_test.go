@@ -489,13 +489,38 @@ func TestCheckCITemplatesDetectsSourceDrift(t *testing.T) {
 	}
 }
 
-func TestCheckCITemplateVersions(t *testing.T) {
-	t.Parallel()
+// ciVersionFixture copies the release manifest and the CI source templates
+// of this repository into a temporary root.
+func ciVersionFixture(t *testing.T) string {
+	t.Helper()
 	repositoryRoot, err := repoRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := checkCITemplateVersions(repositoryRoot); err != nil {
+	root := t.TempDir()
+	for _, relative := range []string{
+		".release-please-manifest.json",
+		"internal/ci/templates/github.yml",
+		"internal/ci/templates/gitlab.yml",
+	} {
+		data, err := os.ReadFile(filepath.Join(repositoryRoot, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestCheckCITemplateVersions(t *testing.T) {
+	t.Parallel()
+	if err := checkCITemplateVersions(ciVersionFixture(t)); err != nil {
 		t.Fatalf("checkCITemplateVersions(repo) = %v, want nil", err)
 	}
 	tests := []struct {
@@ -508,31 +533,14 @@ func TestCheckCITemplateVersions(t *testing.T) {
 		{"invalid manifest", ".release-please-manifest.json", "{", "parse release manifest"},
 		{"no root version", ".release-please-manifest.json", `{"other": "1.0.0"}` + "\n", "no root package version"},
 		{"older manifest", ".release-please-manifest.json", `{".": "0.0.1"}` + "\n", "release manifest is v0.0.1"},
-		{"missing template", "internal/ci/templates/gitlab.yml", "", "read gitlab CI source template"},
-		{"template without pin", "internal/ci/templates/gitlab.yml", "name: x\n", "gitlab CI template: CI workflow must have one version pin line"},
+		{"missing template", "internal/ci/templates/gitlab.yml", "", "read CI template gitlab.yml"},
+		{"template without pin", "internal/ci/templates/gitlab.yml", "name: x\n", "CI template gitlab.yml: CI workflow must have one version pin line"},
 	}
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			root := t.TempDir()
-			for _, relative := range []string{
-				".release-please-manifest.json",
-				"internal/ci/templates/github.yml",
-				"internal/ci/templates/gitlab.yml",
-			} {
-				data, err := os.ReadFile(filepath.Join(repositoryRoot, filepath.FromSlash(relative)))
-				if err != nil {
-					t.Fatal(err)
-				}
-				path := filepath.Join(root, filepath.FromSlash(relative))
-				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, data, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
+			root := ciVersionFixture(t)
 			path := filepath.Join(root, filepath.FromSlash(tt.path))
 			if tt.data == "" {
 				if err := os.Remove(path); err != nil {

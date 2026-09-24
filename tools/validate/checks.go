@@ -540,21 +540,17 @@ func checkCITemplateVersions(root string) error {
 	if version == "" {
 		return errors.New("release manifest has no root package version")
 	}
-	for _, provider := range []ci.Provider{ci.ProviderGitHub, ci.ProviderGitLab} {
-		sourcePath, err := ciTemplateSourcePath(root, provider)
+	for _, name := range []string{"github.yml", "gitlab.yml"} {
+		source, err := os.ReadFile(filepath.Join(root, "internal", "ci", "templates", name))
 		if err != nil {
-			return err
-		}
-		source, err := os.ReadFile(sourcePath)
-		if err != nil {
-			return fmt.Errorf("read %s CI source template: %w", provider, err)
+			return fmt.Errorf("read CI template %s: %w", name, err)
 		}
 		pinned, err := ci.PinnedVersion(source)
 		if err != nil {
-			return fmt.Errorf("%s CI template: %w", provider, err)
+			return fmt.Errorf("CI template %s: %w", name, err)
 		}
 		if pinned != "v"+version {
-			return fmt.Errorf("%s CI template pins %s, release manifest is v%s", provider, pinned, version)
+			return fmt.Errorf("CI template %s pins %s, release manifest is v%s", name, pinned, version)
 		}
 	}
 	return nil

@@ -40,6 +40,7 @@ func TestScanRepositoryFailures(t *testing.T) {
 func TestCheckScansFailures(t *testing.T) {
 	t.Run("CI template path is a file", checkScansCITemplatePathFile)
 	t.Run("CI template contract fails", checkScansCITemplateContractFailure)
+	t.Run("CI template version fails", checkScansCITemplateVersionFailure)
 	t.Run("CI template inspection fails", checkScansCITemplateInspectionFailure)
 	t.Run("repository scan fails", checkScansRepositoryFailure)
 	t.Run("placeholder finding is rendered", checkScansPlaceholderFinding)
@@ -63,6 +64,18 @@ func checkScansCITemplateContractFailure(t *testing.T) {
 		t.Fatalf("create CI templates: %v", err)
 	}
 	requireCheckScansError(t, root, "checkScans() = nil error, want CI contract failure")
+}
+
+func checkScansCITemplateVersionFailure(t *testing.T) {
+	root := ciVersionFixture(t)
+	manifest := filepath.Join(root, ".release-please-manifest.json")
+	if err := os.WriteFile(manifest, []byte(`{".": "0.0.1"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write release manifest: %v", err)
+	}
+	err := requireCheckScansError(t, root, "checkScans() = nil error, want CI version failure")
+	if !strings.Contains(err.Error(), "CI template version") {
+		t.Fatalf("checkScans() = %v, want CI template version failure", err)
+	}
 }
 
 func checkScansCITemplateInspectionFailure(t *testing.T) {
