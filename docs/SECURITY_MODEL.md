@@ -36,6 +36,19 @@ to it, to recover the model identifier. Both reads are bounded, accept only
 absolute regular-file paths, and skip symlinks. Only the extracted model name
 is kept; transcript or settings content is never copied into any record.
 
+`checkpoint` accepts an edit path only inside a worktree of the repository
+where the hook runs. Agent hooks often run in the main checkout while the
+agent edits a linked worktree, so a path in another worktree of the same
+repository is recorded in that worktree's own checkpoint log and retention
+ref. The candidate worktrees come from `git worktree list` in the hook's
+repository, never from the payload. Each candidate is reopened and accepted
+only when Git reports the same root and the same common Git directory, so a
+removed, replaced, or foreign directory at a registered path receives
+nothing. The owning worktree applies the usual checks for `.git`, ignore
+rules, symlink escapes, regular files, size, and text. Paths outside every
+worktree of the repository stay rejected. Shell events keep using the dirty
+paths of the hook's own worktree.
+
 The managed `reference-transaction` hook has the opposite failure contract.
 It exits immediately when `GIT_BYLINE_NESTED` is set, ignores refs outside
 `HEAD`, `refs/heads/*`, and `refs/stash`, and always exits zero. This hook runs
@@ -131,7 +144,8 @@ warning and writes no notes.
 
 | Threat | Prevention | Detection | Recovery |
 | --- | --- | --- | --- |
-| Path escapes worktree | Normalize path, reject `.git`, traversal, symlink escape | Path tests and warnings | Skip snapshot, preserve prior state |
+| Path escapes worktree | Normalize path, reject `.git`, traversal, symlink escape; accept only paths inside a worktree of the hook's repository | Path tests and warnings | Skip snapshot, preserve prior state |
+| Stale or replaced linked worktree | Candidates come only from `git worktree list`; each must report the same root and common Git directory | Skip warning names the path and worktree | Skip snapshot, preserve prior state |
 | Secret file enters Git ODB | Skip Git-ignored and non-regular files | Repository scans and review | Remove local object after retention ends |
 | Malicious hook payload | Bounded input, strict event and metadata validation, path validation | Parser tests and explicit errors | No checkpoint written |
 | Malicious transcript path | Absolute regular-file check, final-symlink and reparse rejection, single-handle or identity-bound opens, bounded reads, model revalidated before use | Transcript resolver tests | Model stays `unknown` |

@@ -56,7 +56,7 @@ func runCheckpoint(env *Env, command *command, args []string) (int, error) {
 		return operationalError(env, command.name, parseErr)
 	}
 	event = resolveEventModel(event)
-	result, err := provenance.Capture(repo, event, env.now())
+	result, err := provenance.CaptureEvent(repo, event, env.now())
 	if err != nil {
 		return operationalError(env, command.name, err)
 	}
