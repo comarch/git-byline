@@ -81,17 +81,22 @@ func TestCoverageEnvironmentFallbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A working directory deeper than PATH_MAX fails resolution the
-	// same way on every unix platform (1024 on macOS, 4096 on Linux),
-	// so this section asserts strictly.
+	// A working directory longer than PATH_MAX (1024 on macOS, 4096 on
+	// Linux) fails getcwd, and more than 341 levels also defeat the
+	// os.Getwd fallback, which gives up once its "../" walk reaches 1024
+	// bytes. So resolution fails the same way on every unix platform and
+	// this section asserts strictly. Long names keep the tree shallow,
+	// because path operations slow down with depth on macOS and 2100
+	// one-letter levels stalled the cleanup under load.
 	deepRoot := t.TempDir()
 	t.Chdir(deepRoot)
-	const depth = 2100
+	const depth = 400
+	name := strings.Repeat("x", 16)
 	for index := 0; index < depth; index++ {
-		if err := os.Mkdir("x", 0o700); err != nil {
+		if err := os.Mkdir(name, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chdir("x"); err != nil {
+		if err := os.Chdir(name); err != nil {
 			t.Fatal(err)
 		}
 	}
