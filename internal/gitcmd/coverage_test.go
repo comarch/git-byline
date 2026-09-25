@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -29,7 +30,13 @@ func coverageRepo(t *testing.T, body string) *Repo {
 	}
 	root = resolved
 	gitBin := filepath.Join(root, "fake-git")
-	if err := os.WriteFile(gitBin, []byte(coverageShell+body), 0o700); err != nil {
+	// A parallel test that forks while the script is open for writing hands
+	// the write descriptor to its child, and Linux then refuses to execute
+	// the script with ETXTBSY. Every fork holds ForkLock for writing.
+	syscall.ForkLock.RLock()
+	err = os.WriteFile(gitBin, []byte(coverageShell+body), 0o700)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
 		t.Fatal(err)
 	}
 	return &Repo{Root: root, GitDir: root, gitBin: gitBin}
