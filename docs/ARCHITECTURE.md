@@ -77,6 +77,22 @@ attached directly to `HEAD`, with limits of 16 MiB for the note, 500 files,
     merges the remote notes into the notes ref and publishes it before an
     ordinary branch push.
 
+Agent hooks often run in the main checkout, for example after
+`cd "$FACTORY_PROJECT_DIR"`, while the agent edits a linked worktree. So
+`checkpoint` records each edit path in the worktree of the same repository
+that owns it. The owner is the innermost worktree root from
+`git worktree list` that contains the resolved path, so a linked worktree
+nested in the main checkout wins over the main checkout. Each candidate is
+reopened and must report the same root and the same common Git directory.
+The path moves in the form the owner's own hook would send: an absolute path
+as it is, a relative path relative to the owner root. So symlinks get the
+same checks in both worktrees, and a relative path that reaches another
+worktree only through a symlink stays in the hook's worktree and is rejected.
+The owning worktree applies the usual path checks and keeps the checkpoint in
+its own log and retention ref. Paths outside every worktree of the repository
+stay rejected. Shell events still use the dirty paths of the worktree where
+the hook runs.
+
 If annotation starts after new edits already happened on the new `HEAD`,
 checkpoints based on that `HEAD` are carried into pending state for the next
 commit. A checkpoint from another branch or base parks with a warning instead
@@ -290,13 +306,15 @@ files. A bounded greedy alignment prevents quadratic memory use on large line
 sets. Duplicate lines use stable positional tie-breaking.
 
 Files larger than 64 MiB or 1,000,000 lines, binary data, invalid UTF-8,
-symlinks, submodules, devices, ignored paths, and paths escaping the active
-worktree are rejected or skipped.
+symlinks, submodules, devices, ignored paths, and paths escaping the
+worktree that owns them are rejected or skipped.
 
 ## Worktrees and locking
 
 Each linked worktree has separate checkpoints, state, pending blobs, retention
 ref, and operation lock. Notes remain common because they are keyed by commit.
+A checkpoint for an edit in another worktree takes only that worktree's
+operation lock. `checkpoint` never holds two worktree locks at once.
 
 Annotation acquires the common notes lock before the worktree operation lock.
 Locks use operating-system advisory file locking and release automatically

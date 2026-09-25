@@ -82,12 +82,14 @@ portable preset reads both, including `trajectory_id` as the session and
 Shell hooks are supported for Droid, Claude Code, and the nine portable agent
 surfaces. The pre-shell checkpoint records the dirty worktree paths and their
 blob IDs. The post-shell checkpoint records only paths whose current blob
-differs from the pre-shell snapshot. Paths come from Git status, not from the
-shell payload. When a shell payload carries a tool call or event identifier,
-git-byline stores it and pairs the post event with the matching pre event.
-Without an identifier, it pairs the post event with the latest unpaired
-pre-shell checkpoint. Concurrent overlapping shell commands without
-identifiers remain a documented race limitation.
+differs from the pre-shell snapshot. Paths come from Git status in the
+worktree where the hook runs, not from the shell payload, so a shell command
+that edits another linked worktree is not attributed to the agent. When a
+shell payload carries a tool call or event identifier, git-byline stores it
+and pairs the post event with the matching pre event. Without an identifier,
+it pairs the post event with the latest unpaired pre-shell checkpoint.
+Concurrent overlapping shell commands without identifiers remain a
+documented race limitation.
 
 Blob comparison avoids claiming unrelated dirty files merely because they were
 already present. It does not remove the concurrent-edit race: a human edit to a
@@ -109,6 +111,9 @@ Track native support in
 
 - First-parent history is authoritative.
 - Linked worktrees receive separate pending state.
+- An edit is recorded in the worktree of the same repository that owns the
+  path, also when the agent hook runs in another worktree, such as the main
+  checkout.
 - SHA-1 and longer opaque object IDs are accepted.
 - Partial commits preserve excluded provenance for the next commit.
 - Renames preserve provenance through Git rename detection.

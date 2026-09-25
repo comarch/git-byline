@@ -38,7 +38,39 @@ type CaptureResult struct {
 	Warnings []string
 }
 
-// Capture records one normalized agent event.
+// CaptureEvent records one normalized agent event. Edit paths are recorded
+// in the worktree of the repository that owns them, so a hook that runs in
+// one worktree still records an agent edit in another. Shell events stay
+// with repo because their paths come from its own dirty state.
+func CaptureEvent(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResult, error) {
+	if (event.Kind != "" && event.Kind != model.CheckpointKindEdit) || len(event.Paths) == 0 {
+		return Capture(repo, event, now)
+	}
+	routes, warnings, err := repo.RouteWorktreePaths(event.Paths)
+	if err != nil {
+		return CaptureResult{}, fmt.Errorf("route checkpoint paths: %w", err)
+	}
+	result := CaptureResult{Warnings: warnings}
+	for _, route := range routes {
+		routed := event
+		routed.Paths = route.Paths
+		captured, err := Capture(route.Repo, routed, now)
+		prefix := ""
+		if route.Repo != repo {
+			prefix = fmt.Sprintf("worktree %q: ", route.Repo.Root)
+		}
+		if err != nil {
+			return CaptureResult{}, fmt.Errorf("%s%w", prefix, err)
+		}
+		result.Recorded += captured.Recorded
+		for _, warning := range captured.Warnings {
+			result.Warnings = append(result.Warnings, prefix+warning)
+		}
+	}
+	return result, nil
+}
+
+// Capture records one normalized agent event in repo.
 func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResult, error) {
 	if event.Type != model.AuthorHuman && event.Type != model.AuthorAI {
 		return CaptureResult{}, fmt.Errorf("unsupported event author %q", event.Type)

@@ -734,9 +734,11 @@ git-byline stores:
 - `refs/notes/byline-stash`
 - `refs/notes/byline-stash-owner`
 
-Linked worktrees keep checkpoint state separate. Notes are shared within the
-common repository. After `install-hooks --git`, the managed `pre-push` hook
-publishes `refs/notes/byline` to the same remote before the branch push.
+Linked worktrees keep checkpoint state separate. An agent hook that runs in
+one worktree records an edit in another worktree of the same repository in
+that worktree's state. Notes are shared within the common repository. After
+`install-hooks --git`, the managed `pre-push` hook publishes
+`refs/notes/byline` to the same remote before the branch push.
 It first fetches the notes already on that remote and merges the notes they
 add, so notes from another clone or the forge workflow do not stop the push.
 A remote change or removal of a local note, or two different notes for one

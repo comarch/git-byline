@@ -3,8 +3,9 @@
 #
 # Drives the real product flow against a throwaway repository: hooks,
 # checkpoints, annotation, blame, rebase and partial-commit regressions,
-# path edge cases, reports, and note sharing. Runs on Linux, macOS, and
-# Windows (Git Bash) with no dependencies beyond Git and POSIX tools.
+# path edge cases, linked worktrees, reports, and note sharing. Runs on
+# Linux, macOS, and Windows (Git Bash) with no dependencies beyond Git and
+# POSIX tools.
 #
 # Usage: BYLINE_BIN=/path/to/git-byline scripts/smoke.sh
 
@@ -148,6 +149,31 @@ require "cwd-relative blame" "$BLAME" "$AI_CURSOR"
 BLAME="$("$BIN" blame "dir with spaces/nested/some file.txt")"
 require "root-relative blame" "$BLAME" "$AI_CURSOR"
 cd "$REPO" || fail "cd back"
+
+step "agent hook in the main checkout records edits in linked worktrees"
+printf '.worktrees/\n' >>.git/info/exclude
+git worktree add -q .worktrees/wt -b wt-nested || fail "nested worktree"
+git worktree add -q "$WORK/wt-sibling" -b wt-sibling || fail "sibling worktree"
+for WT in "$REPO/.worktrees/wt" "$WORK/wt-sibling"; do
+  # The native binary reads the payload path, so Git Bash paths need converting.
+  WT_FILE="$WT/wt.txt"
+  if command -v cygpath >/dev/null 2>&1; then
+    WT_FILE="$(cygpath -m "$WT_FILE")"
+  fi
+  PAYLOAD="$(printf '{"session_id":"wt","model":"wt-model","tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$WT_FILE")"
+  printf 'wt base\n' >"$WT/wt.txt"
+  WARN="$(printf '%s' "$PAYLOAD" | "$BIN" checkpoint portable-factory --type human --hook-input stdin 2>&1 >/dev/null)" ||
+    fail "worktree human checkpoint"
+  [[ -z "$WARN" ]] || fail "worktree human checkpoint warned: $WARN"
+  printf 'wt base\nwt agent\n' >"$WT/wt.txt"
+  WARN="$(printf '%s' "$PAYLOAD" | "$BIN" checkpoint portable-factory --type ai --hook-input stdin 2>&1 >/dev/null)" ||
+    fail "worktree ai checkpoint"
+  [[ -z "$WARN" ]] || fail "worktree ai checkpoint warned: $WARN"
+  git -C "$WT" add wt.txt || fail "worktree add"
+  git -C "$WT" commit -qm "feat: agent line in a worktree" || fail "worktree commit"
+  BLAME="$(cd "$WT" && "$BIN" blame wt.txt)"
+  require "linked worktree blame" "$BLAME" "ai:factory/wt-model"
+done
 
 step "reports and policy"
 "$BIN" stats >/dev/null || fail "stats"
