@@ -88,7 +88,7 @@ func TestRouteWorktreePaths(t *testing.T) {
 		got[route.Repo.Root] = route.Paths
 	}
 	want := map[string][]string{
-		fixture.nested:  {filepath.Join(fixture.nested, "a.txt"), filepath.Join(fixture.nested, "new.txt")},
+		fixture.nested:  {"a.txt", filepath.Join(fixture.nested, "new.txt")},
 		fixture.sibling: {filepath.Join(fixture.sibling, "a.txt")},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -183,6 +183,57 @@ func TestRouteWorktreePathsKeepsUnresolvablePathLocal(t *testing.T) {
 	if err != nil || len(warnings) != 0 || len(routes) != 1 || routes[0].Repo != repo ||
 		!reflect.DeepEqual(routes[0].Paths, []string{loop}) {
 		t.Fatalf("RouteWorktreePaths(loop) = %+v, %q, %v", routes, warnings, err)
+	}
+}
+
+func TestRouteWorktreePathsKeepsSymlinkComponents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs extra privileges on Windows")
+	}
+	t.Parallel()
+	fixture := newWorktreeFixture(t)
+	link := filepath.Join(fixture.nested, "link.txt")
+	if err := os.Symlink("a.txt", link); err != nil {
+		t.Fatal(err)
+	}
+	throughLink := filepath.Join(fixture.root, "to-sibling", "a.txt")
+	if err := os.Symlink(fixture.sibling, filepath.Join(fixture.root, "to-sibling")); err != nil {
+		t.Fatal(err)
+	}
+	routes, warnings, err := fixture.repo.RouteWorktreePaths(
+		[]string{".worktrees/wt/link.txt", link, "to-sibling/a.txt", throughLink})
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("RouteWorktreePaths() warnings = %q, error = %v", warnings, err)
+	}
+	got := map[string][]string{}
+	for _, route := range routes {
+		got[route.Repo.Root] = route.Paths
+	}
+	// A relative path moves relative to the owner root, or stays here when
+	// only a symlink leads to the owner. An absolute path moves as it is.
+	want := map[string][]string{
+		fixture.root:    {"to-sibling/a.txt"},
+		fixture.nested:  {"link.txt", link},
+		fixture.sibling: {throughLink},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("RouteWorktreePaths() paths = %q, want %q", got, want)
+	}
+	nestedRepo, err := Discover(fixture.nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []struct {
+		repo *Repo
+		path string
+		want string
+	}{
+		{nestedRepo, "link.txt", "not a regular file"},
+		{fixture.repo, "to-sibling/a.txt", "beyond a symbolic link"},
+	} {
+		if _, _, _, err := check.repo.WorktreeFile(check.path); err == nil || !strings.Contains(err.Error(), check.want) {
+			t.Fatalf("WorktreeFile(%q) = %v, want an error with %q", check.path, err, check.want)
+		}
 	}
 }
 

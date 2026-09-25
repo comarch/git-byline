@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
 	"github.com/comarch/git-byline/internal/preset"
+	"github.com/comarch/git-byline/internal/store"
 )
 
 func TestCaptureEventRecordsEditsInOwningWorktree(t *testing.T) {
@@ -134,6 +136,73 @@ func TestCaptureEventWorktreeBoundaries(t *testing.T) {
 	if _, err := CaptureEvent(missing, edit, now); err == nil ||
 		!strings.Contains(err.Error(), "route checkpoint paths") {
 		t.Fatalf("CaptureEvent(missing root) = %v, want a routing error", err)
+	}
+}
+
+func TestCaptureEventRoutedSymlinkMatchesOwnerHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs extra privileges on Windows")
+	}
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, ".gitignore", ".worktrees/\n")
+	write(t, root, "file.txt", "base\n")
+	commit(t, root, "base")
+	nested := filepath.Join(root, ".worktrees", "wt")
+	git(t, root, "worktree", "add", "-q", "-b", "nested", nested)
+	sibling := filepath.Join(resolvedDir(t), "sibling")
+	git(t, root, "worktree", "add", "-q", "-b", "sibling", sibling)
+	if err := os.Symlink("file.txt", filepath.Join(nested, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sibling, filepath.Join(root, "to-sibling")); err != nil {
+		t.Fatal(err)
+	}
+	mainRepo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nestedRepo, err := gitcmd.Discover(nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	// The nested hook rejects its relative symlink path, and the same file
+	// sent from the main checkout gets the same answer.
+	rejected := `skipped "link.txt": path "link.txt" is not a regular file`
+	for _, test := range []struct {
+		repo *gitcmd.Repo
+		path string
+		want string
+	}{
+		{nestedRepo, "link.txt", rejected},
+		{mainRepo, ".worktrees/wt/link.txt", fmt.Sprintf("worktree %q: ", nestedRepo.Root) + rejected},
+	} {
+		event := preset.Event{Type: model.AuthorHuman, Paths: []string{test.path}}
+		result, err := CaptureEvent(test.repo, event, now)
+		if err != nil || result.Recorded != 0 || !reflect.DeepEqual(result.Warnings, []string{test.want}) {
+			t.Fatalf("CaptureEvent(%q) = %+v, %v; want warning %q", test.path, result, err, test.want)
+		}
+	}
+
+	// A relative path that reaches the sibling only through a symlink in the
+	// main checkout stays there and is recorded nowhere.
+	event := preset.Event{Type: model.AuthorHuman, Paths: []string{"to-sibling/file.txt"}}
+	result, err := CaptureEvent(mainRepo, event, now)
+	if err != nil || result.Recorded != 0 || len(result.Warnings) != 1 ||
+		!strings.HasPrefix(result.Warnings[0], `skipped "to-sibling/file.txt": `) ||
+		!strings.Contains(result.Warnings[0], "beyond a symbolic link") {
+		t.Fatalf("CaptureEvent(through symlink) = %+v, %v", result, err)
+	}
+	for _, dir := range []string{root, nested, sibling} {
+		repo, err := gitcmd.Discover(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if records, _, err := store.New(repo.GitDir).ReadCheckpoints(); err != nil || len(records) != 0 {
+			t.Fatalf("%s checkpoints = %d, %v; want none", dir, len(records), err)
+		}
 	}
 }
 

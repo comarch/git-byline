@@ -83,6 +83,10 @@ that owns it. The owner is the innermost worktree root from
 `git worktree list` that contains the resolved path, so a linked worktree
 nested in the main checkout wins over the main checkout. Each candidate is
 reopened and must report the same root and the same common Git directory.
+The path moves in the form the owner's own hook would send: an absolute path
+as it is, a relative path relative to the owner root. So symlinks get the
+same checks in both worktrees, and a relative path that reaches another
+worktree only through a symlink stays in the hook's worktree and is rejected.
 The owning worktree applies the usual path checks and keeps the checkpoint in
 its own log and retention ref. Paths outside every worktree of the repository
 stay rejected. Shell events still use the dirty paths of the worktree where

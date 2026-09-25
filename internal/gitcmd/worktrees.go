@@ -73,8 +73,9 @@ func parseWorktreeList(out []byte) ([]string, error) {
 // RouteWorktreePaths groups hook paths by the worktree of this repository
 // that owns them, so a hook that runs in one worktree can record an edit in
 // another. A path inside another worktree, including a linked worktree
-// nested in this one, moves there as a resolved absolute path. Every other
-// path stays with this worktree unchanged, where the usual checks accept or
+// nested in this one, moves there in the form the owner's own hook would
+// send, so the owner still sees its symlink components. Every other path
+// stays with this worktree unchanged, where the usual checks accept or
 // reject it. A path whose worktree fails verification is skipped with a
 // warning. This worktree comes first, the others follow in root order.
 func (repo *Repo) RouteWorktreePaths(paths []string) ([]WorktreePaths, []string, error) {
@@ -96,12 +97,12 @@ func (repo *Repo) RouteWorktreePaths(paths []string) ([]WorktreePaths, []string,
 	local := WorktreePaths{Repo: repo}
 	moved := map[string][]string{}
 	for _, path := range paths {
-		owner, resolved := pathOwner(path, current, roots)
+		owner, routed := pathOwner(path, current, roots)
 		if owner == "" || owner == current {
 			local.Paths = append(local.Paths, path)
 			continue
 		}
-		moved[owner] = append(moved[owner], resolved)
+		moved[owner] = append(moved[owner], routed)
 	}
 	var routes []WorktreePaths
 	if len(local.Paths) > 0 {
@@ -126,12 +127,19 @@ func (repo *Repo) RouteWorktreePaths(paths []string) ([]WorktreePaths, []string,
 	return routes, warnings, nil
 }
 
-// pathOwner returns the innermost worktree root that contains path, with
-// the resolved absolute path. A relative path is read against current. The
-// root is empty when the path is invalid or no worktree contains it.
+// pathOwner returns the innermost worktree root that contains the resolved
+// path, with the path to hand to that worktree. The resolved path only picks
+// the owner. An absolute path is handed over as it is, and the owner resolves
+// it like any absolute hook path. A relative path is read against current
+// and handed over relative to the owner root, so the owner can still reject
+// a symlink in it. A relative path that reaches the owner only through a
+// symlink has no such form, so it stays with current and fails the usual
+// symlink escape check there. The root is empty when the path is invalid or
+// no worktree contains it.
 func pathOwner(path, current string, roots []string) (string, string) {
 	native := filepath.FromSlash(path)
-	if !filepath.IsAbs(native) {
+	absolute := filepath.IsAbs(native)
+	if !absolute {
 		clean, err := NormalizePath(path)
 		if err != nil {
 			return "", ""
@@ -148,7 +156,14 @@ func pathOwner(path, current string, roots []string) (string, string) {
 			owner = root
 		}
 	}
-	return owner, resolved
+	if owner == "" || absolute {
+		return owner, path
+	}
+	rest, err := filepath.Rel(owner, native)
+	if err != nil || rest == ".." || strings.HasPrefix(rest, ".."+string(filepath.Separator)) {
+		return current, path
+	}
+	return owner, filepath.ToSlash(rest)
 }
 
 // verifiedWorktree opens the worktree at root and checks that Git reports

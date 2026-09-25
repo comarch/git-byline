@@ -45,9 +45,12 @@ repository, never from the payload. Each candidate is reopened and accepted
 only when Git reports the same root and the same common Git directory, so a
 removed, replaced, or foreign directory at a registered path receives
 nothing. The owning worktree applies the usual checks for `.git`, ignore
-rules, symlink escapes, regular files, size, and text. Paths outside every
-worktree of the repository stay rejected. Shell events keep using the dirty
-paths of the hook's own worktree.
+rules, symlink escapes, regular files, size, and text. The resolved path only
+picks the owner. The path itself moves in the form the owner's own hook would
+send, so its symlink components are still checked, and a relative path that
+reaches another worktree only through a symlink stays in the hook's worktree
+and is rejected there. Paths outside every worktree of the repository stay
+rejected. Shell events keep using the dirty paths of the hook's own worktree.
 
 The managed `reference-transaction` hook has the opposite failure contract.
 It exits immediately when `GIT_BYLINE_NESTED` is set, ignores refs outside
