@@ -265,6 +265,12 @@ func TestFanoutDirectory(t *testing.T) {
 }
 
 func TestCheckNotesHistory(t *testing.T) {
+	t.Run("default batch", func(t *testing.T) { testCheckNotesHistory(t, notesHistoryBatchSize) })
+	// Small batches run cat-file while rev-list is still streaming.
+	t.Run("two objects per batch", func(t *testing.T) { testCheckNotesHistory(t, 2) })
+}
+
+func testCheckNotesHistory(t *testing.T, batchSize int) {
 	root, repo, commits := notesMergeRepo(t)
 	base := refOID(t, root, testNotesRef)
 	runGit(t, root, "notes", "--ref="+testNotesRef, "add", "-m", "head", commits[1])
@@ -296,8 +302,8 @@ func TestCheckNotesHistory(t *testing.T) {
 		{name: "fanout tree", tip: onLocal(entry("040000", "tree", fanout, commits[2][:2])), exclude: local},
 	}
 	for _, test := range valid {
-		if err := repo.CheckNotesHistory(test.tip, test.exclude); err != nil {
-			t.Errorf("%s: CheckNotesHistory() = %v", test.name, err)
+		if err := repo.checkNotesHistory(test.tip, test.exclude, batchSize); err != nil {
+			t.Errorf("%s: checkNotesHistory() = %v", test.name, err)
 		}
 	}
 
@@ -321,9 +327,9 @@ func TestCheckNotesHistory(t *testing.T) {
 		},
 	}
 	for _, test := range invalid {
-		err := repo.CheckNotesHistory(test.tip, local)
+		err := repo.checkNotesHistory(test.tip, local, batchSize)
 		if err == nil || !strings.Contains(err.Error(), test.want) {
-			t.Errorf("%s: CheckNotesHistory() = %v, want %q", test.name, err, test.want)
+			t.Errorf("%s: checkNotesHistory() = %v, want %q", test.name, err, test.want)
 		}
 	}
 	for _, args := range [][2]string{{"HEAD", ""}, {local, "HEAD"}} {
@@ -352,6 +358,21 @@ fi
 		if err := coverageRepo(t, script).CheckNotesHistory(coverageOID, ""); err == nil {
 			t.Errorf("%s: CheckNotesHistory() accepted it", name)
 		}
+	}
+}
+
+func TestCheckNotesHistoryPastOutputLimit(t *testing.T) {
+	// The first sync lists the whole remote notes history, which can be
+	// longer than one bounded Git output.
+	lines := maxOutputBytes/(len(coverageOID)+1) + 1000
+	repo := coverageRepo(t, fmt.Sprintf(`if [ "$1" = rev-list ]; then
+  yes %s | head -n %d
+  exit 0
+fi
+sed 's/$/ commit 1/'
+`, coverageOID, lines))
+	if err := repo.CheckNotesHistory(coverageOID, ""); err != nil {
+		t.Fatalf("CheckNotesHistory(%d objects) = %v", lines, err)
 	}
 }
 

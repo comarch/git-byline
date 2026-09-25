@@ -824,6 +824,88 @@ func TestTempFileAndLimitedBuffer(t *testing.T) {
 	}
 }
 
+func TestLimitedBufferOutputError(t *testing.T) {
+	t.Parallel()
+	const operation = "read"
+	small := limitedBuffer{limit: 2}
+	if _, err := small.Write([]byte("ab")); err != nil || small.outputError(operation) != nil {
+		t.Fatalf("limitedBuffer at its limit = %v, %v", err, small.outputError(operation))
+	}
+	if _, err := small.Write([]byte("c")); err != nil {
+		t.Fatal(err)
+	}
+	err := small.outputError(operation)
+	if !errors.Is(err, ErrOutputLimit) || !strings.Contains(err.Error(), "git read:") || !strings.Contains(err.Error(), " 2 bytes") {
+		t.Fatalf("limitedBuffer over its limit = %v", err)
+	}
+	unset := limitedBuffer{exceeded: true}
+	if err := unset.outputError(operation); err == nil || !strings.Contains(err.Error(), fmt.Sprint(maxOutputBytes)) {
+		t.Fatalf("limitedBuffer without a limit = %v, want the default limit", err)
+	}
+}
+
+func TestRecordWriter(t *testing.T) {
+	t.Parallel()
+	const operation = "list"
+	var records []string
+	writer := &recordWriter{operation: operation, delimiter: []byte{0}, handle: func(record string) error {
+		records = append(records, record)
+		return nil
+	}}
+	full := strings.Repeat("x", maxRecordBytes)
+	for _, chunk := range []string{"a", "b\x00\x00c\x00" + full, "\x00d"} {
+		if written, err := writer.Write([]byte(chunk)); err != nil || written != len(chunk) {
+			t.Fatalf("Write(%d bytes) = %d, %v", len(chunk), written, err)
+		}
+	}
+	if err := writer.finish(); err != nil || len(records) != 4 ||
+		records[0] != "ab" || records[1] != "c" || records[2] != full || records[3] != "d" {
+		t.Fatalf("finish() = %v with %d records, want ab, c, one full record, d", err, len(records))
+	}
+
+	stop := errors.New("stop")
+	stopped := &recordWriter{operation: operation, delimiter: []byte{'\n'}, handle: func(string) error { return stop }}
+	for _, chunk := range []string{"x\ny\n", "z\n"} {
+		if written, err := stopped.Write([]byte(chunk)); written != 0 || !errors.Is(err, stop) {
+			t.Fatalf("Write(%q) after a handle error = %d, %v", chunk, written, err)
+		}
+	}
+	if err := stopped.outputError(operation); !errors.Is(err, stop) {
+		t.Fatalf("outputError() = %v, want %v", err, stop)
+	}
+}
+
+func TestRecordWriterLimit(t *testing.T) {
+	t.Parallel()
+	full := strings.Repeat("x", maxRecordBytes)
+	for name, chunks := range map[string][]string{
+		"in one write":  {full + "x\n"},
+		"across writes": {full, "x"},
+	} {
+		writer := &recordWriter{operation: "list", delimiter: []byte{'\n'}, handle: func(string) error { return nil }}
+		var err error
+		for _, chunk := range chunks {
+			_, err = writer.Write([]byte(chunk))
+		}
+		if !errors.Is(err, ErrOutputLimit) || !strings.Contains(err.Error(), "git list: record over") {
+			t.Errorf("%s: Write() = %v, want %v", name, err, ErrOutputLimit)
+		}
+	}
+}
+
+func TestStreamRecordsStopsGit(t *testing.T) {
+	stop := errors.New("stop")
+	records := 0
+	// yes never ends on its own, so only the broken pipe can stop it.
+	err := coverageRepo(t, "yes line\n").streamRecords("stream lines", '\n', func(string) error {
+		records++
+		return stop
+	})
+	if !errors.Is(err, stop) || records != 1 {
+		t.Fatalf("streamRecords() = %v after %d records, want %v after 1", err, records, stop)
+	}
+}
+
 func TestCommitAuthorReadsNameAndEmail(t *testing.T) {
 	t.Parallel()
 	root := initRepository(t)

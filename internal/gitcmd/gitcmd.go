@@ -25,6 +25,9 @@ const (
 	commandTimeout = 30 * time.Second
 	maxFileBytes   = 64 << 20
 	maxOutputBytes = maxFileBytes
+	// maxRecordBytes bounds one record of streamed Git output. Streamed
+	// commands print object IDs and short note paths.
+	maxRecordBytes = 64 << 10
 	maxNoteBytes   = 16 << 20
 	bylineNotesRef = "refs/notes/byline"
 	globalConfig   = "--global"
@@ -1528,6 +1531,30 @@ func (repo *Repo) runLimitedWithStderr(
 	stdin io.Reader,
 	args ...string,
 ) ([]byte, string, error) {
+	stdout := &limitedBuffer{limit: outputLimit}
+	stderrText, err := repo.runOutput(operation, stdin, stdout, args...)
+	if err != nil {
+		return nil, stderrText, err
+	}
+	return stdout.Bytes(), stderrText, nil
+}
+
+// outputSink takes the standard output of one Git command. outputError
+// reports output that the sink refused.
+type outputSink interface {
+	io.Writer
+	outputError(operation string) error
+}
+
+// runOutput runs one Git command with its standard output going to stdout.
+// A timeout or refused output is reported instead of the exit status,
+// because the kill or the broken pipe it causes can decide that status.
+func (repo *Repo) runOutput(
+	operation string,
+	stdin io.Reader,
+	stdout outputSink,
+	args ...string,
+) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, repo.gitBin, args...)
@@ -1539,20 +1566,18 @@ func (repo *Repo) runLimitedWithStderr(
 		"LC_ALL=C",
 	)
 	command.Stdin = stdin
-	stdout := limitedBuffer{limit: outputLimit}
 	stderr := limitedBuffer{limit: maxOutputBytes}
-	command.Stdout = &stdout
+	command.Stdout = stdout
 	command.Stderr = &stderr
 	err := command.Run()
 	if ctx.Err() != nil {
-		return nil, "", fmt.Errorf("git %s timed out: %w", operation, ctx.Err())
+		return "", fmt.Errorf("git %s timed out: %w", operation, ctx.Err())
 	}
-	if stdout.exceeded || stderr.exceeded {
-		limit := outputLimit
-		if stderr.exceeded {
-			limit = maxOutputBytes
-		}
-		return nil, "", fmt.Errorf("git %s: %w of %d bytes", operation, ErrOutputLimit, limit)
+	if limitErr := stderr.outputError(operation); limitErr != nil {
+		return "", limitErr
+	}
+	if outputErr := stdout.outputError(operation); outputErr != nil {
+		return "", outputErr
 	}
 	stderrText := strings.TrimSpace(stderr.String())
 	if err != nil {
@@ -1561,14 +1586,26 @@ func (repo *Repo) runLimitedWithStderr(
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		}
-		return nil, stderrText, &CommandError{
+		return stderrText, &CommandError{
 			Operation: operation,
 			ExitCode:  exitCode,
 			Stderr:    stderrText,
 			Err:       err,
 		}
 	}
-	return stdout.Bytes(), stderrText, nil
+	return stderrText, nil
+}
+
+// streamRecords runs one Git command and hands each record of its output,
+// cut at delimiter, to handle while Git is still writing. The output is
+// never held at once, so only a single record has a size limit. The first
+// handle error stops Git and is returned as it is.
+func (repo *Repo) streamRecords(operation string, delimiter byte, handle func(string) error, args ...string) error {
+	records := &recordWriter{operation: operation, delimiter: []byte{delimiter}, handle: handle}
+	if _, err := repo.runOutput(operation, nil, records, args...); err != nil {
+		return err
+	}
+	return records.finish()
 }
 
 func gitEnvironment() []string {
@@ -1592,11 +1629,7 @@ type limitedBuffer struct {
 
 func (buffer *limitedBuffer) Write(data []byte) (int, error) {
 	original := len(data)
-	limit := buffer.limit
-	if limit <= 0 {
-		limit = maxOutputBytes
-	}
-	remaining := limit - buffer.data.Len()
+	remaining := buffer.maxBytes() - buffer.data.Len()
 	if remaining <= 0 {
 		buffer.exceeded = true
 		return original, nil
@@ -1615,6 +1648,68 @@ func (buffer *limitedBuffer) Bytes() []byte {
 
 func (buffer *limitedBuffer) String() string {
 	return buffer.data.String()
+}
+
+// outputError reports output that the buffer dropped at its limit.
+func (buffer *limitedBuffer) outputError(operation string) error {
+	if !buffer.exceeded {
+		return nil
+	}
+	return fmt.Errorf("git %s: %w of %d bytes", operation, ErrOutputLimit, buffer.maxBytes())
+}
+
+func (buffer *limitedBuffer) maxBytes() int {
+	if buffer.limit <= 0 {
+		return maxOutputBytes
+	}
+	return buffer.limit
+}
+
+// recordWriter cuts Git output into records and skips empty ones. After the
+// first error it refuses more output, so Git gets a broken pipe and stops.
+type recordWriter struct {
+	operation string
+	delimiter []byte
+	handle    func(string) error
+	partial   []byte
+	err       error
+}
+
+func (writer *recordWriter) Write(data []byte) (int, error) {
+	size := len(data)
+	for writer.err == nil {
+		record, rest, found := bytes.Cut(data, writer.delimiter)
+		writer.partial = append(writer.partial, record...)
+		switch {
+		case len(writer.partial) > maxRecordBytes:
+			writer.err = fmt.Errorf("git %s: record over %d bytes: %w",
+				writer.operation, maxRecordBytes, ErrOutputLimit)
+		case !found:
+			return size, nil
+		default:
+			writer.emit()
+			data = rest
+		}
+	}
+	return 0, writer.err
+}
+
+// finish hands over a last record that Git did not end with the delimiter.
+func (writer *recordWriter) finish() error {
+	writer.emit()
+	return writer.err
+}
+
+func (writer *recordWriter) emit() {
+	record := string(writer.partial)
+	writer.partial = writer.partial[:0]
+	if record != "" {
+		writer.err = writer.handle(record)
+	}
+}
+
+func (writer *recordWriter) outputError(string) error {
+	return writer.err
 }
 
 func splitNUL(data []byte) []string {

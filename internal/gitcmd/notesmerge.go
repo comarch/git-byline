@@ -101,30 +101,32 @@ func (repo *Repo) NoteBlobs(notesCommit string) (map[string]string, error) {
 	if !model.ValidObjectID(notesCommit) {
 		return nil, errors.New("invalid notes commit object ID")
 	}
-	out, err := repo.run("list notes tree", nil, "ls-tree", "-r", "-z", "--full-tree", notesCommit)
+	notes := map[string]string{}
+	err := repo.streamRecords("list notes tree", 0, func(record string) error {
+		return addNoteBlob(notes, record, len(notesCommit))
+	}, "ls-tree", "-r", "-z", "--full-tree", notesCommit)
 	if err != nil {
 		return nil, err
 	}
-	notes := map[string]string{}
-	for _, record := range strings.Split(string(out), "\x00") {
-		if record == "" {
-			continue
-		}
-		meta, path, found := strings.Cut(record, "\t")
-		fields := strings.Split(meta, " ")
-		if !found || len(fields) != 3 {
-			return nil, errors.New("git returned an invalid notes tree entry")
-		}
-		object, isNote := noteObject(path, len(notesCommit))
-		if !isNote || fields[0] != "100644" || fields[1] != "blob" || !model.ValidObjectID(fields[2]) {
-			return nil, fmt.Errorf("notes tree entry %q is not a note", path)
-		}
-		if _, duplicate := notes[object]; duplicate {
-			return nil, fmt.Errorf("notes tree has two notes for object %s", object)
-		}
-		notes[object] = fields[2]
-	}
 	return notes, nil
+}
+
+// addNoteBlob adds one ls-tree -r -z record of a notes tree to notes.
+func addNoteBlob(notes map[string]string, record string, length int) error {
+	meta, path, found := strings.Cut(record, "\t")
+	fields := strings.Split(meta, " ")
+	if !found || len(fields) != 3 {
+		return errors.New("git returned an invalid notes tree entry")
+	}
+	object, isNote := noteObject(path, length)
+	if !isNote || fields[0] != "100644" || fields[1] != "blob" || !model.ValidObjectID(fields[2]) {
+		return fmt.Errorf("notes tree entry %q is not a note", path)
+	}
+	if _, duplicate := notes[object]; duplicate {
+		return fmt.Errorf("notes tree has two notes for object %s", object)
+	}
+	notes[object] = fields[2]
+	return nil
 }
 
 // noteObject returns the object ID that a notes tree path names. Fanout
@@ -158,13 +160,23 @@ func fanoutDirectory(path string, length int) bool {
 	return true
 }
 
+// notesHistoryBatchSize is how many notes history objects one cat-file
+// call checks.
+const notesHistoryBatchSize = 50000
+
 // CheckNotesHistory checks every object that the notes commit tip brings
 // along beyond the notes commit exclude, or its whole history when exclude
 // is empty. Only commits, root and fanout trees, and note blobs pass, each
 // up to the note size limit. So fetched notes cannot carry other files or
 // large blobs in older commits into refs/notes/byline and on to the next
-// push. A missing object fails instead of being fetched lazily.
+// push. A missing object fails instead of being fetched lazily. The first
+// sync lists the whole remote history, so the object list is streamed and
+// checked in batches rather than read as one bounded Git output.
 func (repo *Repo) CheckNotesHistory(tip, exclude string) error {
+	return repo.checkNotesHistory(tip, exclude, notesHistoryBatchSize)
+}
+
+func (repo *Repo) checkNotesHistory(tip, exclude string, batchSize int) error {
 	if !model.ValidObjectID(tip) || (exclude != "" && !model.ValidObjectID(exclude)) {
 		return errors.New("invalid notes history object ID")
 	}
@@ -172,55 +184,64 @@ func (repo *Repo) CheckNotesHistory(tip, exclude string) error {
 	if exclude != "" {
 		args = append(args, "--not", exclude)
 	}
-	out, err := repo.run("list notes history objects", nil, args...)
-	if err != nil {
+	batch := notesHistoryBatch{repo: repo, length: len(tip), size: batchSize}
+	if err := repo.streamRecords("list notes history objects", '\n', batch.add, args...); err != nil {
 		return err
 	}
-	ids, paths, err := notesHistoryObjects(out)
-	if err != nil {
-		return err
+	return batch.check()
+}
+
+// notesHistoryBatch collects notes history objects from rev-list and checks
+// them with one cat-file call each time it holds size of them.
+type notesHistoryBatch struct {
+	repo   *Repo
+	length int
+	size   int
+	ids    []string
+	paths  []string
+}
+
+// add takes one line of rev-list --objects --missing=print output. rev-list
+// cuts a name at its first newline, so every line holds one object and a
+// name with a newline cannot add a line of its own.
+func (batch *notesHistoryBatch) add(line string) error {
+	if missing, found := strings.CutPrefix(line, "?"); found {
+		return fmt.Errorf("notes history object %s is missing", missing)
 	}
-	if len(ids) == 0 {
+	id, path, _ := strings.Cut(line, " ")
+	if !model.ValidObjectID(id) {
+		return errors.New("git returned an invalid notes history object ID")
+	}
+	batch.ids = append(batch.ids, id)
+	batch.paths = append(batch.paths, path)
+	if len(batch.ids) < batch.size {
 		return nil
 	}
-	out, err = repo.run("read notes history objects", strings.NewReader(strings.Join(ids, "\n")+"\n"),
+	return batch.check()
+}
+
+// check reads the type and size of the collected objects, checks each of
+// them, and empties the batch.
+func (batch *notesHistoryBatch) check() error {
+	if len(batch.ids) == 0 {
+		return nil
+	}
+	out, err := batch.repo.run("read notes history objects", strings.NewReader(strings.Join(batch.ids, "\n")+"\n"),
 		"cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)")
 	if err != nil {
 		return err
 	}
 	records := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
-	if len(records) != len(ids) {
+	if len(records) != len(batch.ids) {
 		return errors.New("git returned an incomplete notes history object list")
 	}
 	for index, record := range records {
-		if err := checkNotesHistoryObject(record, ids[index], paths[index], len(tip)); err != nil {
+		if err := checkNotesHistoryObject(record, batch.ids[index], batch.paths[index], batch.length); err != nil {
 			return err
 		}
 	}
+	batch.ids, batch.paths = batch.ids[:0], batch.paths[:0]
 	return nil
-}
-
-// notesHistoryObjects splits rev-list --objects --missing=print output into
-// object IDs and their paths. rev-list cuts a name at its first newline, so
-// every line holds one object and a name with a newline cannot add a line
-// of its own.
-func notesHistoryObjects(out []byte) ([]string, []string, error) {
-	var ids, paths []string
-	for _, line := range strings.Split(string(out), "\n") {
-		if line == "" {
-			continue
-		}
-		if missing, found := strings.CutPrefix(line, "?"); found {
-			return nil, nil, fmt.Errorf("notes history object %s is missing", missing)
-		}
-		id, path, _ := strings.Cut(line, " ")
-		if !model.ValidObjectID(id) {
-			return nil, nil, errors.New("git returned an invalid notes history object ID")
-		}
-		ids = append(ids, id)
-		paths = append(paths, path)
-	}
-	return ids, paths, nil
 }
 
 func checkNotesHistoryObject(record, id, path string, length int) error {
@@ -254,26 +275,32 @@ func checkNotesHistoryObject(record, id, path string, length int) error {
 // ListNotes maps every object that refs/notes/byline annotates to its note
 // blob as git notes list reads the tree, the way every Git command sees it.
 func (repo *Repo) ListNotes() (map[string]string, error) {
-	out, err := repo.run("list attribution notes", nil, "notes", notesRefArg, "list")
+	notes := map[string]string{}
+	err := repo.streamRecords("list attribution notes", '\n', func(line string) error {
+		return addListedNote(notes, line)
+	}, "notes", notesRefArg, "list")
 	if err != nil {
 		return nil, err
 	}
-	fields := strings.Fields(string(out))
-	if len(fields)%2 != 0 {
-		return nil, errors.New("git returned an invalid notes list")
-	}
-	notes := make(map[string]string, len(fields)/2)
-	for index := 0; index < len(fields); index += 2 {
-		blob, object := fields[index], fields[index+1]
-		if !model.ValidObjectID(blob) || !model.ValidObjectID(object) {
-			return nil, errors.New("git returned an invalid notes list entry")
-		}
-		if _, duplicate := notes[object]; duplicate {
-			return nil, fmt.Errorf("git listed two notes for object %s", object)
-		}
-		notes[object] = blob
-	}
 	return notes, nil
+}
+
+// addListedNote adds one line of git notes list output, the note blob and
+// the annotated object, to notes.
+func addListedNote(notes map[string]string, line string) error {
+	fields := strings.Fields(line)
+	if len(fields) != 2 {
+		return errors.New("git returned an invalid notes list")
+	}
+	blob, object := fields[0], fields[1]
+	if !model.ValidObjectID(blob) || !model.ValidObjectID(object) {
+		return errors.New("git returned an invalid notes list entry")
+	}
+	if _, duplicate := notes[object]; duplicate {
+		return fmt.Errorf("git listed two notes for object %s", object)
+	}
+	notes[object] = blob
+	return nil
 }
 
 // NotesMergeInProgress reports an unfinished git notes merge in this
