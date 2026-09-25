@@ -2306,6 +2306,12 @@ if [ "$FAKE_GIT_MODE" = "ref-error" ] &&
   printf '%s\n' 'forced ref failure' >&2
   exit 2
 fi
+if [ "$FAKE_GIT_MODE" = "autostash-ref-error" ] &&
+   [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ] &&
+   [ "$3" = "MERGE_AUTOSTASH" ]; then
+  printf '%s\n' 'forced autostash ref failure' >&2
+  exit 2
+fi
 if [ "$FAKE_GIT_MODE" = "update-ref-error" ] &&
    [ "$1" = "update-ref" ]; then
   printf '%s\n' 'forced update-ref failure' >&2

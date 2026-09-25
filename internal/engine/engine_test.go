@@ -829,6 +829,69 @@ func TestRangesRejectsInvalidAttribution(t *testing.T) {
 	}
 }
 
+func TestKeptAddedLines(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		base    string
+		changed string
+		target  string
+		added   int
+		kept    int
+	}{
+		{"applied as is", "a\nb\n", "a\nX\nb\n", "a\nX\nb\n", 1, 1},
+		{"merged with new lines", "a\nb\nc\nd\n", "a\nX\nb\nc\nd\n", "a\nX\nb\nc\nd\nY\n", 1, 1},
+		{"merged with a changed line", "a\nb\nc\nd\n", "a\nX\nb\nc\nd\n", "a\nX\nb\nc\nD\n", 1, 1},
+		{"dropped", "a\nb\n", "a\nX\nb\n", "a\nb\n", 1, 0},
+		{"partly kept", "a\nb\n", "a\nX\nb\nY\n", "a\nX\nb\n", 2, 1},
+		{"reindented", "a\n  b\nc\n", "a\n    b\nc\n", "a\n  b\nc\n", 1, 0},
+		{"duplicate of a base line", "a\n", "a\na\n", "a\n", 1, 0},
+		{"deletion only", "a\nb\n", "a\n", "a\nb\n", 0, 0},
+		{"new file", "", "x\ny\n", "x\ny\n", 2, 2},
+		{"deleted file", "a\n", "", "", 0, 0},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			added, kept, err := KeptAddedLines(
+				[]byte(test.base), []byte(test.changed), []byte(test.target), NewMatcherBudget(1000),
+			)
+			if err != nil || added != test.added || kept != test.kept {
+				t.Fatalf("KeptAddedLines() = %d, %d, %v, want %d, %d", added, kept, err, test.added, test.kept)
+			}
+		})
+	}
+}
+
+func TestKeptAddedLinesErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		base    string
+		changed string
+		target  string
+		budget  *MatcherBudget
+		want    string
+	}{
+		{"binary base", "a\x00", "a\n", "a\n", nil, "base content"},
+		{"binary changed", "a\n", "a\x00", "a\n", nil, "changed content"},
+		{"binary target", "a\n", "a\n", "a\x00", nil, "target content"},
+		{"base budget", "a\nb\nc\n", "a\nX\nc\n", "a\nX\nc\n", NewMatcherBudget(0), ErrMatcherBudget.Error()},
+		{"target budget", "a\n", "a\nX\n", "b\nY\n", NewMatcherBudget(0), ErrMatcherBudget.Error()},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := KeptAddedLines([]byte(test.base), []byte(test.changed), []byte(test.target), test.budget)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("KeptAddedLines() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 // TestMatcherGuards covers the matcher helpers directly: greedy fallback
 // beyond the LCS cell ceiling, whitespace-gap budget exhaustion, and the
 // nil-budget reserve fast path.

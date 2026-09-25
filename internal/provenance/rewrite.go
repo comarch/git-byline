@@ -22,6 +22,11 @@ import (
 const stashNotesRef = "refs/notes/byline-stash"
 const stashOwnershipRef = "refs/notes/byline-stash-owner"
 
+// autostashRef holds the stash commit of a merge or pull --autostash. Git
+// 2.44 and later update it through reference transactions; older versions
+// write a plain file that no hook reports.
+const autostashRef = "MERGE_AUTOSTASH"
+
 const (
 	maxRewriteBlobBytes    = 16 << 20
 	maxRewriteMatcherCells = 4_000_000
@@ -915,7 +920,7 @@ func HandleReferenceTransaction(repo *gitcmd.Repo, input io.Reader, phase string
 			result.Mapped += value.Mapped
 			result.Written += value.Written
 			result.Warnings = append(result.Warnings, value.Warnings...)
-		case update.Ref == "refs/stash":
+		case update.Ref == "refs/stash" || update.Ref == autostashRef:
 			value, err := handleStashMove(repo, update)
 			if err != nil {
 				return RewriteResult{}, err
@@ -1139,8 +1144,14 @@ func headFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (bool, error) 
 // Stale pending ranges are dropped, so the next commit reads those paths
 // from the new tip. Replaying stale checkpoints over the incoming content
 // would attribute lines they never produced, so they move to their own
-// lane, which is consumed at once.
+// lane, which is consumed at once. Consumed checkpoints of stashed edits
+// are saved in the stash note first.
 func handleFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult, error) {
+	commonLock, err := lock.Acquire(filepath.Join(repo.CommonDir, "byline", "notes.lock"), lockTimeout)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	defer commonLock.Release()
 	dataStore := store.New(repo.GitDir)
 	held, err := lock.Acquire(dataStore.LockPath(), lockTimeout)
 	if err != nil {
@@ -1162,6 +1173,13 @@ func handleFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResu
 	split, err := splitFastForwardCheckpoints(repo, update, branchRef, records, state)
 	if err != nil {
 		return RewriteResult{}, err
+	}
+	var saved RewriteResult
+	if len(split.touched) > 0 && !split.legacy {
+		saved, err = saveStashedCheckpoints(repo, update.Old, split.touched, split.untouched)
+		if err != nil {
+			return RewriteResult{}, err
+		}
 	}
 	originalState := state
 	state.Pending.Files = unchangedPendingFiles(state.Pending.Files, split.changed)
@@ -1214,7 +1232,9 @@ func handleFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResu
 		}
 		return RewriteResult{}, moveErr
 	}
+	result.Written += saved.Written
 	result.Warnings = append(result.Warnings, warnings...)
+	result.Warnings = append(result.Warnings, saved.Warnings...)
 	return result, nil
 }
 
@@ -1377,11 +1397,17 @@ func annotationBoundary(repo *gitcmd.Repo, commit string) string {
 	return ""
 }
 
+// handleStashMove follows refs/stash and MERGE_AUTOSTASH updates. A new
+// value is a stash push; a deleted value is a pop, drop, or applied
+// autostash.
 func handleStashMove(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult, error) {
 	if update.New == "" || isZero(update.New) {
+		if update.Ref == autostashRef {
+			return handleAutostashDrop(repo, update.Old)
+		}
 		return handleStashDrop(repo, update.Old)
 	}
-	if update.Old != "" && !isZero(update.Old) {
+	if update.Ref != autostashRef && update.Old != "" && !isZero(update.Old) {
 		if _, oldFound, err := repo.ReadNoteRef(stashNotesRef, update.Old); err != nil {
 			return RewriteResult{}, err
 		} else if oldFound {
@@ -1403,6 +1429,25 @@ func handleStashMove(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult
 		return RewriteResult{}, err
 	}
 	defer held.Release()
+	return writeStashNoteLocked(repo, update, dataStore)
+}
+
+// writeStashNoteLocked moves the pending ranges of stashed paths into the
+// stash note. Checkpoints stay live and replay at the next commit, so the
+// note must not repeat them; a fast-forward that consumes them saves them
+// into the note first.
+func writeStashNoteLocked(
+	repo *gitcmd.Repo,
+	update rewrite.RefUpdate,
+	dataStore store.Store,
+) (RewriteResult, error) {
+	// A conflicting autostash moves into the stash list with the note that
+	// its MERGE_AUTOSTASH update and the pull already wrote.
+	if _, found, err := repo.ReadNoteRef(stashNotesRef, update.New); err != nil {
+		return RewriteResult{}, err
+	} else if found {
+		return RewriteResult{}, nil
+	}
 	state, err := dataStore.ReadState()
 	if err != nil {
 		return RewriteResult{}, err
@@ -1423,9 +1468,13 @@ func handleStashMove(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult
 	for path, pending := range state.Pending.Files {
 		if stashed[path] {
 			files[path] = model.NoteFile{Blob: pending.Blob, Ranges: pending.Ranges}
-			continue
 		}
-		remaining[path] = pending
+		// Git applies an autostash again or keeps it in the stash list,
+		// and git merge --abort deletes MERGE_AUTOSTASH before it applies
+		// the stash, so autostashed ranges also stay pending.
+		if !stashed[path] || update.Ref == autostashRef {
+			remaining[path] = pending
+		}
 	}
 	if len(files) == 0 {
 		return RewriteResult{}, nil
@@ -1443,27 +1492,207 @@ func handleStashMove(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult
 	if err := writeStashOwnership(repo, update.New, data); err != nil {
 		return RewriteResult{}, err
 	}
-	state.Pending.Files = remaining
-	if err := writeRewriteState(repo, dataStore, state); err != nil {
-		return RewriteResult{}, err
+	if len(remaining) != len(state.Pending.Files) {
+		state.Pending.Files = remaining
+		if err := writeRewriteState(repo, dataStore, state); err != nil {
+			return RewriteResult{}, err
+		}
 	}
 	return RewriteResult{Written: 1}, nil
+}
+
+// checkpointPaths returns every path the records snapshot.
+func checkpointPaths(records []model.Checkpoint) map[string]bool {
+	paths := map[string]bool{}
+	for _, record := range records {
+		for _, file := range record.Files {
+			paths[file.Path] = true
+		}
+	}
+	return paths
+}
+
+// saveStashedCheckpoints saves what the touched checkpoints attribute into
+// the note of the stash that holds their paths, before the fast-forward
+// consumes them. The pending autostash holds the newest edits, so it goes
+// before the top stash entry. Only a stash taken on the old tip holds edits
+// that the checkpoints describe. A path that untouched checkpoints also
+// snapshot is skipped: those stay live, and replaying only part of its
+// checkpoints would put them out of order.
+func saveStashedCheckpoints(
+	repo *gitcmd.Repo,
+	oldTip string,
+	touched []model.Checkpoint,
+	untouched []model.Checkpoint,
+) (RewriteResult, error) {
+	paths := checkpointPaths(touched)
+	for path := range checkpointPaths(untouched) {
+		delete(paths, path)
+	}
+	var result RewriteResult
+	for _, ref := range []string{autostashRef, "refs/stash"} {
+		stash, exists, err := repo.RefValue(ref)
+		if err != nil {
+			return RewriteResult{}, err
+		}
+		if !exists {
+			continue
+		}
+		parent, err := repo.Parent(stash)
+		if err != nil {
+			return RewriteResult{}, err
+		}
+		if parent != oldTip {
+			continue
+		}
+		stashPaths, err := repo.StashPaths(stash)
+		if err != nil {
+			return RewriteResult{}, err
+		}
+		var held []string
+		for _, path := range stashPaths {
+			if paths[path] {
+				held = append(held, path)
+				delete(paths, path)
+			}
+		}
+		if len(held) == 0 {
+			continue
+		}
+		value, err := saveStashNote(repo, stash, oldTip, touched, held)
+		if err != nil {
+			return RewriteResult{}, err
+		}
+		result.Written += value.Written
+		result.Warnings = append(result.Warnings, value.Warnings...)
+	}
+	return result, nil
+}
+
+// saveStashNote adds the attribution of records for paths to the stash
+// note. A different note that git-byline does not own stays untouched.
+func saveStashNote(
+	repo *gitcmd.Repo,
+	stash string,
+	oldTip string,
+	records []model.Checkpoint,
+	paths []string,
+) (RewriteResult, error) {
+	existing, found, err := repo.ReadNoteRef(stashNotesRef, stash)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	note := model.Note{Version: model.NoteVersion, Files: map[string]model.NoteFile{}}
+	if found {
+		owned, err := stashNoteOwned(repo, stash, existing)
+		if err != nil {
+			return RewriteResult{}, err
+		}
+		decoded, decodeErr := notes.Decode(existing)
+		if !owned || decodeErr != nil {
+			return RewriteResult{Warnings: []string{
+				fmt.Sprintf("skipped saving consumed checkpoints in unowned or invalid stash attribution note on %s", stash),
+			}}, nil
+		}
+		note = decoded
+	}
+	identity, err := commitIdentity(repo, stash)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	// Stash push moved the pending ranges of stashed paths into the note,
+	// so the note is the pending state the checkpoints replay onto.
+	base := model.State{Pending: model.PendingState{Files: make(map[string]model.PendingFile, len(note.Files))}}
+	for path, file := range note.Files {
+		base.Pending.Files[path] = model.PendingFile{Blob: file.Blob, Ranges: file.Ranges}
+	}
+	var result RewriteResult
+	saved := 0
+	for _, path := range paths {
+		file, exists, err := stashedFile(repo, stash, oldTip, path, base, records, identity)
+		if err != nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("skipped saving consumed checkpoints for stash path %s: %v", path, err))
+			continue
+		}
+		if exists {
+			note.Files[path] = file
+			saved++
+		}
+	}
+	if saved == 0 {
+		return result, nil
+	}
+	data, err := notes.Encode(note)
+	if err != nil {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("skipped saving consumed checkpoints in stash attribution note on %s: %v", stash, err))
+		return result, nil
+	}
+	if found {
+		// A note changed since the read stays, and the write below fails.
+		if _, err := removeStashNote(repo, stash, existing, true); err != nil {
+			return RewriteResult{}, err
+		}
+	}
+	if err := repo.WriteNoteRef(stashNotesRef, stash, data); err != nil {
+		return RewriteResult{}, fmt.Errorf("write stash attribution: %w", err)
+	}
+	if err := writeStashOwnership(repo, stash, data); err != nil {
+		return RewriteResult{}, err
+	}
+	result.Written++
+	return result, nil
+}
+
+// stashedFile replays records for path the way the next commit would have,
+// then projects the result onto the stashed content. Lines no checkpoint
+// explains belong to the stash author, as annotate gives them to the commit
+// author. It reports false when the stash deletes path.
+func stashedFile(
+	repo *gitcmd.Repo,
+	stash string,
+	oldTip string,
+	path string,
+	base model.State,
+	records []model.Checkpoint,
+	identity string,
+) (model.NoteFile, bool, error) {
+	blob, exists, err := repo.BlobID(stash, path)
+	if err != nil || !exists {
+		return model.NoteFile{}, false, err
+	}
+	content, err := repo.ReadBlob(blob)
+	if err != nil {
+		return model.NoteFile{}, false, err
+	}
+	initial, _, err := initialSnapshot(repo, base, oldTip, path)
+	if err != nil {
+		return model.NoteFile{}, false, err
+	}
+	transitions, err := transitionsFor(repo, records, path, path, identity)
+	if err != nil {
+		return model.NoteFile{}, false, err
+	}
+	replayed, err := engine.Replay(initial, transitions)
+	if err != nil {
+		return model.NoteFile{}, false, err
+	}
+	stashed, err := engine.Project(replayed, content, model.Attribution{Author: model.AuthorHuman, Identity: identity})
+	if err != nil {
+		return model.NoteFile{}, false, err
+	}
+	ranges, err := stashed.Ranges()
+	return model.NoteFile{Blob: blob, Ranges: ranges}, err == nil, err
 }
 
 func handleStashDrop(repo *gitcmd.Repo, stash string) (RewriteResult, error) {
 	if stash == "" || isZero(stash) {
 		return RewriteResult{}, nil
 	}
-	paths, err := repo.StashPaths(stash)
-	if err != nil {
-		return RewriteResult{}, err
-	}
-	applied, err := repo.StashApplied(stash, paths)
-	if err != nil {
-		return RewriteResult{}, err
-	}
-	if applied {
-		return HandleStashApply(repo, stash, false)
+	restored, result, err := restoreAppliedStash(repo, stash)
+	if err != nil || restored {
+		return result, err
 	}
 	commonLock, err := lock.Acquire(filepath.Join(repo.CommonDir, "byline", "notes.lock"), lockTimeout)
 	if err != nil {
@@ -1476,6 +1705,118 @@ func handleStashDrop(repo *gitcmd.Repo, stash string) (RewriteResult, error) {
 		return deleteAllDroppedStashNotesLocked(repo)
 	}
 	return deleteDroppedStashNote(repo, stash)
+}
+
+// handleAutostashDrop follows the MERGE_AUTOSTASH delete that ends a merge or
+// pull --autostash. It touches only the note of that autostash.
+func handleAutostashDrop(repo *gitcmd.Repo, stash string) (RewriteResult, error) {
+	if stash == "" || isZero(stash) {
+		return RewriteResult{}, nil
+	}
+	// An autostash that Git could not apply is now the top stash entry,
+	// which keeps its note for a later pop.
+	if top, exists, err := repo.RefValue("refs/stash"); err != nil {
+		return RewriteResult{}, err
+	} else if exists && top == stash {
+		return RewriteResult{}, nil
+	}
+	restored, result, err := restoreAppliedStash(repo, stash)
+	if err != nil || restored {
+		return result, err
+	}
+	commonLock, err := lock.Acquire(filepath.Join(repo.CommonDir, "byline", "notes.lock"), lockTimeout)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	defer commonLock.Release()
+	return deleteDroppedStashNote(repo, stash)
+}
+
+// restoreAppliedStash restores the stash note into pending state when the
+// worktree holds the stash content, as after git stash pop or an applied
+// autostash. It reports whether the stash was applied.
+func restoreAppliedStash(repo *gitcmd.Repo, stash string) (bool, RewriteResult, error) {
+	paths, err := repo.StashPaths(stash)
+	if err != nil {
+		return false, RewriteResult{}, err
+	}
+	applied, err := repo.StashApplied(stash, paths)
+	if err != nil {
+		return false, RewriteResult{}, err
+	}
+	if !applied {
+		applied, err = stashMerged(repo, stash, paths)
+		if err != nil {
+			return false, RewriteResult{}, err
+		}
+	}
+	if !applied {
+		return false, RewriteResult{}, nil
+	}
+	result, err := HandleStashApply(repo, stash, false)
+	return true, result, err
+}
+
+// stashMerged reports whether the worktree holds a stash that Git merged
+// with newer commits, as when a pull changed stashed files before the pop.
+// Every stashed path must still hold, in order, each line the stash added to
+// it. A path the stash adds no line to proves nothing either way, so at
+// least one path must add a line. Content that cannot be compared within the
+// budgets counts as not applied.
+func stashMerged(repo *gitcmd.Repo, stash string, paths []string) (bool, error) {
+	parent, err := repo.Parent(stash)
+	if err != nil {
+		return false, err
+	}
+	matcherBudget := engine.NewMatcherBudget(maxRewriteMatcherCells)
+	blobCache := newRewriteBlobCache()
+	proven := false
+	for _, path := range paths {
+		stashed, stashExists, err := revisionContent(repo, blobCache, stash, path)
+		if err != nil {
+			return false, unlessBudget(err)
+		}
+		worktree, worktreeExists, _, err := repo.WorktreeFile(path)
+		if err != nil {
+			return false, err
+		}
+		if stashExists != worktreeExists {
+			return false, nil
+		}
+		if !stashExists {
+			continue
+		}
+		base, _, err := revisionContent(repo, blobCache, parent, path)
+		if err != nil {
+			return false, unlessBudget(err)
+		}
+		added, kept, err := engine.KeptAddedLines(base, stashed, worktree, matcherBudget)
+		if err != nil || kept < added {
+			return false, nil
+		}
+		proven = proven || added > 0
+	}
+	return proven, nil
+}
+
+// revisionContent reads path at revision through the blob cache. It reports
+// false when revision lacks path.
+func revisionContent(repo *gitcmd.Repo, blobCache *rewriteBlobCache, revision, path string) ([]byte, bool, error) {
+	blob, exists, err := repo.BlobID(revision, path)
+	if err != nil || !exists {
+		return nil, false, err
+	}
+	content, err := blobCache.Read(repo, blob)
+	return content, err == nil, err
+}
+
+// unlessBudget drops a resource budget error, so content too large to
+// compare counts as a mismatch instead of a failure.
+func unlessBudget(err error) error {
+	if errors.Is(err, errRewriteBudget) {
+		return nil
+	}
+	return err
 }
 
 // HandleStashApply restores stash attribution to pending state.
@@ -1538,13 +1879,22 @@ func handleStashApplyLocked(
 	blobCache := newRewriteBlobCache()
 	result := RewriteResult{}
 	projectionIncomplete := false
-	for path, file := range note.Files {
+	paths := make([]string, 0, len(note.Files))
+	for path := range note.Files {
+		paths = append(paths, path)
+	}
+	// The budgets are shared, so a fixed order decides which paths fit.
+	sort.Strings(paths)
+	for _, path := range paths {
+		file := note.Files[path]
 		content, exists, normalized, readErr := repo.WorktreeFile(path)
 		if readErr != nil || !exists {
 			continue
 		}
-		projected, projectErr := projectNoteFileWithBudgetAndCache(
+		projected, projectErr := projectStashFile(
 			repo,
+			head,
+			path,
 			file,
 			content,
 			matcherBudget,
@@ -1596,6 +1946,68 @@ func handleStashApplyLocked(
 			fmt.Sprintf("kept stash attribution note on %s after incomplete projection", stashCommit))
 	}
 	return result, nil
+}
+
+// projectStashFile maps a stash note file onto worktree content over the
+// attribution HEAD gives path. A pull can merge new lines into a stashed
+// path before the pop, and those lines keep the note of their commit
+// instead of becoming untracked.
+func projectStashFile(
+	repo *gitcmd.Repo,
+	head string,
+	path string,
+	file model.NoteFile,
+	content []byte,
+	budget *engine.MatcherBudget,
+	blobCache *rewriteBlobCache,
+) ([]model.Range, error) {
+	var sources []engine.Snapshot
+	if layer, found, err := headLayer(repo, head, path, blobCache); err != nil {
+		return nil, err
+	} else if found {
+		sources = append(sources, layer)
+	}
+	stashContent, err := blobCache.Read(repo, file.Blob)
+	if err != nil {
+		return nil, err
+	}
+	stashed, err := engine.NewSnapshot(stashContent, file.Ranges)
+	if err != nil {
+		return nil, err
+	}
+	projected, err := engine.ProjectLayeredWithBudget(
+		append(sources, stashed),
+		content,
+		model.Attribution{Author: model.AuthorUntracked},
+		budget,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return projected.Ranges()
+}
+
+// headLayer returns the noted attribution of path at head. It reports false
+// when head lacks path, no note covers it, or its content is unsupported,
+// because untracked lines add nothing over the projection fallback.
+func headLayer(repo *gitcmd.Repo, head, path string, blobCache *rewriteBlobCache) (engine.Snapshot, bool, error) {
+	if head == "" {
+		return engine.Snapshot{}, false, nil
+	}
+	blob, exists, err := repo.BlobID(head, path)
+	if err != nil || !exists {
+		return engine.Snapshot{}, false, err
+	}
+	file, found, _, err := notes.FindFile(repo, head, path, blob)
+	if err != nil || !found {
+		return engine.Snapshot{}, false, err
+	}
+	content, err := blobCache.Read(repo, blob)
+	if err != nil {
+		return engine.Snapshot{}, false, err
+	}
+	layer, err := engine.NewSnapshot(content, file.Ranges)
+	return layer, err == nil, nil
 }
 
 func projectNoteFileWithBudgetAndCache(
@@ -1728,8 +2140,16 @@ func deleteAllDroppedStashNotesLocked(repo *gitcmd.Repo) (RewriteResult, error) 
 	if err != nil {
 		return RewriteResult{}, err
 	}
+	// The autostash of a merge that is still open is not in the stash list.
+	autostash, _, err := repo.RefValue(autostashRef)
+	if err != nil {
+		return RewriteResult{}, err
+	}
 	var result RewriteResult
 	for _, commit := range commits {
+		if commit == autostash {
+			continue
+		}
 		value, removeErr := deleteDroppedStashNote(repo, commit)
 		if removeErr != nil {
 			return RewriteResult{}, removeErr

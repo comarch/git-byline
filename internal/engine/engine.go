@@ -266,6 +266,51 @@ func projectLayeredWithBudget(
 	return Snapshot{Lines: lines, Attributions: attrs}, nil
 }
 
+// KeptAddedLines counts the lines that changed adds to base and how many of
+// them target still holds, in order. Only exact matches count, because a
+// clean merge takes the lines of each side verbatim.
+func KeptAddedLines(base, changed, target []byte, budget *MatcherBudget) (int, int, error) {
+	baseLines, err := SplitLines(base)
+	if err != nil {
+		return 0, 0, fmt.Errorf("base content: %w", err)
+	}
+	changedLines, err := SplitLines(changed)
+	if err != nil {
+		return 0, 0, fmt.Errorf("changed content: %w", err)
+	}
+	targetLines, err := SplitLines(target)
+	if err != nil {
+		return 0, 0, fmt.Errorf("target content: %w", err)
+	}
+	fromBase, err := exactPairsBudget(baseLines, changedLines, budget)
+	if err != nil {
+		return 0, 0, err
+	}
+	inTarget, err := exactPairsBudget(changedLines, targetLines, budget)
+	if err != nil {
+		return 0, 0, err
+	}
+	carried := make([]bool, len(changedLines))
+	for _, pair := range fromBase {
+		carried[pair.new] = true
+	}
+	held := make([]bool, len(changedLines))
+	for _, pair := range inTarget {
+		held[pair.old] = true
+	}
+	added, kept := 0, 0
+	for index := range changedLines {
+		if carried[index] {
+			continue
+		}
+		added++
+		if held[index] {
+			kept++
+		}
+	}
+	return added, kept, nil
+}
+
 func projectLinesWithOverrideAndPairs(
 	source Snapshot,
 	target []string,

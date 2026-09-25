@@ -143,6 +143,20 @@ func TestReferenceFilterAndStashInput(t *testing.T) {
 	if err != nil || !relevant {
 		t.Fatalf("branch filter = %t, %v", relevant, err)
 	}
+	for _, ref := range []string{"refs/stash", "MERGE_AUTOSTASH"} {
+		relevant, err = HasRelevantReference(strings.NewReader(
+			strings.Repeat("0", 40) + " " + newCommit + " " + ref + "\n",
+		))
+		if err != nil || !relevant {
+			t.Fatalf("%s filter = %t, %v", ref, relevant, err)
+		}
+	}
+	relevant, err = HasRelevantReference(strings.NewReader(
+		oldCommit + " " + newCommit + " ORIG_HEAD\n",
+	))
+	if err != nil || relevant {
+		t.Fatalf("ORIG_HEAD filter = %t, %v", relevant, err)
+	}
 	stash, err := ParseStashApply(
 		strings.NewReader(newCommit+" 1\n"),
 		40,

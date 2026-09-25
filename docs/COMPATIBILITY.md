@@ -129,7 +129,8 @@ Track native support in
 | Amend | Supported | `post-rewrite` and `post-commit` | Unstaged and partially staged amend |
 | Cherry-pick | Supported | `post-commit` | Normal `-x` cherry-pick; `--no-commit` requires a commit message marker |
 | Merge | Supported | `post-merge` and `post-commit` | First parent authoritative; conflict resolution is untracked |
-| Fast-forward pull or merge | Supported | `reference-transaction` | Pulled commits keep their original notes; pending work moves to the new tip |
+| Fast-forward pull or merge | Supported | `reference-transaction` | Pulled commits keep their original notes; pending work moves to the new tip; stashed work keeps its attribution in the stash note |
+| Pull or merge with `--autostash` | Supported | `reference-transaction` | Git 2.44 or later; older Git needs the manual stash apply after a fast-forward |
 | Pull with rebase | Supported | `post-rewrite` | Rewritten local commits |
 | Reset soft | Supported | `reference-transaction` | Pending ranges reproject onto worktree |
 | Reset mixed | Supported | `reference-transaction` | Pending ranges reproject onto worktree |
@@ -138,13 +139,16 @@ Track native support in
 | Branch switch | Supported | `post-checkout` | Pending ranges reproject onto checked-out worktree |
 | Stash push | Supported | `reference-transaction` | Hook stores only paths in the stash commit under `refs/notes/byline-stash` |
 | Stash apply | Supported | `git byline rewrite --mode stash-apply` | Manual stdin command: `<stash-commit> 1`; restores pending ranges and keeps note |
-| Stash pop | Supported | `reference-transaction` | Hook detects applied worktree content, restores pending ranges, and compare-deletes owned note |
+| Stash pop | Supported | `reference-transaction` | Hook detects applied or merged worktree content, restores pending ranges, and compare-deletes owned note; manual when older entries remain |
 | Stash pathspec | Supported | `reference-transaction` | Hook stores and restores only selected stash paths |
 
 Run `git byline rewrite --mode <mode> --hook-input stdin` only when a Git hook
 does not run automatically, including path-limited reset and stash apply. For
 manual stash apply, stdin is `<full-stash-commit> 1`; use `0` when the note
-should be removed after a manual pop.
+should be removed after a manual pop. A pop that leaves older stash entries
+moves `refs/stash` without a reference transaction, so no hook sees it. After
+such a pop, pass the commit from its `Dropped refs/stash@{0} (<commit>)` line
+with `0`.
 Rewritten content with no exact or whitespace-only line match is `untracked`.
 Dropped commits do not contribute attribution to later content.
 When a rewritten commit cannot receive a reprojected note, the attribution
@@ -153,6 +157,8 @@ checkpoint evidence.
 
 Restored stash ranges merge with existing pending state. Existing entries win
 for a path already present; restored entries fill paths not already pending.
+A restored path layers the stash note on top of the note of `HEAD`, so lines
+that a pull merged into the stashed file keep the attribution of their commit.
 The operation lock covers the complete read, projection, retention, and state
 write sequence.
 
@@ -178,11 +184,37 @@ pulled commits changed was clean, and its pending ranges and checkpoints
 describe edits that were reverted or stashed before the pull. The pull drops
 those pending ranges, so the next commit reads the path from the new tip and
 its note. Replaying the checkpoints over the incoming content would attribute
-lines they never produced, so the pull consumes them with a warning. Agent
-edits stashed before such a pull, including by `--autostash`, lose agent
-attribution on those paths and commit as `human` lines after the stash is
-applied. Pending ranges and checkpoints on paths the pull did not change move
-to the new tip and keep their attribution.
+lines they never produced, so the pull consumes them with a warning. Pending
+ranges and checkpoints on paths the pull did not change move to the new tip
+and keep their attribution.
+
+Stashed agent edits keep their attribution across such a pull. Before the
+pull consumes checkpoints, it saves what they attribute on stashed paths in
+the stash attribution note. Only the autostash of the pull and the newest
+`git stash` entry count, and only when the stash was created on the old tip.
+Applying the stash restores the note, so agent lines stay AI lines and pulled
+lines keep the attribution of their commits. A stash that Git merged with the
+pulled changes counts as applied only when each stashed path still holds, in
+order, every line the stash added. Otherwise the hook drops the note instead
+of guessing.
+
+No hook sees the stash in two cases. Run the manual stash apply there, or the
+agent edits commit as `human` lines on the paths the pull changed:
+
+- `git stash pop` leaves older stash entries. Use the commit from its
+  `Dropped refs/stash@{0} (<commit>)` line.
+- A pull or merge with `--autostash` runs on Git older than 2.44, which
+  records the autostash without a reference transaction. Use the commit from
+  its `Created autostash: <commit>` line.
+
+```sh
+printf '%s 0\n' "$(git rev-parse <commit>)" |
+  git byline rewrite --mode stash-apply --hook-input stdin
+```
+
+The `0` also removes the stash attribution note. Without it, the note stays
+in `refs/notes/byline-stash` until a drop or `git stash clear` empties the
+stash list.
 
 ## Attribution matching
 

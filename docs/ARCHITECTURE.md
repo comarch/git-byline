@@ -102,7 +102,11 @@ rewritten branch. A merge or pull fast-forward brings commits made elsewhere,
 so annotation skips them instead of guessing, and the boundary moves only to a
 tip that already carries a valid note. Pending ranges and checkpoints on the
 old tip move to the new tip, except on paths the fast-forward changed: there
-pending ranges are dropped and checkpoints are consumed with a warning.
+pending ranges are dropped and checkpoints are consumed with a warning. On a
+path that the autostash or the newest stash entry on the old tip holds, the
+consumed checkpoints are first replayed onto the stashed content and saved in
+that stash note. A pop or an applied autostash restores the note on top of
+the note of the new tip.
 `recover` previews each parked
 checkpoint, its recorded branch context, object availability, and branches
 that still reach its base without changing state. `recover --drop` first

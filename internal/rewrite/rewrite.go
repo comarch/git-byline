@@ -179,7 +179,7 @@ func HasRelevantReference(input io.Reader) (bool, error) {
 		if err := validateHookRef(fields[2]); err != nil {
 			return false, fmt.Errorf("reference-transaction line %d: %w", index+1, err)
 		}
-		if fields[2] == "HEAD" || fields[2] == "refs/stash" ||
+		if fields[2] == "HEAD" || fields[2] == "refs/stash" || fields[2] == "MERGE_AUTOSTASH" ||
 			strings.HasPrefix(fields[2], "refs/heads/") {
 			return true, nil
 		}

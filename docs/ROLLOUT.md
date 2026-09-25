@@ -31,7 +31,9 @@ a header that GitLab accepts only for REST calls
 ([#51](https://github.com/comarch/git-byline/issues/51)), and leaves squash
 merges `untracked` ([#52](https://github.com/comarch/git-byline/issues/52)).
 v1.4.2 also writes guessed notes after fast-forward pulls
-([#53](https://github.com/comarch/git-byline/issues/53)).
+([#53](https://github.com/comarch/git-byline/issues/53)) and drops the agent
+attribution of stashed edits that a fast-forward pull changes
+([#55](https://github.com/comarch/git-byline/issues/55)).
 
 ## What the rollout changes
 
@@ -299,10 +301,11 @@ warning: skipped annotate: HEAD fast-forwarded to existing commits; fetch refs/n
 Sync notes before the next commit. Otherwise lines the next commit inherits
 from the pulled commits stay `untracked` in the files it changes.
 
-Commit agent edits before a pull instead of stashing them. A fast-forward
-pull that changes a stashed path drops the agent attribution of that path,
-and `--autostash` counts as a stash
-([#55](https://github.com/comarch/git-byline/issues/55)).
+Agent edits stashed around a fast-forward pull keep their attribution, with
+`git stash` and `git stash pop` or with `git pull --autostash`. Run the
+manual stash apply from
+[fast-forward pulls](COMPATIBILITY.md#fast-forward-pulls) after a pop that
+leaves older stash entries, and after `--autostash` on Git older than 2.44.
 
 ### Sync notes
 

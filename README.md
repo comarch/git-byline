@@ -508,7 +508,8 @@ validates ordinary annotation before deletion, rechecks reachability, drops
 only unreachable records, and retries annotation. Hooks never delete
 checkpoint records or drop parked evidence. A fast-forward pull does consume,
 with a warning, checkpoints on paths the pulled commits changed, because those
-edits were reverted or stashed before the pull; see
+edits were reverted or stashed before the pull. It first saves what they
+attribute on stashed paths in the stash attribution note; see
 [fast-forward pulls](docs/COMPATIBILITY.md#fast-forward-pulls).
 
 `git byline stats` abbreviates commit identifiers in its text report and
@@ -603,7 +604,7 @@ hooks carry the same markers, backups, and uninstall symmetry everywhere:
 | merge, pull | `post-merge` hook, first-parent authoritative |
 | fast-forward pull | `reference-transaction` hook, pulled commits keep their original notes |
 | reset soft/mixed/hard, branch switch | `reference-transaction` and `post-checkout` hooks |
-| stash push/pop/apply | stash notes under `refs/notes/byline-stash` |
+| stash push/pop/apply, `--autostash` | stash notes under `refs/notes/byline-stash`, also across fast-forward pulls |
 
 Unmatched rewritten content becomes `untracked`, never reassigned by guess.
 The full matrix with per-operation status lives in
@@ -779,14 +780,18 @@ content was reviewed for sharing.
   attribution when Git supplies the required transition data. Use
   `git byline rewrite` manually after a path-limited reset or stash apply.
 - Stash apply is manual when `git stash apply` is used. Pass the stash object
-  ID and `1` to keep its pending attribution note.
+  ID and `1` to keep its pending attribution note. A `git stash pop` that
+  leaves older stash entries runs no stash hook either; pass the dropped
+  stash commit and `0`.
 - Merge commits use first-parent history. Unmatched merge result content is
   `untracked`, and a later commit touching that content keeps it untracked.
 - A fast-forward pull writes no local notes for the pulled commits. Fetch
   `refs/notes/byline` before the next commit, or lines it inherits from them
-  stay `untracked` in the files it changes. Agent edits stashed before the
-  pull, including by `--autostash`, lose agent attribution on paths the pulled
-  commits changed.
+  stay `untracked` in the files it changes.
+- Hooks see the stash of `--autostash` only on Git 2.44 or later. On older
+  Git, pass the autostash commit and `0` to the manual stash apply after a
+  fast-forward pull, or its agent edits lose agent attribution on paths the
+  pull changed.
 - Human identity is the commit author, not a proof of keystrokes. Lines from
   notes written before identities existed aggregate as `(unidentified)`.
 - Duplicate equal lines in partial commits are resolved deterministically, but
