@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -435,6 +436,25 @@ func TestNotesMergeInProgress(t *testing.T) {
 	}
 	writeFile(t, repo.GitDir, "NOTES_MERGE_WORKTREE", "not a directory\n")
 	if _, err := repo.NotesMergeInProgress(); err == nil {
+		t.Fatal("NotesMergeInProgress accepted a merge worktree that is not a directory")
+	}
+}
+
+func TestNotesMergeInProgressUnreadableWorktree(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("unreadable directories need a non-root POSIX user")
+	}
+	_, repo, _ := notesMergeRepo(t)
+	worktree := filepath.Join(repo.GitDir, "NOTES_MERGE_WORKTREE")
+	if err := os.Mkdir(worktree, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(worktree, 0o700); err != nil {
+			t.Errorf("restore permissions for %s: %v", worktree, err)
+		}
+	})
+	if _, err := repo.NotesMergeInProgress(); err == nil {
 		t.Fatal("NotesMergeInProgress accepted an unreadable merge worktree")
 	}
 }
@@ -450,6 +470,15 @@ exit 2
 `)
 	if _, err := missingRefBrokenPath.NotesMergeInProgress(); err == nil {
 		t.Fatal("NotesMergeInProgress accepted a Git path failure")
+	}
+	pathUnderFile := coverageRepo(t, `if [ "$2" = "--verify" ]; then
+  exit 1
+fi
+printf '%s\n' "$(dirname "$0")/blocker/NOTES_MERGE_WORKTREE"
+`)
+	writeFile(t, pathUnderFile.Root, "blocker", "regular file\n")
+	if _, err := pathUnderFile.NotesMergeInProgress(); err == nil {
+		t.Fatal("NotesMergeInProgress accepted a merge worktree path it cannot stat")
 	}
 }
 

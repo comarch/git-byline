@@ -295,10 +295,18 @@ func (repo *Repo) NotesMergeInProgress() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	entries, err := os.ReadDir(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
+	if err != nil {
+		return false, fmt.Errorf("read notes merge worktree: %w", err)
+	}
+	// Go 1.24 os.ReadDir on Windows does not reject a regular file.
+	if !info.IsDir() {
+		return false, fmt.Errorf("notes merge worktree %s is not a directory", path)
+	}
+	entries, err := os.ReadDir(path)
 	if err != nil {
 		return false, fmt.Errorf("read notes merge worktree: %w", err)
 	}
