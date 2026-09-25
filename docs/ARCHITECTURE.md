@@ -309,24 +309,33 @@ branch push, it syncs and sends `refs/notes/byline` to the same remote:
 
 1. Git fetches the remote `refs/notes/byline` from the URL the push goes to,
    so a remote with a separate push URL syncs with the repository that gets
-   the push. The notes land in the per-worktree ref
+   the push. For a remote with several push URLs, Git runs the hook once
+   per URL, and each run syncs with its own URL. The fetch sets
+   `fetch.fsckObjects`, so Git refuses malformed objects before it stores
+   them. The notes land in the per-worktree ref
    `refs/worktree/byline/remote-notes`, so concurrent pushes from linked
    worktrees never share it. The fetch passes an empty `--refmap`, so a
    configured notes refspec such as `+refs/notes/*:refs/notes/*` cannot
    overwrite local notes, and `--no-filter`, so a partial clone gets the
    note blobs too. When the remote has no notes yet, the fetch fails
    quietly and the hook goes on to step 3. Bare repositories skip steps 1
-   and 2, because `merge-notes` needs a work tree.
+   and 2, because `merge-notes` needs a work tree. `merge-notes` also finds
+   the repository from the working directory without `GIT_DIR`, so a push
+   whose working directory leads to another repository, or to none, skips
+   them too, for example `git --git-dir=...` from outside the work tree.
 2. `git-byline merge-notes` takes the common notes lock, so `annotate` in
    another worktree cannot write a note the merge would drop. Both notes
-   refs must point to notes commits whose trees hold only notes. Remote
-   notes may only add notes for commits without a local note: local notes
-   that are behind fast-forward, and diverged notes merge with the manual
-   strategy. It removes the fetched ref and never contacts the remote. Only
-   its exit status 1 stops the push. A missing binary or an older one
-   without `merge-notes` goes on to step 3.
-3. Git pushes `refs/notes/byline` without force. The internal push uses
-   `--no-verify` to avoid recursively running the hook.
+   refs must point to notes commits whose trees hold only notes, and every
+   object that the fetched history adds must be a notes commit, a notes
+   tree, or a note blob of at most 16 MiB. Remote notes may only add notes
+   for commits without a local note: local notes that are behind
+   fast-forward, and diverged notes merge with the manual strategy. After
+   the update, the notes that Git itself lists must be exactly the expected
+   ones, or the ref goes back to the local notes. It removes the fetched ref
+   and never contacts the remote. Only its exit status 1 stops the push. A
+   missing binary or an older one without `merge-notes` goes on to step 3.
+3. Git pushes `refs/notes/byline` without force to the same URL. The
+   internal push uses `--no-verify` to avoid recursively running the hook.
 
 Unrelated `pre-push` checks still run once for the outer branch push. A
 notes failure stops the branch push, but a successful notes push cannot
@@ -357,14 +366,21 @@ commit, and stops the push. It never picks a side. `git notes merge` alone
 takes a remote change without a conflict when the local side left that note
 alone, and a fast-forward takes every change. The push also stops when the
 remote notes move between the fetch and the push; the next push syncs again.
-Compare both notes of the named commit, merge explicitly, then retry:
+Fetch like the hook, compare both notes of the named commit, merge
+explicitly, then retry:
 
 ```sh
-git fetch --no-tags --refmap= origin +refs/notes/byline:refs/notes/byline-remote
+git -c fetch.fsckObjects=true fetch --no-tags --refmap= "$(git remote get-url --push origin)" +refs/notes/byline:refs/notes/byline-remote
+git notes --ref=refs/notes/byline show <commit>
+git notes --ref=refs/notes/byline-remote show <commit>
 git notes --ref=refs/notes/byline merge --strategy=manual refs/notes/byline-remote
 git update-ref -d refs/notes/byline-remote
 git push
 ```
+
+With several push URLs, `git remote get-url --push` prints only the first.
+Fetch from the URL that Git names in the `failed to push some refs to` error
+instead.
 
 On a conflict, fix the files Git names, then run
 `git notes --ref=refs/notes/byline merge --commit`, or `--abort` to stop.

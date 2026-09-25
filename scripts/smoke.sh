@@ -245,7 +245,8 @@ if PUSH_OUT="$(git push -q origin main 2>&1)"; then
   fail "push went through conflicting notes"
 fi
 require "conflict names the commit" "$PUSH_OUT" "differ for commit $CONFLICTED"
-require "conflict help" "$PUSH_OUT" "git fetch --no-tags --refmap= origin +refs/notes/byline:refs/notes/byline-remote"
+require "conflict help" "$PUSH_OUT" \
+  'git -c fetch.fsckObjects=true fetch --no-tags --refmap= "$(git remote get-url --push origin)" +refs/notes/byline:refs/notes/byline-remote'
 [[ "$(git rev-parse refs/notes/byline)" == "$LOCAL_NOTES" ]] || fail "conflict changed local notes"
 [[ "$(git --git-dir="$WORK/remote.git" rev-parse refs/notes/byline)" == "$REMOTE_NOTES" ]] ||
   fail "conflict changed remote notes"
@@ -263,9 +264,11 @@ step "the printed manual steps resolve the conflict"
 # ones, so the printed fetch must keep them.
 git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'
 KEPT_NOTE="$(git notes --ref=byline show "$CONFLICTED")"
-OUT="$(git fetch --no-tags --refmap= origin +refs/notes/byline:refs/notes/byline-remote 2>&1)" ||
-  fail "manual notes fetch: $OUT"
+OUT="$(git -c fetch.fsckObjects=true fetch --no-tags --refmap= "$(git remote get-url --push origin)" \
+  +refs/notes/byline:refs/notes/byline-remote 2>&1)" || fail "manual notes fetch: $OUT"
 [[ "$(git rev-parse refs/notes/byline)" == "$LOCAL_NOTES" ]] || fail "manual fetch replaced local notes"
+[[ "$(git notes --ref=refs/notes/byline-remote show "$CONFLICTED")" == "conflicting note" ]] ||
+  fail "compare step did not show the remote note"
 if git notes --ref=refs/notes/byline merge --strategy=manual refs/notes/byline-remote >/dev/null 2>&1; then
   fail "manual notes merge did not stop at the conflict"
 fi

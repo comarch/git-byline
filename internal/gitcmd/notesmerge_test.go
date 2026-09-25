@@ -1,8 +1,10 @@
 package gitcmd
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -222,6 +224,170 @@ func TestNoteBlobs(t *testing.T) {
 	}
 	if _, err := coverageOutputRepo(t, "", "fatal: bad tree", 128).NoteBlobs(coverageOID); err == nil {
 		t.Error("NoteBlobs accepted a Git failure")
+	}
+}
+
+// slashNameTree writes a tree with a single entry named like a fanout path
+// to commit, slash included. mktree refuses such a name, so the tree is
+// written raw, like a remote that skips fsck could serve it.
+func slashNameTree(t *testing.T, root, commit, blob string) string {
+	t.Helper()
+	raw, err := hex.DecodeString(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := "100644 " + commit[:2] + "/" + commit[2:] + "\x00" + string(raw)
+	return runGitWithInput(t, root, entry, "hash-object", "-t", "tree", "--literally", "-w", "--stdin")
+}
+
+func TestFanoutDirectory(t *testing.T) {
+	t.Parallel()
+	deepest := strings.TrimSuffix(strings.Repeat("ab/", 19), "/")
+	tests := map[string]bool{
+		"ab":            true,
+		"0f/a9":         true,
+		deepest:         true,
+		deepest + "/cd": false,
+		"":              false,
+		"a":             false,
+		"abc":           false,
+		"AB":            false,
+		"zz":            false,
+		"ab/c":          false,
+		"ab//cd":        false,
+	}
+	for path, want := range tests {
+		if got := fanoutDirectory(path, 40); got != want {
+			t.Errorf("fanoutDirectory(%q) = %t, want %t", path, got, want)
+		}
+	}
+}
+
+func TestCheckNotesHistory(t *testing.T) {
+	root, repo, commits := notesMergeRepo(t)
+	base := refOID(t, root, testNotesRef)
+	runGit(t, root, "notes", "--ref="+testNotesRef, "add", "-m", "head", commits[1])
+	local := refOID(t, root, testNotesRef)
+	localEntries := runGit(t, root, "ls-tree", local)
+	entry := func(mode, kind, oid, path string) string {
+		return mode + " " + kind + " " + oid + "\t" + path + "\n"
+	}
+	notesCommit := func(tree string, parents ...string) string {
+		t.Helper()
+		args := []string{"commit-tree", tree, "-m", "notes"}
+		for _, parent := range parents {
+			args = append(args, "-p", parent)
+		}
+		return strings.TrimSpace(runGit(t, root, args...))
+	}
+	onLocal := func(entries string) string {
+		t.Helper()
+		return notesCommit(runGitWithInput(t, root, localEntries+entries, "mktree", "--missing"), local)
+	}
+	blob := runGitWithInput(t, root, "note\n", "hash-object", "-w", "--stdin")
+	fanout := runGitWithInput(t, root, entry("100644", "blob", blob, commits[2][2:]), "mktree")
+	valid := []struct {
+		name, tip, exclude string
+	}{
+		{name: "whole history", tip: local},
+		{name: "new commits", tip: local, exclude: base},
+		{name: "nothing new", tip: base, exclude: local},
+		{name: "fanout tree", tip: onLocal(entry("040000", "tree", fanout, commits[2][:2])), exclude: local},
+	}
+	for _, test := range valid {
+		if err := repo.CheckNotesHistory(test.tip, test.exclude); err != nil {
+			t.Errorf("%s: CheckNotesHistory() = %v", test.name, err)
+		}
+	}
+
+	payload := notesCommit(runGitWithInput(t, root, entry("100644", "blob", blob, "README"), "mktree"))
+	large := runGitWithInput(t, root, strings.Repeat("x", maxNoteBytes+1), "hash-object", "-w", "--stdin")
+	nested := runGitWithInput(t, root, entry("100644", "blob", blob, commits[2]), "mktree")
+	injected := "100644 blob " + blob + "\tx\n" + blob + " " + commits[2] + "\x00"
+	missing := strings.Repeat("0", 39) + "1"
+	invalid := []struct {
+		name, tip, want string
+	}{
+		{name: "file in an older commit", tip: notesCommit(local+"^{tree}", local, payload), want: `at "README"`},
+		{name: "directory", tip: onLocal(entry("040000", "tree", nested, "notes")), want: `at "notes`},
+		{name: "note over the limit", tip: onLocal(entry("100644", "blob", large, commits[2])), want: "byte note limit"},
+		{name: "missing blob", tip: onLocal(entry("100644", "blob", missing, commits[2])), want: missing + " is missing"},
+		{
+			// rev-list prints the name only up to the newline.
+			name: "name with a newline",
+			tip:  notesCommit(runGitWithInput(t, root, injected, "mktree", "-z"), local),
+			want: `at "x"`,
+		},
+	}
+	for _, test := range invalid {
+		err := repo.CheckNotesHistory(test.tip, local)
+		if err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Errorf("%s: CheckNotesHistory() = %v, want %q", test.name, err, test.want)
+		}
+	}
+	for _, args := range [][2]string{{"HEAD", ""}, {local, "HEAD"}} {
+		if err := repo.CheckNotesHistory(args[0], args[1]); err == nil {
+			t.Errorf("CheckNotesHistory(%q, %q) accepted a symbolic revision", args[0], args[1])
+		}
+	}
+}
+
+func TestCheckNotesHistoryGitOutput(t *testing.T) {
+	listed := `if [ "$1" = rev-list ]; then
+  printf '%s\n%s x\n' ` + coverageOID + " " + coverageOID2 + `
+  exit 0
+fi
+`
+	tests := map[string]string{
+		"rev-list failure":  "exit 128\n",
+		"bad rev-list line": "printf 'bad\\n'\n",
+		"cat-file failure":  listed + "exit 128\n",
+		"short answer":      listed + "printf '%s\\n' '" + coverageOID + " commit 1'\n",
+		"other object":      listed + "printf '%s\\n' '" + coverageOID2 + " commit 1' '" + coverageOID + " blob 1'\n",
+		"bad size":          listed + "printf '%s\\n' '" + coverageOID + " commit x' '" + coverageOID2 + " blob 1'\n",
+		"blob outside tree": listed + "printf '%s\\n' '" + coverageOID + " commit 1' '" + coverageOID2 + " blob 1'\n",
+	}
+	for name, script := range tests {
+		if err := coverageRepo(t, script).CheckNotesHistory(coverageOID, ""); err == nil {
+			t.Errorf("%s: CheckNotesHistory() accepted it", name)
+		}
+	}
+}
+
+func TestListNotes(t *testing.T) {
+	root, repo, commits := notesMergeRepo(t)
+	runGit(t, root, "notes", "--ref="+testNotesRef, "add", "-m", "head", commits[1])
+	want := map[string]string{
+		commits[0]: refOID(t, root, testNotesRef+":"+commits[0]),
+		commits[1]: refOID(t, root, testNotesRef+":"+commits[1]),
+	}
+	if got, err := repo.ListNotes(); err != nil || !maps.Equal(got, want) {
+		t.Fatalf("ListNotes() = %v, %v, want %v", got, err, want)
+	}
+
+	// ls-tree shows the slash name like a fanout path, but Git's notes code
+	// does not read it as a note. That gap is why merge results are listed.
+	tree := slashNameTree(t, root, commits[2], want[commits[0]])
+	malformed := strings.TrimSpace(runGit(t, root, "commit-tree", tree, "-m", "notes"))
+	if blobs, err := repo.NoteBlobs(malformed); err != nil || blobs[commits[2]] != want[commits[0]] {
+		t.Fatalf("NoteBlobs(slash name) = %v, %v", blobs, err)
+	}
+	runGit(t, root, "update-ref", testNotesRef, malformed)
+	if got, err := repo.ListNotes(); err != nil || len(got) != 0 {
+		t.Fatalf("ListNotes(slash name) = %v, %v, want no notes", got, err)
+	}
+
+	for name, output := range map[string]string{
+		"odd field count":  coverageOID,
+		"invalid object":   coverageOID + " HEAD",
+		"duplicate object": coverageOID + " " + coverageOID2 + "\n" + coverageOID + " " + coverageOID2,
+	} {
+		if got, err := coverageOutputRepo(t, output, "", 0).ListNotes(); err == nil {
+			t.Errorf("%s: ListNotes() = %v, want an error", name, got)
+		}
+	}
+	if _, err := coverageOutputRepo(t, "", "fatal: bad notes", 128).ListNotes(); err == nil {
+		t.Error("ListNotes accepted a Git failure")
 	}
 }
 

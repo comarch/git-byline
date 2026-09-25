@@ -311,12 +311,16 @@ conflict. The hook merges the same way before each push, but it stops
 instead of leaving a merge open. Run all three lines:
 
 ```sh
-git fetch --no-tags --refmap= origin +refs/notes/byline:refs/notes/byline-remote
+git -c fetch.fsckObjects=true fetch --no-tags --refmap= "$(git remote get-url --push origin)" +refs/notes/byline:refs/notes/byline-remote
 git notes --ref=refs/notes/byline merge --strategy=manual refs/notes/byline-remote
 git update-ref -d refs/notes/byline-remote
 ```
 
-The empty `--refmap` keeps a configured notes refspec from overwriting the
+The fetch reads the push URL of `origin`, the repository the hook syncs
+with, and `fetch.fsckObjects` refuses malformed objects, like in the hook.
+When `origin` has several push URLs, `get-url --push` prints only the
+first. Fetch from the URL that Git names in the `failed to push some refs
+to` error instead. The empty `--refmap` keeps a configured notes refspec from overwriting the
 local notes during the fetch. The merge fast-forwards when only the remote
 moved, and it writes a notes merge commit when both sides moved. Until the
 first notes push reaches the project, the fetch fails with

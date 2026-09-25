@@ -124,9 +124,9 @@ func TestMergeNotesCommandConflictHelp(t *testing.T) {
 		remote string
 		fetch  string
 	}{
-		{name: "remote name", remote: "origin", fetch: "origin"},
-		{name: "url with credentials", remote: "https://user:secret-token@example.invalid/repo.git", fetch: "<remote>"},
-		{name: "no remote", fetch: "<remote>"},
+		{name: "remote name", remote: "origin", fetch: `"$(git remote get-url --push origin)"`},
+		{name: "url with credentials", remote: "https://user:secret-token@example.invalid/repo.git", fetch: "<push URL>"},
+		{name: "no remote", fetch: "<push URL>"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -141,8 +141,14 @@ func TestMergeNotesCommandConflictHelp(t *testing.T) {
 			}
 			want := "git-byline merge-notes: local and remote attribution notes differ for commit " + commits[1] +
 				"; nothing was changed\n" +
-				"Review the notes, merge them by hand, then push again:\n" +
-				"  git fetch --no-tags --refmap= " + test.fetch + " +refs/notes/byline:refs/notes/byline-remote\n" +
+				"Fetch the remote notes and compare both versions of the note first:\n" +
+				"  git -c fetch.fsckObjects=true fetch --no-tags --refmap= " + test.fetch +
+				" +refs/notes/byline:refs/notes/byline-remote\n" +
+				"  git notes --ref=refs/notes/byline show <commit>\n" +
+				"  git notes --ref=refs/notes/byline-remote show <commit>\n" +
+				"The merge below takes a remote change or removal without a conflict when\n" +
+				"local notes left that note alone, and it fast-forwards when local notes are\n" +
+				"behind. Run it only when the remote version is right, then push again:\n" +
 				"  git notes --ref=refs/notes/byline merge --strategy=manual refs/notes/byline-remote\n" +
 				"  (on a conflict, fix the files Git names, then run\n" +
 				"   git notes --ref=refs/notes/byline merge --commit, or --abort to stop)\n" +
@@ -157,25 +163,26 @@ func TestMergeNotesCommandConflictHelp(t *testing.T) {
 	}
 }
 
-func TestPrintableRemote(t *testing.T) {
+func TestPushURLSource(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{
-		"origin":                       "origin",
-		"my-fork":                      "my-fork",
-		"team/upstream.v2_x":           "team/upstream.v2_x",
-		"":                             "<remote>",
-		"-origin":                      "<remote>",
-		"../remote.git":                "<remote>",
-		"/srv/git/repo.git":            "<remote>",
-		"git@example.invalid:org/repo": "<remote>",
-		"https://example.invalid/repo": "<remote>",
-		"origin; touch pwned":          "<remote>",
-		"origin\nfake line":            "<remote>",
-		"\u00f3rigin":                  "<remote>",
+		"origin":                       `"$(git remote get-url --push origin)"`,
+		"my-fork":                      `"$(git remote get-url --push my-fork)"`,
+		"team/upstream.v2_x":           `"$(git remote get-url --push team/upstream.v2_x)"`,
+		"":                             "<push URL>",
+		"-origin":                      "<push URL>",
+		"../remote.git":                "<push URL>",
+		"/srv/git/repo.git":            "<push URL>",
+		"git@example.invalid:org/repo": "<push URL>",
+		"https://example.invalid/repo": "<push URL>",
+		"origin; touch pwned":          "<push URL>",
+		"origin)\"; touch pwned":       "<push URL>",
+		"origin\nfake line":            "<push URL>",
+		"\u00f3rigin":                  "<push URL>",
 	}
 	for remote, want := range tests {
-		if got := printableRemote(remote); got != want {
-			t.Errorf("printableRemote(%q) = %q, want %q", remote, got, want)
+		if got := pushURLSource(remote); got != want {
+			t.Errorf("pushURLSource(%q) = %q, want %q", remote, got, want)
 		}
 	}
 }

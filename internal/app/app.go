@@ -158,9 +158,10 @@ func commands() []*command {
 				"notes: local notes that are behind fast-forward and diverged notes\n" +
 				"merge. When the remote side changed or removed a local note, or both\n" +
 				"sides wrote different notes for one commit, nothing changes, the\n" +
-				"manual merge steps are printed, and the command exits 1. --remote\n" +
-				"only names the remote in those steps; the command never contacts a\n" +
-				"remote.",
+				"manual merge steps are printed, and the command exits 1. A fetched\n" +
+				"history that holds anything besides notes, or a note over 16 MiB,\n" +
+				"also changes nothing and exits 1. --remote only names the remote in\n" +
+				"the manual steps; the command never contacts a remote.",
 			run: runMergeNotes,
 		},
 		{

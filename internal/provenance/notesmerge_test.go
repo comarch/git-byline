@@ -1,6 +1,7 @@
 package provenance
 
 import (
+	"encoding/hex"
 	"errors"
 	"os"
 	"os/exec"
@@ -253,8 +254,38 @@ func gitWithInput(t *testing.T, root, input string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// slashNameNotes writes a notes commit on top of parent whose tree holds a
+// single entry named like the fanout path of commit, slash included, with
+// blob as the note. mktree refuses such a name, so the tree is written raw,
+// like a remote that skips fsck could serve it.
+func slashNameNotes(t *testing.T, root, parent, commit, blob string) string {
+	t.Helper()
+	raw, err := hex.DecodeString(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := "100644 " + commit[:2] + "/" + commit[2:] + "\x00" + string(raw)
+	tree := gitWithInput(t, root, entry, "hash-object", "-t", "tree", "--literally", "-w", "--stdin")
+	args := []string{"commit-tree", tree, "-m", "notes"}
+	if parent != "" {
+		args = append(args, "-p", parent)
+	}
+	return strings.TrimSpace(git(t, root, args...))
+}
+
+// slashRemote moves the shared note of the other side into a slash name.
+// ls-tree shows the same notes, so only the check after the fast-forward
+// sees that Git no longer finds the note.
+func slashRemote(t *testing.T, root string, commits []string) {
+	t.Helper()
+	blob := notesOID(t, root, attributionNotesRef+":"+commits[0])
+	remote := slashNameNotes(t, root, notesOID(t, root, otherSideNotesRef), commits[0], blob)
+	git(t, root, "update-ref", otherSideNotesRef, remote)
+}
+
 // TestMergeRemoteNotesRefusesBrokenNotes covers notes refs that point to
-// something other than a notes commit, and remote trees with other files.
+// something other than a notes commit, and remote histories with other
+// files, oversized notes, or trees that Git reads differently.
 func TestMergeRemoteNotesRefusesBrokenNotes(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -281,6 +312,23 @@ func TestMergeRemoteNotesRefusesBrokenNotes(t *testing.T) {
 			tree := gitWithInput(t, root, entries, "mktree")
 			return strings.TrimSpace(git(t, root, "commit-tree", tree, "-p", otherSideNotesRef, "-m", "payload"))
 		}},
+		{name: "remote file in an older commit", setup: func(t *testing.T, root string) string {
+			// The tip tree is clean, the file hides in a second parent.
+			blob := gitWithInput(t, root, "payload\n", "hash-object", "-w", "--stdin")
+			tree := gitWithInput(t, root, "100644 blob "+blob+"\tpayload.sh\n", "mktree")
+			payload := strings.TrimSpace(git(t, root, "commit-tree", tree, "-m", "payload"))
+			return strings.TrimSpace(git(t, root, "commit-tree", otherSideNotesRef+"^{tree}",
+				"-p", otherSideNotesRef, "-p", payload, "-m", "notes"))
+		}},
+		{name: "remote note over the limit", setup: func(t *testing.T, root string) string {
+			large := gitWithInput(t, root, strings.Repeat("x", 16<<20+1), "hash-object", "-w", "--stdin")
+			git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-C", large, notesOID(t, root, "HEAD"))
+			return notesOID(t, root, otherSideNotesRef)
+		}},
+		{name: "remote slash in an entry name", setup: func(t *testing.T, root string) string {
+			slashRemote(t, root, []string{notesOID(t, root, "HEAD~2")})
+			return notesOID(t, root, otherSideNotesRef)
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -297,6 +345,57 @@ func TestMergeRemoteNotesRefusesBrokenNotes(t *testing.T) {
 			}
 			assertFetchedRefRemoved(t, repo)
 		})
+	}
+}
+
+// TestMergeRemoteNotesRemovesUncheckedFirstNotes fast-forwards a clone
+// without notes to a remote tree that Git reads differently. The check
+// after the fast-forward must delete the ref again.
+func TestMergeRemoteNotesRemovesUncheckedFirstNotes(t *testing.T) {
+	root, repo, commits := remoteNotesRepo(t)
+	blob := notesOID(t, root, attributionNotesRef+":"+commits[0])
+	git(t, root, "update-ref", gitcmd.RemoteNotesRef, slashNameNotes(t, root, "", commits[1], blob))
+	git(t, root, "update-ref", "-d", attributionNotesRef)
+	result, err := MergeRemoteNotes(repo)
+	if err == nil || errors.Is(err, gitcmd.ErrNotesConflict) || result.FastForwarded {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v, want a failure", result, err)
+	}
+	if _, found, err := repo.RefValue(attributionNotesRef); err != nil || found {
+		t.Fatalf("local notes after the failed check = %t, %v, want none", found, err)
+	}
+	assertFetchedRefRemoved(t, repo)
+}
+
+func TestMergeCommitNeedsBothSides(t *testing.T) {
+	root, repo, commits := remoteNotesRepo(t)
+	divergeNotes(t, root, commits)
+	local := notesOID(t, root, attributionNotesRef)
+	remote := notesOID(t, root, otherSideNotesRef)
+	if err := repo.MergeNotes(remote); err != nil {
+		t.Fatal(err)
+	}
+	merged := notesOID(t, root, attributionNotesRef)
+	if got, err := mergeCommit(repo, local, remote); err != nil || got != merged {
+		t.Fatalf("mergeCommit() = %q, %v, want %q", got, err, merged)
+	}
+	if _, err := mergeCommit(repo, remote, local); err == nil || !strings.Contains(err.Error(), "during the merge") {
+		t.Fatalf("mergeCommit(other parents) = %v, want an error", err)
+	}
+	// Each fake needs its own subtest: its PATH change must be gone before
+	// the next fake looks up the real Git, or that fake would exec itself.
+	for _, test := range []struct{ name, pattern string }{
+		{name: "ref read", pattern: "rev-parse --verify " + attributionNotesRef},
+		{name: "parents read", pattern: "rev-list --parents -n 1 " + merged},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := mergeCommit(fakeNotesGit(t, root, test.pattern), local, remote); err == nil {
+				t.Error("mergeCommit accepted a Git failure")
+			}
+		})
+	}
+	git(t, root, "update-ref", "-d", attributionNotesRef)
+	if _, err := mergeCommit(repo, local, remote); err == nil {
+		t.Fatal("mergeCommit accepted a missing notes ref")
 	}
 }
 
@@ -391,8 +490,13 @@ func TestMergeRemoteNotesFailures(t *testing.T) {
 		{name: "merge base", pattern: "merge-base LOCAL REMOTE", setup: divergeNotes},
 		{name: "merge base notes tree", pattern: "ls-tree * BASE", setup: divergeNotes},
 		{name: "remote notes tree", pattern: "ls-tree * REMOTE", setup: remoteAhead},
+		{name: "history objects", pattern: "rev-list --objects *", setup: remoteAhead},
+		{name: "history object types", pattern: "cat-file --batch-check*", setup: remoteAhead},
 		{name: "fast-forward", pattern: "update-ref -m *", setup: remoteAhead},
 		{name: "merge", pattern: "notes --ref=refs/notes/byline merge *", setup: divergeNotes},
+		{name: "merge parents", pattern: "rev-list --parents -n 1 *", setup: divergeNotes},
+		{name: "merged notes list", pattern: "notes --ref=refs/notes/byline list", setup: remoteAhead},
+		{name: "restore", pattern: "update-ref -m git-byline: restore*", setup: slashRemote},
 		{name: "fetched ref cleanup", pattern: "update-ref -d *", setup: remoteAhead, warning: true},
 	}
 	for _, test := range tests {

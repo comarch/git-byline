@@ -10,12 +10,19 @@ import (
 	"github.com/comarch/git-byline/internal/provenance"
 )
 
-// notesConflictHelp keeps the protections of the hook: the empty --refmap
-// stops a configured notes fetch refspec from overwriting local notes, and
-// the manual strategy stops notes.mergeStrategy from picking a side.
+// notesConflictHelp keeps the protections of the hook: the fetch reads the
+// push URL and checks objects like the hook does, the empty --refmap stops a
+// configured notes fetch refspec from overwriting local notes, and the
+// manual strategy stops notes.mergeStrategy from picking a side. It still
+// cannot stop what the hook refused, so the compare step comes first.
 const notesConflictHelp = `git-byline %[1]s: %[2]v; nothing was changed
-Review the notes, merge them by hand, then push again:
-  git fetch --no-tags --refmap= %[3]s +refs/notes/byline:refs/notes/byline-remote
+Fetch the remote notes and compare both versions of the note first:
+  git -c fetch.fsckObjects=true fetch --no-tags --refmap= %[3]s +refs/notes/byline:refs/notes/byline-remote
+  git notes --ref=refs/notes/byline show <commit>
+  git notes --ref=refs/notes/byline-remote show <commit>
+The merge below takes a remote change or removal without a conflict when
+local notes left that note alone, and it fast-forwards when local notes are
+behind. Run it only when the remote version is right, then push again:
   git notes --ref=refs/notes/byline merge --strategy=manual refs/notes/byline-remote
   (on a conflict, fix the files Git names, then run
    git notes --ref=refs/notes/byline merge --commit, or --abort to stop)
@@ -40,7 +47,7 @@ func runMergeNotes(env *Env, command *command, args []string) (int, error) {
 	result, err := provenance.MergeRemoteNotes(repo)
 	writeWarnings(env, result.Warnings)
 	if errors.Is(err, gitcmd.ErrNotesConflict) {
-		fmt.Fprintf(env.Stderr, notesConflictHelp, command.name, err, printableRemote(*remote))
+		fmt.Fprintf(env.Stderr, notesConflictHelp, command.name, err, pushURLSource(*remote))
 		return ExitFailure, fmt.Errorf("git-byline %s: %w", command.name, err)
 	}
 	if err != nil {
@@ -57,18 +64,20 @@ func runMergeNotes(env *Env, command *command, args []string) (int, error) {
 	return ExitSuccess, nil
 }
 
-// printableRemote returns the remote for the manual merge steps. The hook
+// pushURLSource returns what the manual fetch reads. The hook compared
+// against the push URL, so the steps read it too; with a separate pushurl
+// the remote name would fetch the notes of another repository. The hook
 // passes the push remote as given, which can be a URL with credentials, so
 // anything beyond a plain remote name prints as a placeholder.
-func printableRemote(name string) string {
+func pushURLSource(name string) string {
 	for index, char := range name {
 		plain := char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9'
 		if !plain && (index == 0 || !strings.ContainsRune("._-/", char)) {
-			return "<remote>"
+			return "<push URL>"
 		}
 	}
 	if name == "" {
-		return "<remote>"
+		return "<push URL>"
 	}
-	return name
+	return `"$(git remote get-url --push ` + name + `)"`
 }
