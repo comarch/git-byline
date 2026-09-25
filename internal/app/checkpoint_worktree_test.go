@@ -24,37 +24,7 @@ func TestCheckpointRecordsEditsInOtherWorktrees(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			root := appRepo(t)
-			appWrite(t, root, ".gitignore", ".worktrees/\n")
-			appWrite(t, root, "a.txt", "a1\n")
-			appCommit(t, root, "chore: init")
-			now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-			if code, _, _, err := appRun(root, now, nil, "annotate"); code != ExitSuccess || err != nil {
-				t.Fatalf("annotate base = %d, %v", code, err)
-			}
-			worktree := test.place(t, root)
-			appGit(t, root, "worktree", "add", "-q", "-b", "feat", worktree)
-			payload := factoryEditPayload(filepath.Join(worktree, "a.txt"))
-
-			code, _, stderr, err := appRun(root, now, strings.NewReader(payload),
-				"checkpoint", "portable-factory", "--type", "human", "--hook-input", "stdin")
-			if code != ExitSuccess || err != nil || stderr != "" {
-				t.Fatalf("human checkpoint = %d, %q, %v", code, stderr, err)
-			}
-			appWrite(t, worktree, "a.txt", "a1\na2 agent\n")
-			code, _, stderr, err = appRun(root, now.Add(time.Second), strings.NewReader(payload),
-				"checkpoint", "portable-factory", "--type", "ai", "--hook-input", "stdin")
-			if code != ExitSuccess || err != nil || stderr != "" {
-				t.Fatalf("ai checkpoint = %d, %q, %v", code, stderr, err)
-			}
-
-			appGit(t, worktree, "commit", "-qam", "feat: agent line")
-			if code, _, _, err := appRun(worktree, now, nil, "annotate"); code != ExitSuccess || err != nil {
-				t.Fatalf("annotate = %d, %v", code, err)
-			}
-			code, stdout, stderr, err := appRun(worktree, now, nil, "blame", "a.txt")
-			if code != ExitSuccess || err != nil || stderr != "" {
-				t.Fatalf("blame = %d, %q, %v", code, stderr, err)
-			}
+			stdout := runLinkedWorktreeBlameFlow(t, root, test.place(t, root))
 			lines := strings.Split(strings.TrimSpace(stdout), "\n")
 			if len(lines) != 2 || !strings.HasPrefix(lines[0], "human:") ||
 				!strings.HasPrefix(lines[1], "ai:factory/sim-model") {
@@ -62,6 +32,44 @@ func TestCheckpointRecordsEditsInOtherWorktrees(t *testing.T) {
 			}
 		})
 	}
+}
+
+// runLinkedWorktreeBlameFlow records a human and an AI checkpoint from the
+// main checkout for an edit of a.txt in a new linked worktree, commits and
+// annotates in that worktree, and returns its blame text.
+func runLinkedWorktreeBlameFlow(t *testing.T, root, worktree string) string {
+	t.Helper()
+	appWrite(t, root, ".gitignore", ".worktrees/\n")
+	appWrite(t, root, "a.txt", "a1\n")
+	appCommit(t, root, "chore: init")
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if code, _, _, err := appRun(root, now, nil, "annotate"); code != ExitSuccess || err != nil {
+		t.Fatalf("annotate base = %d, %v", code, err)
+	}
+	appGit(t, root, "worktree", "add", "-q", "-b", "feat", worktree)
+	payload := factoryEditPayload(filepath.Join(worktree, "a.txt"))
+
+	code, _, stderr, err := appRun(root, now, strings.NewReader(payload),
+		"checkpoint", "portable-factory", "--type", "human", "--hook-input", "stdin")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("human checkpoint = %d, %q, %v", code, stderr, err)
+	}
+	appWrite(t, worktree, "a.txt", "a1\na2 agent\n")
+	code, _, stderr, err = appRun(root, now.Add(time.Second), strings.NewReader(payload),
+		"checkpoint", "portable-factory", "--type", "ai", "--hook-input", "stdin")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("ai checkpoint = %d, %q, %v", code, stderr, err)
+	}
+
+	appGit(t, worktree, "commit", "-qam", "feat: agent line")
+	if code, _, _, err := appRun(worktree, now, nil, "annotate"); code != ExitSuccess || err != nil {
+		t.Fatalf("annotate = %d, %v", code, err)
+	}
+	code, stdout, stderr, err := appRun(worktree, now, nil, "blame", "a.txt")
+	if code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("blame = %d, %q, %v", code, stderr, err)
+	}
+	return stdout
 }
 
 func TestCheckpointRejectsPathsOutsideRepositoryWorktrees(t *testing.T) {
