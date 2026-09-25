@@ -454,75 +454,83 @@ exit 2
 }
 
 func TestMergeNotes(t *testing.T) {
-	t.Run("clean", func(t *testing.T) {
-		root, repo, commits := notesMergeRepo(t)
-		runGit(t, root, "notes", "--ref="+testNotesRef, "add", "-m", "local", commits[1])
-		runGit(t, root, "notes", "--ref="+testOtherSide, "add", "-m", "remote", commits[2])
-		local := refOID(t, root, testNotesRef)
-		remote := refOID(t, root, testOtherSide)
-		if err := repo.MergeNotes(remote); err != nil {
-			t.Fatal(err)
+	t.Run("clean", testMergeNotesClean)
+	t.Run("configured strategy does not pick a side", testMergeNotesIgnoresConfiguredStrategy)
+	t.Run("failure aborts only its own merge state", testMergeNotesFailureAbortsOwnState)
+	t.Run("invalid remote", testMergeNotesInvalidRemote)
+}
+
+func testMergeNotesClean(t *testing.T) {
+	root, repo, commits := notesMergeRepo(t)
+	runGit(t, root, "notes", "--ref="+testNotesRef, "add", "-m", "local", commits[1])
+	runGit(t, root, "notes", "--ref="+testOtherSide, "add", "-m", "remote", commits[2])
+	local := refOID(t, root, testNotesRef)
+	remote := refOID(t, root, testOtherSide)
+	if err := repo.MergeNotes(remote); err != nil {
+		t.Fatal(err)
+	}
+	parents := strings.Fields(runGit(t, root, "show", "-s", "--format=%P", testNotesRef))
+	if len(parents) != 2 || parents[0] != local || parents[1] != remote {
+		t.Fatalf("merge parents = %v, want %s %s", parents, local, remote)
+	}
+	for commit, want := range map[string]string{commits[0]: "shared", commits[1]: "local", commits[2]: "remote"} {
+		if got := strings.TrimSpace(runGit(t, root, "notes", "--ref="+testNotesRef, "show", commit)); got != want {
+			t.Fatalf("note for %s = %q, want %q", commit, got, want)
 		}
-		parents := strings.Fields(runGit(t, root, "show", "-s", "--format=%P", testNotesRef))
-		if len(parents) != 2 || parents[0] != local || parents[1] != remote {
-			t.Fatalf("merge parents = %v, want %s %s", parents, local, remote)
+	}
+}
+
+func testMergeNotesIgnoresConfiguredStrategy(t *testing.T) {
+	root, repo, commits := notesMergeRepo(t)
+	runGit(t, root, "config", "notes.mergeStrategy", "theirs")
+	runGit(t, root, "notes", "--ref="+testNotesRef, "add", "-m", "local", commits[1])
+	runGit(t, root, "notes", "--ref="+testOtherSide, "add", "-m", "remote", commits[1])
+	local := refOID(t, root, testNotesRef)
+	if err := repo.MergeNotes(refOID(t, root, testOtherSide)); !errors.Is(err, ErrNotesConflict) {
+		t.Fatalf("MergeNotes() = %v, want %v", err, ErrNotesConflict)
+	}
+	if got := refOID(t, root, testNotesRef); got != local {
+		t.Fatalf("conflict moved local notes to %s, want %s", got, local)
+	}
+	if inProgress, err := repo.NotesMergeInProgress(); err != nil || inProgress {
+		t.Fatalf("conflict left merge state: %t, %v", inProgress, err)
+	}
+}
+
+func testMergeNotesFailureAbortsOwnState(t *testing.T) {
+	// Git writes the conflict state, then dies with 128 because the
+	// linked worktree already merges into the same notes ref.
+	root, repo, commits := notesMergeRepo(t)
+	linked := filepath.Join(t.TempDir(), "linked")
+	runGit(t, root, "worktree", "add", "-q", "-b", "linked", linked)
+	startConflictingNotesMerge(t, linked, commits[1])
+	local := refOID(t, root, testNotesRef)
+	err := repo.MergeNotes(refOID(t, root, testOtherSide))
+	if err == nil || errors.Is(err, ErrNotesConflict) {
+		t.Fatalf("MergeNotes() = %v, want a failure", err)
+	}
+	if inProgress, err := repo.NotesMergeInProgress(); err != nil || inProgress {
+		t.Fatalf("failed merge left merge state: %t, %v", inProgress, err)
+	}
+	linkedRepo, err := Discover(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inProgress, err := linkedRepo.NotesMergeInProgress(); err != nil || !inProgress {
+		t.Fatalf("linked worktree merge = %t, %v, want it kept", inProgress, err)
+	}
+	if got := refOID(t, root, testNotesRef); got != local {
+		t.Fatalf("failed merge moved local notes to %s, want %s", got, local)
+	}
+}
+
+func testMergeNotesInvalidRemote(t *testing.T) {
+	_, repo, _ := notesMergeRepo(t)
+	for _, remote := range []string{"", "--abort", "refs/notes/a b", "HEAD", testOtherSide} {
+		if err := repo.MergeNotes(remote); err == nil {
+			t.Errorf("MergeNotes(%q) accepted an invalid object ID", remote)
 		}
-		for commit, want := range map[string]string{commits[0]: "shared", commits[1]: "local", commits[2]: "remote"} {
-			if got := strings.TrimSpace(runGit(t, root, "notes", "--ref="+testNotesRef, "show", commit)); got != want {
-				t.Fatalf("note for %s = %q, want %q", commit, got, want)
-			}
-		}
-	})
-	t.Run("configured strategy does not pick a side", func(t *testing.T) {
-		root, repo, commits := notesMergeRepo(t)
-		runGit(t, root, "config", "notes.mergeStrategy", "theirs")
-		runGit(t, root, "notes", "--ref="+testNotesRef, "add", "-m", "local", commits[1])
-		runGit(t, root, "notes", "--ref="+testOtherSide, "add", "-m", "remote", commits[1])
-		local := refOID(t, root, testNotesRef)
-		if err := repo.MergeNotes(refOID(t, root, testOtherSide)); !errors.Is(err, ErrNotesConflict) {
-			t.Fatalf("MergeNotes() = %v, want %v", err, ErrNotesConflict)
-		}
-		if got := refOID(t, root, testNotesRef); got != local {
-			t.Fatalf("conflict moved local notes to %s, want %s", got, local)
-		}
-		if inProgress, err := repo.NotesMergeInProgress(); err != nil || inProgress {
-			t.Fatalf("conflict left merge state: %t, %v", inProgress, err)
-		}
-	})
-	t.Run("failure aborts only its own merge state", func(t *testing.T) {
-		// Git writes the conflict state, then dies with 128 because the
-		// linked worktree already merges into the same notes ref.
-		root, repo, commits := notesMergeRepo(t)
-		linked := filepath.Join(t.TempDir(), "linked")
-		runGit(t, root, "worktree", "add", "-q", "-b", "linked", linked)
-		startConflictingNotesMerge(t, linked, commits[1])
-		local := refOID(t, root, testNotesRef)
-		err := repo.MergeNotes(refOID(t, root, testOtherSide))
-		if err == nil || errors.Is(err, ErrNotesConflict) {
-			t.Fatalf("MergeNotes() = %v, want a failure", err)
-		}
-		if inProgress, err := repo.NotesMergeInProgress(); err != nil || inProgress {
-			t.Fatalf("failed merge left merge state: %t, %v", inProgress, err)
-		}
-		linkedRepo, err := Discover(linked)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if inProgress, err := linkedRepo.NotesMergeInProgress(); err != nil || !inProgress {
-			t.Fatalf("linked worktree merge = %t, %v, want it kept", inProgress, err)
-		}
-		if got := refOID(t, root, testNotesRef); got != local {
-			t.Fatalf("failed merge moved local notes to %s, want %s", got, local)
-		}
-	})
-	t.Run("invalid remote", func(t *testing.T) {
-		_, repo, _ := notesMergeRepo(t)
-		for _, remote := range []string{"", "--abort", "refs/notes/a b", "HEAD", testOtherSide} {
-			if err := repo.MergeNotes(remote); err == nil {
-				t.Errorf("MergeNotes(%q) accepted an invalid object ID", remote)
-			}
-		}
-	})
+	}
 }
 
 func TestMergeNotesFailures(t *testing.T) {

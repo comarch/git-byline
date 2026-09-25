@@ -59,129 +59,147 @@ func assertFetchedRefRemoved(t *testing.T, repo *gitcmd.Repo) {
 }
 
 func TestMergeRemoteNotesRelations(t *testing.T) {
-	t.Run("nothing fetched", func(t *testing.T) {
-		root, repo, _ := remoteNotesRepo(t)
-		local := notesOID(t, root, attributionNotesRef)
-		result, err := MergeRemoteNotes(repo)
-		if err != nil || result.FastForwarded || result.Merged || len(result.Warnings) != 0 {
-			t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
-		}
-		if got := notesOID(t, root, attributionNotesRef); got != local {
-			t.Fatalf("local notes moved to %s", got)
-		}
-	})
-	t.Run("up to date", func(t *testing.T) {
-		root, repo, _ := remoteNotesRepo(t)
-		fetchOtherSide(t, root)
-		result, err := MergeRemoteNotes(repo)
-		if err != nil || result.FastForwarded || result.Merged {
-			t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
-		}
-		assertFetchedRefRemoved(t, repo)
-	})
-	t.Run("local ahead", func(t *testing.T) {
-		root, repo, commits := remoteNotesRepo(t)
-		fetchOtherSide(t, root)
-		git(t, root, "notes", "--ref="+attributionNotesRef, "add", "-m", "local", commits[1])
-		local := notesOID(t, root, attributionNotesRef)
-		result, err := MergeRemoteNotes(repo)
-		if err != nil || result.FastForwarded || result.Merged {
-			t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
-		}
-		if got := notesOID(t, root, attributionNotesRef); got != local {
-			t.Fatalf("local notes moved to %s, want %s", got, local)
-		}
-		assertFetchedRefRemoved(t, repo)
-	})
-	t.Run("behind", func(t *testing.T) {
-		root, repo, commits := remoteNotesRepo(t)
-		git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-m", "remote", commits[1])
-		remote := fetchOtherSide(t, root)
-		result, err := MergeRemoteNotes(repo)
-		if err != nil || !result.FastForwarded || result.Merged || result.Added != 1 {
-			t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
-		}
-		if got := notesOID(t, root, attributionNotesRef); got != remote {
-			t.Fatalf("local notes = %s, want fast-forward to %s", got, remote)
-		}
-		assertFetchedRefRemoved(t, repo)
-	})
-	t.Run("no local notes yet", func(t *testing.T) {
-		root, repo, _ := remoteNotesRepo(t)
-		remote := fetchOtherSide(t, root)
-		git(t, root, "update-ref", "-d", attributionNotesRef)
-		result, err := MergeRemoteNotes(repo)
-		if err != nil || !result.FastForwarded || result.Added != 1 {
-			t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
-		}
-		if got := notesOID(t, root, attributionNotesRef); got != remote {
-			t.Fatalf("local notes = %s, want %s", got, remote)
-		}
-	})
-	t.Run("diverged on different commits", func(t *testing.T) {
-		root, repo, commits := remoteNotesRepo(t)
-		git(t, root, "notes", "--ref="+attributionNotesRef, "add", "-m", "local", commits[1])
-		git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-m", "remote", commits[2])
-		fetchOtherSide(t, root)
-		result, err := MergeRemoteNotes(repo)
-		if err != nil || result.FastForwarded || !result.Merged || result.Added != 1 {
-			t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
-		}
-		if noteText(t, root, commits[1]) != "local" || noteText(t, root, commits[2]) != "remote" {
-			t.Fatal("merged notes lost one side")
-		}
-		assertFetchedRefRemoved(t, repo)
-	})
-	t.Run("same note added on both sides", func(t *testing.T) {
-		// Local writes its other note first. Otherwise both sides can
-		// create the same notes commit within one second, and the remote
-		// notes are then simply an ancestor of local notes.
-		root, repo, commits := remoteNotesRepo(t)
-		git(t, root, "notes", "--ref="+attributionNotesRef, "add", "-m", "local", commits[2])
-		git(t, root, "notes", "--ref="+attributionNotesRef, "add", "-m", "same", commits[1])
-		git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-m", "same", commits[1])
-		fetchOtherSide(t, root)
-		result, err := MergeRemoteNotes(repo)
-		if err != nil || !result.Merged || result.Added != 0 {
-			t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
-		}
-		if noteText(t, root, commits[1]) != "same" || noteText(t, root, commits[2]) != "local" {
-			t.Fatal("merge changed a note that both sides agree on")
-		}
-	})
-	t.Run("unrelated histories", func(t *testing.T) {
-		// The forge job can start remote notes before any clone pushed
-		// its own, so the two histories share no commit.
-		root, repo, commits := remoteNotesRepo(t)
-		git(t, root, "update-ref", "-d", otherSideNotesRef)
-		git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-m", "remote", commits[2])
-		fetchOtherSide(t, root)
-		result, err := MergeRemoteNotes(repo)
-		if err != nil || !result.Merged || result.Added != 1 {
-			t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
-		}
-		if noteText(t, root, commits[0]) != "shared" || noteText(t, root, commits[2]) != "remote" {
-			t.Fatal("history-less merge lost one side")
-		}
-	})
-	t.Run("conflict on the same commit", func(t *testing.T) {
-		root, repo, commits := remoteNotesRepo(t)
-		git(t, root, "notes", "--ref="+attributionNotesRef, "add", "-m", "local", commits[1])
-		git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-m", "remote", commits[1])
-		fetchOtherSide(t, root)
-		local := notesOID(t, root, attributionNotesRef)
-		result, err := MergeRemoteNotes(repo)
-		if !errors.Is(err, gitcmd.ErrNotesConflict) || result.Merged || result.FastForwarded {
-			t.Fatalf("MergeRemoteNotes() = %+v, %v, want a conflict", result, err)
-		}
-		if got := notesOID(t, root, attributionNotesRef); got != local || noteText(t, root, commits[1]) != "local" {
-			t.Fatalf("conflict changed local notes to %s", got)
-		}
-		if inProgress, err := repo.NotesMergeInProgress(); err != nil || inProgress {
-			t.Fatalf("conflict left merge state: %t, %v", inProgress, err)
-		}
-		assertFetchedRefRemoved(t, repo)
-	})
+	t.Run("nothing fetched", testMergeRemoteNotesNothingFetched)
+	t.Run("up to date", testMergeRemoteNotesUpToDate)
+	t.Run("local ahead", testMergeRemoteNotesLocalAhead)
+	t.Run("behind", testMergeRemoteNotesBehind)
+	t.Run("no local notes yet", testMergeRemoteNotesNoLocalNotes)
+	t.Run("diverged on different commits", testMergeRemoteNotesDiverged)
+	t.Run("same note added on both sides", testMergeRemoteNotesSameNoteOnBothSides)
+	t.Run("unrelated histories", testMergeRemoteNotesUnrelatedHistories)
+	t.Run("conflict on the same commit", testMergeRemoteNotesConflict)
+}
+
+func testMergeRemoteNotesNothingFetched(t *testing.T) {
+	root, repo, _ := remoteNotesRepo(t)
+	local := notesOID(t, root, attributionNotesRef)
+	result, err := MergeRemoteNotes(repo)
+	if err != nil || result.FastForwarded || result.Merged || len(result.Warnings) != 0 {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
+	}
+	if got := notesOID(t, root, attributionNotesRef); got != local {
+		t.Fatalf("local notes moved to %s", got)
+	}
+}
+
+func testMergeRemoteNotesUpToDate(t *testing.T) {
+	root, repo, _ := remoteNotesRepo(t)
+	fetchOtherSide(t, root)
+	result, err := MergeRemoteNotes(repo)
+	if err != nil || result.FastForwarded || result.Merged {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
+	}
+	assertFetchedRefRemoved(t, repo)
+}
+
+func testMergeRemoteNotesLocalAhead(t *testing.T) {
+	root, repo, commits := remoteNotesRepo(t)
+	fetchOtherSide(t, root)
+	git(t, root, "notes", "--ref="+attributionNotesRef, "add", "-m", "local", commits[1])
+	local := notesOID(t, root, attributionNotesRef)
+	result, err := MergeRemoteNotes(repo)
+	if err != nil || result.FastForwarded || result.Merged {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
+	}
+	if got := notesOID(t, root, attributionNotesRef); got != local {
+		t.Fatalf("local notes moved to %s, want %s", got, local)
+	}
+	assertFetchedRefRemoved(t, repo)
+}
+
+func testMergeRemoteNotesBehind(t *testing.T) {
+	root, repo, commits := remoteNotesRepo(t)
+	git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-m", "remote", commits[1])
+	remote := fetchOtherSide(t, root)
+	result, err := MergeRemoteNotes(repo)
+	if err != nil || !result.FastForwarded || result.Merged || result.Added != 1 {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
+	}
+	if got := notesOID(t, root, attributionNotesRef); got != remote {
+		t.Fatalf("local notes = %s, want fast-forward to %s", got, remote)
+	}
+	assertFetchedRefRemoved(t, repo)
+}
+
+func testMergeRemoteNotesNoLocalNotes(t *testing.T) {
+	root, repo, _ := remoteNotesRepo(t)
+	remote := fetchOtherSide(t, root)
+	git(t, root, "update-ref", "-d", attributionNotesRef)
+	result, err := MergeRemoteNotes(repo)
+	if err != nil || !result.FastForwarded || result.Added != 1 {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
+	}
+	if got := notesOID(t, root, attributionNotesRef); got != remote {
+		t.Fatalf("local notes = %s, want %s", got, remote)
+	}
+}
+
+func testMergeRemoteNotesDiverged(t *testing.T) {
+	root, repo, commits := remoteNotesRepo(t)
+	git(t, root, "notes", "--ref="+attributionNotesRef, "add", "-m", "local", commits[1])
+	git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-m", "remote", commits[2])
+	fetchOtherSide(t, root)
+	result, err := MergeRemoteNotes(repo)
+	if err != nil || result.FastForwarded || !result.Merged || result.Added != 1 {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
+	}
+	if noteText(t, root, commits[1]) != "local" || noteText(t, root, commits[2]) != "remote" {
+		t.Fatal("merged notes lost one side")
+	}
+	assertFetchedRefRemoved(t, repo)
+}
+
+func testMergeRemoteNotesSameNoteOnBothSides(t *testing.T) {
+	// Local writes its other note first. Otherwise both sides can
+	// create the same notes commit within one second, and the remote
+	// notes are then simply an ancestor of local notes.
+	root, repo, commits := remoteNotesRepo(t)
+	git(t, root, "notes", "--ref="+attributionNotesRef, "add", "-m", "local", commits[2])
+	git(t, root, "notes", "--ref="+attributionNotesRef, "add", "-m", "same", commits[1])
+	git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-m", "same", commits[1])
+	fetchOtherSide(t, root)
+	result, err := MergeRemoteNotes(repo)
+	if err != nil || !result.Merged || result.Added != 0 {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
+	}
+	if noteText(t, root, commits[1]) != "same" || noteText(t, root, commits[2]) != "local" {
+		t.Fatal("merge changed a note that both sides agree on")
+	}
+}
+
+func testMergeRemoteNotesUnrelatedHistories(t *testing.T) {
+	// The forge job can start remote notes before any clone pushed
+	// its own, so the two histories share no commit.
+	root, repo, commits := remoteNotesRepo(t)
+	git(t, root, "update-ref", "-d", otherSideNotesRef)
+	git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-m", "remote", commits[2])
+	fetchOtherSide(t, root)
+	result, err := MergeRemoteNotes(repo)
+	if err != nil || !result.Merged || result.Added != 1 {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v", result, err)
+	}
+	if noteText(t, root, commits[0]) != "shared" || noteText(t, root, commits[2]) != "remote" {
+		t.Fatal("history-less merge lost one side")
+	}
+}
+
+func testMergeRemoteNotesConflict(t *testing.T) {
+	root, repo, commits := remoteNotesRepo(t)
+	git(t, root, "notes", "--ref="+attributionNotesRef, "add", "-m", "local", commits[1])
+	git(t, root, "notes", "--ref="+otherSideNotesRef, "add", "-m", "remote", commits[1])
+	fetchOtherSide(t, root)
+	local := notesOID(t, root, attributionNotesRef)
+	result, err := MergeRemoteNotes(repo)
+	if !errors.Is(err, gitcmd.ErrNotesConflict) || result.Merged || result.FastForwarded {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v, want a conflict", result, err)
+	}
+	if got := notesOID(t, root, attributionNotesRef); got != local || noteText(t, root, commits[1]) != "local" {
+		t.Fatalf("conflict changed local notes to %s", got)
+	}
+	if inProgress, err := repo.NotesMergeInProgress(); err != nil || inProgress {
+		t.Fatalf("conflict left merge state: %t, %v", inProgress, err)
+	}
+	assertFetchedRefRemoved(t, repo)
 }
 
 // TestMergeRemoteNotesRefusesRemoteEdits covers remote changes that Git would
@@ -512,15 +530,20 @@ func TestMergeRemoteNotesFailures(t *testing.T) {
 			repo := fakeNotesGit(t, root, pattern)
 			result, err := MergeRemoteNotes(repo)
 			if test.warning {
-				if err != nil || len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], gitcmd.RemoteNotesRef) {
-					t.Fatalf("MergeRemoteNotes() = %+v, %v, want a cleanup warning", result, err)
-				}
+				assertCleanupWarning(t, result, err)
 				return
 			}
 			if err == nil || errors.Is(err, gitcmd.ErrNotesConflict) {
 				t.Fatalf("MergeRemoteNotes() = %+v, %v, want a failure", result, err)
 			}
 		})
+	}
+}
+
+func assertCleanupWarning(t *testing.T, result NotesMergeResult, err error) {
+	t.Helper()
+	if err != nil || len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], gitcmd.RemoteNotesRef) {
+		t.Fatalf("MergeRemoteNotes() = %+v, %v, want a cleanup warning", result, err)
 	}
 }
 

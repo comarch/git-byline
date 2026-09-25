@@ -15,6 +15,8 @@ import (
 // refs/worktree/ so concurrent pushes from linked worktrees never share it.
 const RemoteNotesRef = "refs/worktree/byline/remote-notes"
 
+const notesRefArg = "--ref=" + bylineNotesRef
+
 // ErrNotesConflict reports local and remote notes that differ for the same
 // commit. The local notes ref stays unchanged.
 var ErrNotesConflict = errors.New("local and remote attribution notes differ")
@@ -174,22 +176,9 @@ func (repo *Repo) CheckNotesHistory(tip, exclude string) error {
 	if err != nil {
 		return err
 	}
-	// rev-list cuts a name at its first newline, so every line holds one
-	// object and a name with a newline cannot add a line of its own.
-	var ids, paths []string
-	for _, line := range strings.Split(string(out), "\n") {
-		if line == "" {
-			continue
-		}
-		if missing, found := strings.CutPrefix(line, "?"); found {
-			return fmt.Errorf("notes history object %s is missing", missing)
-		}
-		id, path, _ := strings.Cut(line, " ")
-		if !model.ValidObjectID(id) {
-			return errors.New("git returned an invalid notes history object ID")
-		}
-		ids = append(ids, id)
-		paths = append(paths, path)
+	ids, paths, err := notesHistoryObjects(out)
+	if err != nil {
+		return err
 	}
 	if len(ids) == 0 {
 		return nil
@@ -209,6 +198,29 @@ func (repo *Repo) CheckNotesHistory(tip, exclude string) error {
 		}
 	}
 	return nil
+}
+
+// notesHistoryObjects splits rev-list --objects --missing=print output into
+// object IDs and their paths. rev-list cuts a name at its first newline, so
+// every line holds one object and a name with a newline cannot add a line
+// of its own.
+func notesHistoryObjects(out []byte) ([]string, []string, error) {
+	var ids, paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line == "" {
+			continue
+		}
+		if missing, found := strings.CutPrefix(line, "?"); found {
+			return nil, nil, fmt.Errorf("notes history object %s is missing", missing)
+		}
+		id, path, _ := strings.Cut(line, " ")
+		if !model.ValidObjectID(id) {
+			return nil, nil, errors.New("git returned an invalid notes history object ID")
+		}
+		ids = append(ids, id)
+		paths = append(paths, path)
+	}
+	return ids, paths, nil
 }
 
 func checkNotesHistoryObject(record, id, path string, length int) error {
@@ -242,7 +254,7 @@ func checkNotesHistoryObject(record, id, path string, length int) error {
 // ListNotes maps every object that refs/notes/byline annotates to its note
 // blob as git notes list reads the tree, the way every Git command sees it.
 func (repo *Repo) ListNotes() (map[string]string, error) {
-	out, err := repo.run("list attribution notes", nil, "notes", "--ref="+bylineNotesRef, "list")
+	out, err := repo.run("list attribution notes", nil, "notes", notesRefArg, "list")
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +316,7 @@ func (repo *Repo) MergeNotes(remote string) error {
 		return errors.New("invalid remote notes object ID")
 	}
 	_, err := repo.run("merge attribution notes", nil,
-		"notes", "--ref="+bylineNotesRef, "merge", "--strategy=manual", "--quiet", remote)
+		"notes", notesRefArg, "merge", "--strategy=manual", "--quiet", remote)
 	if err == nil {
 		return nil
 	}
@@ -330,6 +342,6 @@ func (repo *Repo) MergeNotes(remote string) error {
 
 func (repo *Repo) abortNotesMerge() error {
 	_, err := repo.run("abort attribution notes merge", nil,
-		"notes", "--ref="+bylineNotesRef, "merge", "--abort")
+		"notes", notesRefArg, "merge", "--abort")
 	return err
 }
