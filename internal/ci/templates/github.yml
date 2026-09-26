@@ -23,7 +23,7 @@ jobs:
       GIT_BYLINE_CI_SOURCE: ${{ github.event.pull_request.head.sha }}
       GIT_BYLINE_CI_TARGET: ${{ github.event.pull_request.merge_commit_sha }}
       GIT_BYLINE_REMOTE_URL: ${{ github.server_url }}/${{ github.repository }}.git
-      GIT_BYLINE_VERSION: v1.4.2 # x-release-please-version
+      GIT_BYLINE_VERSION: v1.5.0 # x-release-please-version
       GIT_CONFIG_NOSYSTEM: "1"
       GIT_CONFIG_GLOBAL: /dev/null
       GIT_CONFIG_SYSTEM: /dev/null

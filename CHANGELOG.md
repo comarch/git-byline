@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.5.0](https://github.com/comarch/git-byline/compare/v1.4.2...v1.5.0) (2026-09-26)
+
+
+### Features
+
+* **hooks:** sync notes in the managed pre-push hook ([#64](https://github.com/comarch/git-byline/issues/64)) ([e45138c](https://github.com/comarch/git-byline/commit/e45138c8a07afb5ae94c19f18711fd058af5ea72))
+
+
+### Bug Fixes
+
+* **ci:** install pinned release binary in forge workflows ([#50](https://github.com/comarch/git-byline/issues/50)) ([88324a5](https://github.com/comarch/git-byline/commit/88324a5a7cc0551999b34b66e967d4f4f95c0598))
+* **ci:** reconstruct GitLab squash merges from merge request head ([#52](https://github.com/comarch/git-byline/issues/52)) ([88324a5](https://github.com/comarch/git-byline/commit/88324a5a7cc0551999b34b66e967d4f4f95c0598))
+* **ci:** refuse non-HTTPS remote URL in GitLab job ([#62](https://github.com/comarch/git-byline/issues/62)) ([d259d29](https://github.com/comarch/git-byline/commit/d259d29de1fc82e5cd6dac4c0dc231ad674389c6))
+* **ci:** use HTTP basic auth in GitLab forge job ([#51](https://github.com/comarch/git-byline/issues/51)) ([88324a5](https://github.com/comarch/git-byline/commit/88324a5a7cc0551999b34b66e967d4f4f95c0598))
+* **provenance:** record agent edits in their own linked worktree ([#63](https://github.com/comarch/git-byline/issues/63)) ([3f8f231](https://github.com/comarch/git-byline/commit/3f8f2317b0cc9a6c3c82d74066b0f408af5c6a8c))
+* **provenance:** stop guessed notes on fast-forwarded commits ([#57](https://github.com/comarch/git-byline/issues/57)) ([a4b366b](https://github.com/comarch/git-byline/commit/a4b366bd637d7ccd1c04306e9669f4739154283a))
+
 ## [1.4.2](https://github.com/comarch/git-byline/compare/v1.4.1...v1.4.2) (2026-09-22)
 
 

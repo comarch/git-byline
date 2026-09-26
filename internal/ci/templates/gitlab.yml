@@ -22,7 +22,7 @@ git-byline-reconstruct:
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_BYLINE_REMOTE_URL: "$CI_PROJECT_URL"
-    GIT_BYLINE_VERSION: "v1.4.2" # x-release-please-version
+    GIT_BYLINE_VERSION: "v1.5.0" # x-release-please-version
     GIT_BYLINE_RELEASES_URL: "https://github.com/comarch/git-byline/releases/download"
   script:
     - |
