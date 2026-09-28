@@ -68,7 +68,7 @@ func Decode(data []byte) (model.Note, error) {
 		return model.Note{}, fmt.Errorf("decode note header: %w", err)
 	}
 	switch header.Version {
-	case model.NoteVersionV1, model.NoteVersionV2, model.NoteVersion:
+	case model.NoteVersionV1, model.NoteVersionV2, model.NoteVersionV3, model.NoteVersion:
 	default:
 		return model.Note{}, fmt.Errorf("unsupported note version %d", header.Version)
 	}
@@ -195,6 +195,13 @@ func validateNote(note model.Note) error {
 		if err := validateSession(name, session); err != nil {
 			return err
 		}
+		if note.Version < model.NoteVersion && sessionUsagePresent(session) {
+			return fmt.Errorf(
+				"note session %q carries token usage, which requires version %d",
+				name,
+				model.NoteVersion,
+			)
+		}
 	}
 	paths := make([]string, 0, len(note.Files))
 	for path := range note.Files {
@@ -220,14 +227,14 @@ func validateNote(note model.Note) error {
 		if err := model.ValidateRanges(file.Ranges, lineCount); err != nil {
 			return fmt.Errorf("note file %q: %w", path, err)
 		}
-		if note.Version < model.NoteVersion {
+		if note.Version < model.NoteVersionV3 {
 			for index, value := range file.Ranges {
 				if value.Identity != "" {
 					return fmt.Errorf(
 						"note file %q range %d carries a human identity, which requires version %d",
 						path,
 						index,
-						model.NoteVersion,
+						model.NoteVersionV3,
 					)
 				}
 			}
@@ -295,6 +302,24 @@ func validateSession(name string, session model.NoteSession) error {
 	}
 	for _, field := range []struct {
 		name  string
+		value uint64
+	}{
+		{"tokens_in", session.TokensIn},
+		{"tokens_out", session.TokensOut},
+		{"cache_read", session.CacheRead},
+		{"cache_write", session.CacheWrite},
+	} {
+		if field.value > model.MaxCheckpointUsageTokens {
+			return fmt.Errorf(
+				"note session %q %s exceeds %d tokens",
+				name,
+				field.name,
+				model.MaxCheckpointUsageTokens,
+			)
+		}
+	}
+	for _, field := range []struct {
+		name  string
 		value string
 	}{
 		{"first_ts", session.FirstTS},
@@ -308,6 +333,12 @@ func validateSession(name string, session model.NoteSession) error {
 		}
 	}
 	return nil
+}
+
+// sessionUsagePresent reports whether one session carries token usage.
+func sessionUsagePresent(session model.NoteSession) bool {
+	return session.TokensIn != 0 || session.TokensOut != 0 ||
+		session.CacheRead != 0 || session.CacheWrite != 0
 }
 
 // FindFile walks first-parent history to find attribution for the exact blob.

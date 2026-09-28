@@ -153,7 +153,7 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 			return CaptureResult{Warnings: warnings}, nil
 		}
 		if before.BaseCommit != head ||
-			(before.Version >= model.CheckpointVersion && before.BranchRef != branchRef) {
+			(before.Version >= model.CheckpointVersionV2 && before.BranchRef != branchRef) {
 			warnings = append(warnings, "ignored shell_post with a different base or branch context")
 			return CaptureResult{Warnings: warnings}, nil
 		}
@@ -268,7 +268,7 @@ func currentCheckpointLaneID(
 		if checkpointConsumed(record, state) {
 			continue
 		}
-		if record.Version == model.CheckpointVersion &&
+		if record.Version >= model.CheckpointVersionV2 &&
 			record.BranchRef == branchRef &&
 			record.BaseCommit == base {
 			return record.LaneID

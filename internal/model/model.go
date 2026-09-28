@@ -15,9 +15,12 @@ import (
 const (
 	// CheckpointVersionV1 is the legacy checkpoint format without branch context.
 	CheckpointVersionV1 = 1
-	// CheckpointVersion is the supported checkpoint log format. Version 2 adds
-	// a stable lane ID and attached branch ref.
-	CheckpointVersion = 2
+	// CheckpointVersionV2 is the checkpoint format with a stable lane ID and
+	// attached branch ref.
+	CheckpointVersionV2 = 2
+	// CheckpointVersion is the supported checkpoint log format. Version 3 adds
+	// an optional token usage block on AI checkpoints.
+	CheckpointVersion = 3
 	// StateVersionV1 is the legacy state format with one scalar watermark.
 	StateVersionV1 = 1
 	// StateVersionV2 is the legacy state format with per-base lanes.
@@ -29,8 +32,11 @@ const (
 	NoteVersionV1 = 1
 	// NoteVersionV2 is the git note format without human identities.
 	NoteVersionV2 = 2
-	// NoteVersion is the supported git note format.
-	NoteVersion = 3
+	// NoteVersionV3 is the git note format without session token usage.
+	NoteVersionV3 = 3
+	// NoteVersion is the supported git note format. Version 4 adds session
+	// token usage.
+	NoteVersion = 4
 	// NoteSessionSeparator separates an agent from a session map key.
 	NoteSessionSeparator = "::"
 	// MaxTextLines bounds attribution memory for one file.
@@ -46,7 +52,7 @@ const (
 
 // SupportedCheckpointVersion reports whether the checkpoint reader supports version.
 func SupportedCheckpointVersion(version int) bool {
-	return version == CheckpointVersionV1 || version == CheckpointVersion
+	return version >= CheckpointVersionV1 && version <= CheckpointVersion
 }
 
 // Author identifies the source of one or more lines.
@@ -109,21 +115,33 @@ type Snapshot struct {
 	Blob   string `json:"blob,omitempty"`
 }
 
+// CheckpointUsage records the token usage of one agent turn. Only aggregate
+// counts are stored; no prompt, response, or other transcript content is
+// retained.
+type CheckpointUsage struct {
+	MsgID      string `json:"msg_id,omitempty"`
+	TokensIn   uint64 `json:"tokens_in,omitempty"`
+	TokensOut  uint64 `json:"tokens_out,omitempty"`
+	CacheRead  uint64 `json:"cache_read,omitempty"`
+	CacheWrite uint64 `json:"cache_write,omitempty"`
+}
+
 // Checkpoint is one append-only edit record.
 type Checkpoint struct {
-	Version    int        `json:"version"`
-	Kind       string     `json:"kind"`
-	Seq        uint64     `json:"seq"`
-	BaseCommit string     `json:"base_commit,omitempty"`
-	BranchRef  string     `json:"branch_ref,omitempty"`
-	LaneID     string     `json:"lane_id,omitempty"`
-	EventID    string     `json:"event_id,omitempty"`
-	TS         string     `json:"ts"`
-	Type       Author     `json:"type"`
-	Session    string     `json:"session,omitempty"`
-	Agent      string     `json:"agent,omitempty"`
-	Model      string     `json:"model,omitempty"`
-	Files      []Snapshot `json:"files"`
+	Version    int              `json:"version"`
+	Kind       string           `json:"kind"`
+	Seq        uint64           `json:"seq"`
+	BaseCommit string           `json:"base_commit,omitempty"`
+	BranchRef  string           `json:"branch_ref,omitempty"`
+	LaneID     string           `json:"lane_id,omitempty"`
+	EventID    string           `json:"event_id,omitempty"`
+	TS         string           `json:"ts"`
+	Type       Author           `json:"type"`
+	Session    string           `json:"session,omitempty"`
+	Agent      string           `json:"agent,omitempty"`
+	Model      string           `json:"model,omitempty"`
+	Usage      *CheckpointUsage `json:"usage,omitempty"`
+	Files      []Snapshot       `json:"files"`
 }
 
 // PendingFile keeps provenance for uncommitted worktree content.
@@ -165,6 +183,10 @@ type NoteSession struct {
 	Deleted    int    `json:"deleted"`
 	Accepted   int    `json:"accepted"`
 	Overridden int    `json:"overridden"`
+	TokensIn   uint64 `json:"tokens_in,omitempty"`
+	TokensOut  uint64 `json:"tokens_out,omitempty"`
+	CacheRead  uint64 `json:"cache_read,omitempty"`
+	CacheWrite uint64 `json:"cache_write,omitempty"`
 }
 
 // Note is the versioned value stored in refs/notes/byline.
@@ -381,6 +403,45 @@ func ValidateEventID(value string) error {
 	for _, char := range value {
 		if unicode.IsControl(char) {
 			return errors.New("event id contains a control character")
+		}
+	}
+	return nil
+}
+
+// MaxCheckpointUsageTokens bounds one stored token count. The cap rejects
+// absurd values from untrusted sources without rejecting real usage.
+const MaxCheckpointUsageTokens uint64 = 1 << 40
+
+// MaxCheckpointMsgIDBytes bounds one stored usage message identifier.
+const MaxCheckpointMsgIDBytes = 256
+
+// ValidateCheckpointUsage validates one optional checkpoint usage block.
+func ValidateCheckpointUsage(usage CheckpointUsage) error {
+	if len(usage.MsgID) > MaxCheckpointMsgIDBytes {
+		return fmt.Errorf("usage message id exceeds %d bytes", MaxCheckpointMsgIDBytes)
+	}
+	if !utf8.ValidString(usage.MsgID) {
+		return errors.New("usage message id is not valid UTF-8")
+	}
+	if strings.Contains(usage.MsgID, NoteSessionSeparator) {
+		return errors.New("usage message id contains a reserved separator")
+	}
+	for _, char := range usage.MsgID {
+		if unicode.IsControl(char) {
+			return errors.New("usage message id contains a control character")
+		}
+	}
+	for _, field := range []struct {
+		name  string
+		value uint64
+	}{
+		{"tokens_in", usage.TokensIn},
+		{"tokens_out", usage.TokensOut},
+		{"cache_read", usage.CacheRead},
+		{"cache_write", usage.CacheWrite},
+	} {
+		if field.value > MaxCheckpointUsageTokens {
+			return fmt.Errorf("usage %s exceeds %d tokens", field.name, MaxCheckpointUsageTokens)
 		}
 	}
 	return nil

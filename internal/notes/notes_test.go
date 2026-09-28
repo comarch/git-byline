@@ -106,7 +106,7 @@ func TestSessionKeysIncludeAgent(t *testing.T) {
 
 func TestEncodeCurrentVersionGolden(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join("testdata", "note-v3.json")
+	path := filepath.Join("testdata", "note-v4.json")
 	fixture, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +114,9 @@ func TestEncodeCurrentVersionGolden(t *testing.T) {
 	note, err := Decode(fixture)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if note.Sessions[model.NoteSessionKey("droid", "session-1")].TokensIn != 120 {
+		t.Fatalf("golden session tokens_in = %d, want 120", note.Sessions[model.NoteSessionKey("droid", "session-1")].TokensIn)
 	}
 	encoded, err := Encode(note)
 	if err != nil {
@@ -162,6 +165,34 @@ func TestDecodeRejectsIdentityBeforeVersion3(t *testing.T) {
 	if _, err := Decode(data); err == nil ||
 		!strings.Contains(err.Error(), "requires version 3") {
 		t.Fatalf("Decode(v2 with identity) error = %v", err)
+	}
+}
+
+func TestDecodeRejectsUsageBeforeVersion4(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{"version":3,"files":{"a.go":{"blob":"abcd1234",` +
+		`"ranges":[{"start":1,"end":1,"author":"ai","agent":"droid","model":"model","session":"s1"}]}},` +
+		`"sessions":{"droid::s1":{"agent":"droid","model":"model","added":1,"deleted":0,"accepted":1,"overridden":0,"tokens_in":120}}}`)
+	if _, err := Decode(data); err == nil ||
+		!strings.Contains(err.Error(), "requires version 4") {
+		t.Fatalf("Decode(v3 with usage) error = %v", err)
+	}
+}
+
+func TestDecodeAcceptsUsageAtVersion4(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{"version":4,"files":{"a.go":{"blob":"abcd1234",` +
+		`"ranges":[{"start":1,"end":1,"author":"ai","agent":"droid","model":"model","session":"s1"}]}},` +
+		`"sessions":{"droid::s1":{"agent":"droid","model":"model","added":1,"deleted":0,"accepted":1,"overridden":0,` +
+		`"tokens_in":120,"tokens_out":34,"cache_read":56,"cache_write":78}}}`)
+	note, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode(v4 with usage) error = %v", err)
+	}
+	session := note.Sessions[model.NoteSessionKey("droid", "s1")]
+	if session.TokensIn != 120 || session.TokensOut != 34 ||
+		session.CacheRead != 56 || session.CacheWrite != 78 {
+		t.Fatalf("session usage = %+v", session)
 	}
 }
 

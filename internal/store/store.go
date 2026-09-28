@@ -204,7 +204,7 @@ func moveRewrite(branchRef string, moves map[uint64]CheckpointMove, found map[ui
 			return record, false, nil
 		}
 		found[record.Seq] = true
-		if record.Version != model.CheckpointVersion ||
+		if record.Version == model.CheckpointVersionV1 ||
 			model.IsLegacyCheckpointLaneID(record.LaneID) ||
 			record.BranchRef != branchRef {
 			return record, false, fmt.Errorf("checkpoint %d is outside branch context %q", record.Seq, branchRef)
@@ -493,7 +493,7 @@ func validateCheckpoint(record model.Checkpoint) error {
 	if record.Version == model.CheckpointVersionV1 && record.LaneID != "" {
 		return errors.New("version 1 checkpoint contains a lane ID")
 	}
-	if record.Version == model.CheckpointVersion {
+	if record.Version >= model.CheckpointVersionV2 {
 		if err := model.ValidateCheckpointLaneID(record.LaneID); err != nil {
 			return err
 		}
@@ -517,6 +517,17 @@ func validateCheckpoint(record model.Checkpoint) error {
 	}
 	if record.Kind == model.CheckpointKindShellPost && record.Type != model.AuthorAI {
 		return errors.New("shell_post checkpoint must be ai")
+	}
+	if record.Usage != nil {
+		if record.Version < model.CheckpointVersion {
+			return errors.New("token usage requires checkpoint version 3")
+		}
+		if record.Type != model.AuthorAI {
+			return errors.New("only an ai checkpoint may carry token usage")
+		}
+		if err := model.ValidateCheckpointUsage(*record.Usage); err != nil {
+			return fmt.Errorf("validate usage: %w", err)
+		}
 	}
 	if record.Kind != model.CheckpointKindEdit && len(record.Files) > 500 {
 		return errors.New("shell checkpoint contains more than 500 files")
@@ -796,7 +807,7 @@ func (store Store) ReadStateForUpdate() (model.State, bool, error) {
 		return model.State{}, false, fmt.Errorf("unsupported state version %d", wire.Version)
 	}
 	switch state.NotesVersion {
-	case model.NoteVersionV1, model.NoteVersionV2:
+	case model.NoteVersionV1, model.NoteVersionV2, model.NoteVersionV3:
 		state.NotesVersion = model.NoteVersion
 	case model.NoteVersion:
 	default:
