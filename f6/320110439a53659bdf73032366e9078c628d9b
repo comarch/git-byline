@@ -1,0 +1,1 @@
+{"version":3,"files":{"internal/transcript/usage.go":{"blob":"d6367301d40386c557dfa842e300115c646e4d2c","ranges":[{"start":1,"end":103,"author":"human","identity":"wojciech.guziak"}]},"internal/transcript/usage_test.go":{"blob":"147668da213d18f71b56bbd352348134d23ec1eb","ranges":[{"start":1,"end":156,"author":"human","identity":"wojciech.guziak"}]}},"sessions":{}}
