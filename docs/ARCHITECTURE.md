@@ -39,7 +39,7 @@ explicit refspec publishes them.
 | `internal/engine` | Pure line splitting, replay, projection, ranges |
 | `internal/notes` | Canonical note encoding and history lookup |
 | `internal/provenance` | Checkpoint, annotate, blame, and status workflows |
-| `internal/transcript` | Bounded session transcript and settings reads for model names |
+| `internal/transcript` | Bounded session transcript and settings reads for model names and token usage |
 | `internal/dashboard` | Deterministic self-contained HTML reports |
 | `internal/disclosure` | Deterministic native, CycloneDX, and SPDX disclosure input |
 | `internal/hooks` | Idempotent agent and Git hook mutation |
@@ -65,8 +65,12 @@ attached directly to `HEAD`, with limits of 16 MiB for the note, 500 files,
 4. Snapshot bytes are written to the Git object database.
 5. Droid and Claude Code payloads name no model, so an AI checkpoint with the
    fallback model resolves the newest model from the session transcript or
-   the session settings file named by `transcript_path`. Only the model
-   identifier is read; transcript content never enters any record.
+   the session settings file named by `transcript_path`. Claude Code
+   transcripts also name token usage per assistant turn, so an AI checkpoint
+   attaches the usage of the newest turn with usage as optional enrichment.
+   Only the model identifier and aggregate token counts are read; transcript
+   content never enters any record. Droid session files carry no usage today,
+   so their checkpoints resolve none.
 6. A worktree-local retention ref protects pending blobs from Git garbage
    collection.
 7. After commit, `annotate` replays snapshots against the first parent.
@@ -125,7 +129,7 @@ Path: worktree-specific Git directory plus `byline/checkpoints.jsonl`.
 One JSON object per line:
 
 ```json
-{"version":2,"kind":"edit","seq":2,"base_commit":"abc123","branch_ref":"refs/heads/feature","lane_id":"seq:2","ts":"2026-01-02T03:04:05Z","type":"ai","session":"session-1","agent":"droid","model":"model-name","files":[{"path":"src/example.go","exists":true,"blob":"def456"}]}
+{"version":3,"kind":"edit","seq":2,"base_commit":"abc123","branch_ref":"refs/heads/feature","lane_id":"seq:2","ts":"2026-01-02T03:04:05Z","type":"ai","session":"session-1","agent":"droid","model":"model-name","usage":{"msg_id":"msg_01","tokens_in":120,"tokens_out":34,"cache_read":56,"cache_write":78},"files":[{"path":"src/example.go","exists":true,"blob":"def456"}]}
 ```
 
 Properties:
@@ -138,10 +142,13 @@ Properties:
 - one truncated final line is ignored with a warning;
 - the next append removes that truncated tail before writing a record;
 - malformed interior lines fail;
-- readers accept versions 1 and 2; writers emit version 2;
+- readers accept versions 1, 2, and 3; writers emit version 3;
 - version 1 records have no branch context and use compatible base-only
   matching; rewrite upgrades them to version 2 with a stable `legacy:<base>`
   lane ID before changing their base;
+- version 3 adds an optional `usage` block with the token counts of the agent
+  turn and its assistant message id; only AI checkpoints carry usage, and a
+  version below 3 that carries usage is rejected;
 - unknown record versions are skipped with a warning;
 - raw hook input and file content are not embedded.
 
@@ -152,7 +159,7 @@ Properties:
 Path: worktree-specific Git directory plus `byline/state.json`.
 
 ```json
-{"version":3,"last_annotated_commit":"def456","last_checkpoint_seq":42,"notes_version":3,"pending":{"base_commit":"def456","files":{}},"lanes":{"refs/heads/feature":{"seq:2":41}}}
+{"version":3,"last_annotated_commit":"def456","last_checkpoint_seq":42,"notes_version":4,"pending":{"base_commit":"def456","files":{}},"lanes":{"refs/heads/feature":{"seq:2":41}}}
 ```
 
 State uses a temporary file, file sync, and atomic rename. It advances only
@@ -205,7 +212,7 @@ Ref: `refs/notes/byline`.
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "files": {
     "src/example.go": {
       "blob": "abc123",
@@ -243,7 +250,11 @@ Ref: `refs/notes/byline`.
       "added": 4,
       "deleted": 1,
       "accepted": 3,
-      "overridden": 1
+      "overridden": 1,
+      "tokens_in": 120,
+      "tokens_out": 34,
+      "cache_read": 56,
+      "cache_write": 78
     }
   }
 }
@@ -252,18 +263,42 @@ Ref: `refs/notes/byline`.
 Ranges are inclusive and one-based. Every line has exactly one range. Map keys
 and fields serialize deterministically with a trailing newline. Encoders and
 decoders reject notes above 500 files or 16 MiB. Readers accept note versions
-1, 2, and 3. Writers emit version 3. Version 2 added the per-session metrics
-map; version 1 notes have no session map. Version 3 adds the optional
+1, 2, 3, and 4. Writers emit version 4. Version 2 added the per-session
+metrics map; version 1 notes have no session map. Version 3 adds the optional
 `identity` field on `human` and `human-override` ranges, and a note below
-version 3 that carries an identity is rejected.
+version 3 that carries an identity is rejected. Version 4 adds the optional
+token usage fields on note sessions, and a note below version 4 that carries
+token usage is rejected.
 Session keys use the deterministic `<agent>::<session>` shape, so identical
 session identifiers under different agents remain separate. Sessions whose
 output does not survive the commit remain listed with zero counters unless
 their lines were overridden by later attribution.
 
-State readers upgrade the legacy `notes_version: 1` and `notes_version: 2`
-markers in state files to the current note version before validation. The next
-successful annotation writes a version 3 note and state.
+State readers upgrade the legacy `notes_version: 1`, `notes_version: 2`, and
+`notes_version: 3` markers in state files to the current note version before
+validation. The next successful annotation writes a version 4 note and state.
+
+### Session token usage
+
+Claude Code session transcripts record token counts per assistant turn.
+Capture reads them from the same verified transcript tail that model
+resolution reads: the newest turn with usage wins, and the assistant message
+id travels with the counts. Usage is enrichment, not evidence, so an
+unreadable transcript, a turn without usage, or a usage block that fails
+validation drops the usage and keeps the checkpoint. Droid session files
+carry no usage today, so their checkpoints stay without usage until that
+changes, and no value is guessed.
+
+Annotation sums the usage of the checkpoints it consumes into the note
+session. One assistant turn can serve several checkpoints, so a usage block
+with a message id counts once per session; a block without an id cannot be
+deduplicated and counts each time. The counts therefore cover the agent turns
+whose edits this commit consumed, not every turn of the session. A session
+whose lines were not committed reports no usage, consistent with the
+`added` and `deleted` counters.
+
+Usage stays on local surfaces: `blame --tokens`, `stats`, and the dashboard
+show it, and the interop exports do not forward it.
 
 Readers accept only supported note versions. Unknown versions, missing notes,
 and blob mismatches produce warnings and `untracked` output instead of guessed

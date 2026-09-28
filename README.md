@@ -474,7 +474,7 @@ Twenty commands, one binary:
 | `checkpoint <preset>` | Record a human or AI edit snapshot from hook input |
 | `annotate [--drop-stranded]` | Replay pending snapshots and annotate `HEAD`; checkpoints from another branch context park with a warning and resume when branch and base return. `--drop-stranded` validates annotation, then destructively removes parked checkpoints whose base no branch can reach, so preview with `recover` first |
 | `recover [--drop] [--json]` | Preview parked checkpoint branch contexts and blocking branches; explicitly drop unreachable records and retry annotation |
-| `blame [--json] [--color=auto\|always\|never] <file>` | Show line attribution for a file at `HEAD` (file resolves from the working directory first, like `git blame`) |
+| `blame [--json] [--tokens] [--color=auto\|always\|never] <file>` | Show line attribution for a file at `HEAD`; `--tokens` appends session token usage to AI lines (file resolves from the working directory first, like `git blame`) |
 | `status [--json]` | Show checkpoint, pending, and annotation state |
 | `dashboard [--range <rev-range>] [--repo] [--output FILE] [file]` | Generate a self-contained local HTML report |
 | `stats [<rev-range>] [--json]` | Aggregate attribution statistics without reading blobs |

@@ -112,6 +112,11 @@ used and documented as an approximation, not a palette value.
 output is not a terminal, when `NO_COLOR` is set, when `TERM` is `dumb`, or
 when `--color=never` is passed.
 
+`blame --tokens` appends the session token usage of an attributed AI line as a
+plain text suffix, such as `ai:droid/model [120i/34o/8cr/2cw]`, with cache
+counts only when nonzero. The suffix is identical in the plain and colored
+paths, so color stays a presentation choice and never the only signal.
+
 The recorded README animations use a terminal theme built from the same
 palette. Slots the palette does not define, such as the ANSI green and
 yellow positions, take the nearest available step instead of a new color.
