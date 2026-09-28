@@ -22,6 +22,9 @@ import (
 const stashNotesRef = "refs/notes/byline-stash"
 const stashOwnershipRef = "refs/notes/byline-stash-owner"
 
+// stashRef holds the top entry of the stash list.
+const stashRef = "refs/stash"
+
 // autostashRef holds the stash commit of a merge or pull --autostash. Git
 // 2.44 and later update it through reference transactions; older versions
 // write a plain file that no hook reports.
@@ -920,7 +923,7 @@ func HandleReferenceTransaction(repo *gitcmd.Repo, input io.Reader, phase string
 			result.Mapped += value.Mapped
 			result.Written += value.Written
 			result.Warnings = append(result.Warnings, value.Warnings...)
-		case update.Ref == "refs/stash" || update.Ref == autostashRef:
+		case update.Ref == stashRef || update.Ref == autostashRef:
 			value, err := handleStashMove(repo, update)
 			if err != nil {
 				return RewriteResult{}, err
@@ -1397,6 +1400,28 @@ func annotationBoundary(repo *gitcmd.Repo, commit string) string {
 	return ""
 }
 
+// stashPopsOldEntry reports whether update moves refs/stash from a noted
+// top entry to another noted entry, as git stash pop and drop do. git
+// stash store of a conflicting autostash pushes onto the list while
+// MERGE_AUTOSTASH still names the pushed entry, and the entry below stays,
+// so that push is not a pop of it.
+func stashPopsOldEntry(repo *gitcmd.Repo, update rewrite.RefUpdate) (bool, error) {
+	autostash, exists, err := repo.RefValue(autostashRef)
+	if err != nil {
+		return false, err
+	}
+	if exists && autostash == update.New {
+		return false, nil
+	}
+	if _, oldFound, err := repo.ReadNoteRef(stashNotesRef, update.Old); err != nil {
+		return false, err
+	} else if !oldFound {
+		return false, nil
+	}
+	_, newFound, err := repo.ReadNoteRef(stashNotesRef, update.New)
+	return newFound, err
+}
+
 // handleStashMove follows refs/stash and MERGE_AUTOSTASH updates. A new
 // value is a stash push; a deleted value is a pop, drop, or applied
 // autostash.
@@ -1408,14 +1433,12 @@ func handleStashMove(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResult
 		return handleStashDrop(repo, update.Old)
 	}
 	if update.Ref != autostashRef && update.Old != "" && !isZero(update.Old) {
-		if _, oldFound, err := repo.ReadNoteRef(stashNotesRef, update.Old); err != nil {
+		pop, err := stashPopsOldEntry(repo, update)
+		if err != nil {
 			return RewriteResult{}, err
-		} else if oldFound {
-			if _, newFound, err := repo.ReadNoteRef(stashNotesRef, update.New); err != nil {
-				return RewriteResult{}, err
-			} else if newFound {
-				return handleStashDrop(repo, update.Old)
-			}
+		}
+		if pop {
+			return handleStashDrop(repo, update.Old)
 		}
 	}
 	commonLock, err := lock.Acquire(filepath.Join(repo.CommonDir, "byline", "notes.lock"), lockTimeout)
@@ -1530,7 +1553,7 @@ func saveStashedCheckpoints(
 		delete(paths, path)
 	}
 	var result RewriteResult
-	for _, ref := range []string{autostashRef, "refs/stash"} {
+	for _, ref := range []string{autostashRef, stashRef} {
 		stash, exists, err := repo.RefValue(ref)
 		if err != nil {
 			return RewriteResult{}, err
@@ -1606,10 +1629,12 @@ func saveStashNote(
 	for path, file := range note.Files {
 		base.Pending.Files[path] = model.PendingFile{Blob: file.Blob, Ranges: file.Ranges}
 	}
+	blobCache := newRewriteBlobCache()
+	matcherBudget := engine.NewMatcherBudget(maxRewriteMatcherCells)
 	var result RewriteResult
 	saved := 0
 	for _, path := range paths {
-		file, exists, err := stashedFile(repo, stash, oldTip, path, base, records, identity)
+		file, exists, err := stashedFile(repo, stash, oldTip, path, base, records, identity, blobCache, matcherBudget)
 		if err != nil {
 			result.Warnings = append(result.Warnings,
 				fmt.Sprintf("skipped saving consumed checkpoints for stash path %s: %v", path, err))
@@ -1657,12 +1682,14 @@ func stashedFile(
 	base model.State,
 	records []model.Checkpoint,
 	identity string,
+	blobCache *rewriteBlobCache,
+	matcherBudget *engine.MatcherBudget,
 ) (model.NoteFile, bool, error) {
 	blob, exists, err := repo.BlobID(stash, path)
 	if err != nil || !exists {
 		return model.NoteFile{}, false, err
 	}
-	content, err := repo.ReadBlob(blob)
+	content, err := blobCache.Read(repo, blob)
 	if err != nil {
 		return model.NoteFile{}, false, err
 	}
@@ -1678,7 +1705,7 @@ func stashedFile(
 	if err != nil {
 		return model.NoteFile{}, false, err
 	}
-	stashed, err := engine.Project(replayed, content, model.Attribution{Author: model.AuthorHuman, Identity: identity})
+	stashed, err := engine.ProjectWithBudget(replayed, content, model.Attribution{Author: model.AuthorHuman, Identity: identity}, matcherBudget)
 	if err != nil {
 		return model.NoteFile{}, false, err
 	}
@@ -1699,7 +1726,7 @@ func handleStashDrop(repo *gitcmd.Repo, stash string) (RewriteResult, error) {
 		return RewriteResult{}, err
 	}
 	defer commonLock.Release()
-	if _, exists, refErr := repo.RefValue("refs/stash"); refErr != nil {
+	if _, exists, refErr := repo.RefValue(stashRef); refErr != nil {
 		return RewriteResult{}, refErr
 	} else if !exists {
 		return deleteAllDroppedStashNotesLocked(repo)
@@ -1715,7 +1742,7 @@ func handleAutostashDrop(repo *gitcmd.Repo, stash string) (RewriteResult, error)
 	}
 	// An autostash that Git could not apply is now the top stash entry,
 	// which keeps its note for a later pop.
-	if top, exists, err := repo.RefValue("refs/stash"); err != nil {
+	if top, exists, err := repo.RefValue(stashRef); err != nil {
 		return RewriteResult{}, err
 	} else if exists && top == stash {
 		return RewriteResult{}, nil

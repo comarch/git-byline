@@ -20,7 +20,6 @@ func TestCoverageStashPullBranches(t *testing.T) {
 	t.Run("stash push note read", coverageStashPushNoteReadError)
 	t.Run("save skips stashes", coverageSaveSkipsStashes)
 	t.Run("save git errors", coverageSaveGitErrors)
-	t.Run("save note branches", coverageSaveNoteBranches)
 	t.Run("stashed file errors", coverageStashedFileErrors)
 	t.Run("autostash drop", coverageAutostashDropBranches)
 	t.Run("stash merged", coverageStashMergedBranches)
@@ -58,6 +57,12 @@ func stashSaveFixture(t *testing.T) (string, *gitcmd.Repo, string, string, []mod
 func stashFileNote(t *testing.T, repo *gitcmd.Repo, stash string) []byte {
 	t.Helper()
 	return encodeCoverageNote(t, makeCoverageNoteForContent(mustBlob(t, repo, stash, coverageFile), coverageFile, 2))
+}
+
+// stashSaveBudgets bundles the shared budgets saveStashNote passes to
+// stashedFile.
+func stashSaveBudgets() (*rewriteBlobCache, *engine.MatcherBudget) {
+	return newRewriteBlobCache(), engine.NewMatcherBudget(maxRewriteMatcherCells)
 }
 
 // blockCommonLock makes the common notes lock impossible to create.
@@ -128,60 +133,79 @@ func coverageSaveGitErrors(t *testing.T) {
 	}
 }
 
-func coverageSaveNoteBranches(t *testing.T) {
+// A stash note whose ownership read fails cannot be extended.
+func TestCoverageSaveNoteOwnershipReadError(t *testing.T) {
+	root, repo, base, stash, records := stashSaveFixture(t)
+	writeStashFixtureNote(t, repo, stash, stashFileNote(t, repo, stash))
+	fake := fakeRewriteRepo(t, root, "ownership-read-error", "")
+	if _, err := saveStashNote(fake, stash, base, records, []string{coverageFile}); err == nil {
+		t.Fatal("saveStashNote accepted an ownership read failure")
+	}
+}
+
+// saveStashNote skips a stash note git-byline does not own or cannot decode.
+func TestCoverageSaveNoteUnownedAndInvalidStays(t *testing.T) {
+	_, repo, base, stash, records := stashSaveFixture(t)
 	paths := []string{coverageFile}
-	t.Run("ownership read error", func(t *testing.T) {
-		root, repo, base, stash, records := stashSaveFixture(t)
-		writeStashFixtureNote(t, repo, stash, stashFileNote(t, repo, stash))
-		fake := fakeRewriteRepo(t, root, "ownership-read-error", "")
-		if _, err := saveStashNote(fake, stash, base, records, paths); err == nil {
-			t.Fatal("saveStashNote accepted an ownership read failure")
-		}
-	})
-	t.Run("unowned and invalid notes", func(t *testing.T) {
-		_, repo, base, stash, records := stashSaveFixture(t)
-		unowned := stashFileNote(t, repo, stash)
-		if err := repo.WriteNoteRef(stashNotesRef, stash, unowned); err != nil {
-			t.Fatal(err)
-		}
-		result, err := saveStashNote(repo, stash, base, records, paths)
-		if err != nil || result.Written != 0 || !containsCoverageWarning(result.Warnings, "unowned or invalid") {
-			t.Fatalf("unowned stash note = %+v, %v", result, err)
-		}
-		if err := repo.DeleteNoteRef(stashNotesRef, stash); err != nil {
-			t.Fatal(err)
-		}
-		writeStashFixtureNote(t, repo, stash, []byte("invalid\n"))
-		result, err = saveStashNote(repo, stash, base, records, paths)
-		if err != nil || result.Written != 0 || !containsCoverageWarning(result.Warnings, "unowned or invalid") {
-			t.Fatalf("invalid stash note = %+v, %v", result, err)
-		}
-	})
-	t.Run("full note", func(t *testing.T) {
-		_, repo, base, stash, records := stashSaveFixture(t)
-		blob := mustBlob(t, repo, stash, coverageFile)
-		files := make(map[string]model.NoteFile, notes.MaxFiles)
-		for index := 0; index < notes.MaxFiles; index++ {
-			files[fmt.Sprintf("full-%03d.txt", index)] = makeCoverageNoteForContent(blob, coverageFile, 2).Files[coverageFile]
-		}
-		full := encodeCoverageNote(t, model.Note{Version: model.NoteVersion, Files: files})
-		writeStashFixtureNote(t, repo, stash, full)
-		result, err := saveStashNote(repo, stash, base, records, paths)
-		if err != nil || result.Written != 0 || !containsCoverageWarning(result.Warnings, "more than") {
-			t.Fatalf("full stash note = %+v, %v", result, err)
-		}
-		if data, _, err := repo.ReadNoteRef(stashNotesRef, stash); err != nil || string(data) != string(full) {
-			t.Fatalf("full stash note changed: %v", err)
-		}
-	})
-	t.Run("stashed file warning", func(t *testing.T) {
-		root, _, base, stash, records := stashSaveFixture(t)
-		fake := fakeRewriteRepo(t, root, "read-blob-error", "")
-		result, err := saveStashNote(fake, stash, base, records, paths)
-		if err != nil || result.Written != 0 || !containsCoverageWarning(result.Warnings, "stash path "+coverageFile) {
-			t.Fatalf("unreadable stash path = %+v, %v", result, err)
-		}
-	})
+	unowned := stashFileNote(t, repo, stash)
+	if err := repo.WriteNoteRef(stashNotesRef, stash, unowned); err != nil {
+		t.Fatal(err)
+	}
+	result, err := saveStashNote(repo, stash, base, records, paths)
+	if err != nil || result.Written != 0 || !containsCoverageWarning(result.Warnings, "unowned or invalid") {
+		t.Fatalf("unowned stash note = %+v, %v", result, err)
+	}
+	if err := repo.DeleteNoteRef(stashNotesRef, stash); err != nil {
+		t.Fatal(err)
+	}
+	writeStashFixtureNote(t, repo, stash, []byte("invalid\n"))
+	result, err = saveStashNote(repo, stash, base, records, paths)
+	if err != nil || result.Written != 0 || !containsCoverageWarning(result.Warnings, "unowned or invalid") {
+		t.Fatalf("invalid stash note = %+v, %v", result, err)
+	}
+}
+
+// A stash note at the file limit is not extended and stays byte-identical.
+func TestCoverageSaveNoteFullNoteStays(t *testing.T) {
+	_, repo, base, stash, records := stashSaveFixture(t)
+	blob := mustBlob(t, repo, stash, coverageFile)
+	files := make(map[string]model.NoteFile, notes.MaxFiles)
+	for index := 0; index < notes.MaxFiles; index++ {
+		files[fmt.Sprintf("full-%03d.txt", index)] = makeCoverageNoteForContent(blob, coverageFile, 2).Files[coverageFile]
+	}
+	full := encodeCoverageNote(t, model.Note{Version: model.NoteVersion, Files: files})
+	writeStashFixtureNote(t, repo, stash, full)
+	result, err := saveStashNote(repo, stash, base, records, []string{coverageFile})
+	if err != nil || result.Written != 0 || !containsCoverageWarning(result.Warnings, "more than") {
+		t.Fatalf("full stash note = %+v, %v", result, err)
+	}
+	if data, _, err := repo.ReadNoteRef(stashNotesRef, stash); err != nil || string(data) != string(full) {
+		t.Fatalf("full stash note changed: %v", err)
+	}
+}
+
+// An unreadable stash path warns and keeps the other paths going.
+func TestCoverageSaveNoteStashedPathWarning(t *testing.T) {
+	root, _, base, stash, records := stashSaveFixture(t)
+	fake := fakeRewriteRepo(t, root, "read-blob-error", "")
+	result, err := saveStashNote(fake, stash, base, records, []string{coverageFile})
+	if err != nil || result.Written != 0 || !containsCoverageWarning(result.Warnings, "stash path "+coverageFile) {
+		t.Fatalf("unreadable stash path = %+v, %v", result, err)
+	}
+}
+
+// A stash blob over the rewrite budget warns and keeps going.
+func TestCoverageSaveNoteBlobBudgetWarning(t *testing.T) {
+	root, _, base, stash, records := stashSaveFixture(t)
+	fake := fakeRewriteRepo(t, root, "blob-size-budget", "")
+	result, err := saveStashNote(fake, stash, base, records, []string{coverageFile})
+	if err != nil || result.Written != 0 || !containsCoverageWarning(result.Warnings, "stash path "+coverageFile) {
+		t.Fatalf("over-budget stash path = %+v, %v", result, err)
+	}
+}
+
+// Git failures while replacing the stash note surface as errors.
+func TestCoverageSaveNoteWriteErrors(t *testing.T) {
 	for _, tc := range []struct {
 		mode     string
 		existing bool
@@ -197,7 +221,7 @@ func coverageSaveNoteBranches(t *testing.T) {
 				writeStashFixtureNote(t, repo, stash, stashFileNote(t, repo, stash))
 			}
 			fake := fakeRewriteRepo(t, root, tc.mode, "")
-			if _, err := saveStashNote(fake, stash, base, records, paths); err == nil {
+			if _, err := saveStashNote(fake, stash, base, records, []string{coverageFile}); err == nil {
 				t.Fatalf("saveStashNote accepted %s", tc.mode)
 			}
 		})
@@ -207,13 +231,14 @@ func coverageSaveNoteBranches(t *testing.T) {
 func coverageStashedFileErrors(t *testing.T) {
 	root, repo, base, stash, records := stashSaveFixture(t)
 	state := model.NewState()
-	if file, exists, err := stashedFile(repo, stash, base, "missing.txt", state, records, ""); err != nil || exists {
+	cache, budget := stashSaveBudgets()
+	if file, exists, err := stashedFile(repo, stash, base, "missing.txt", state, records, "", cache, budget); err != nil || exists {
 		t.Fatalf("path the stash lacks = %+v, %t, %v", file, exists, err)
 	}
 	for _, mode := range []string{"ls-tree-error", "read-blob-error"} {
 		t.Run(mode, func(t *testing.T) {
 			fake := fakeRewriteRepo(t, root, mode, "")
-			if _, _, err := stashedFile(fake, stash, base, coverageFile, state, records, ""); err == nil {
+			if _, _, err := stashedFile(fake, stash, base, coverageFile, state, records, "", cache, budget); err == nil {
 				t.Fatalf("stashedFile accepted %s", mode)
 			}
 		})
@@ -247,13 +272,13 @@ func coverageStashedFileErrors(t *testing.T) {
 		{"unsupported checkpoint author", state, checkpoint(model.AuthorUntracked, short)},
 		{"binary checkpoint", state, checkpoint(model.AuthorHuman, binary)},
 	} {
-		if _, _, err := stashedFile(repo, stash, base, coverageFile, tc.state, tc.records, ""); err == nil {
+		if _, _, err := stashedFile(repo, stash, base, coverageFile, tc.state, tc.records, "", cache, budget); err == nil {
 			t.Fatalf("stashedFile accepted %s", tc.name)
 		}
 	}
 	write(t, root, coverageFile, "bin\x00\n")
 	binaryStash := strings.TrimSpace(git(t, root, "stash", "create", "binary"))
-	if _, _, err := stashedFile(repo, binaryStash, base, coverageFile, state, nil, ""); err == nil {
+	if _, _, err := stashedFile(repo, binaryStash, base, coverageFile, state, nil, "", cache, budget); err == nil {
 		t.Fatal("stashedFile accepted binary stash content")
 	}
 }

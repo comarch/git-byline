@@ -43,16 +43,16 @@ func agentEditsBeforePull(t *testing.T, root string, repo *gitcmd.Repo) {
 
 // refTransaction runs the reference-transaction hook for one update of ref.
 // An empty value stands for the zero object ID.
-func refTransaction(t *testing.T, repo *gitcmd.Repo, ref, old, new string) RewriteResult {
+func refTransaction(t *testing.T, repo *gitcmd.Repo, ref, old, newValue string) RewriteResult {
 	t.Helper()
 	zero := strings.Repeat("0", 40)
 	if old == "" {
 		old = zero
 	}
-	if new == "" {
-		new = zero
+	if newValue == "" {
+		newValue = zero
 	}
-	input := old + " " + new + " " + ref + "\n"
+	input := old + " " + newValue + " " + ref + "\n"
 	result, err := HandleReferenceTransaction(repo, strings.NewReader(input), "committed")
 	if err != nil {
 		t.Fatal(err)
@@ -100,55 +100,56 @@ func assertNoStashNotes(t *testing.T, repo *gitcmd.Repo) {
 	}
 }
 
-func TestStashPopAfterFastForwardPullKeepsAgentLines(t *testing.T) {
-	t.Parallel()
-	ai, human, untracked := model.AuthorAI, model.AuthorHuman, model.AuthorUntracked
-	cases := []struct {
-		name    string
-		tipNote bool
-		forge   []model.Author
-	}{
-		// The pulled line has no evidence until the forge note arrives.
-		{"tip without note", false, []model.Author{ai, human, human, untracked}},
-		{"tip note fetched before the pop", true, []model.Author{ai, human, human, human}},
+// stashPopAfterFastForwardPull runs the issue-55 flow: agent edits, a
+// stash, a fast-forward pull, and a pop. When tipNote is set it first
+// writes a note for the pulled tip, as a synced note would deliver.
+func stashPopAfterFastForwardPull(t *testing.T, tipNote bool, forge ...model.Author) {
+	t.Helper()
+	root, repo, base, tip := stashPullRepo(t)
+	agentEditsBeforePull(t, root, repo)
+	git(t, root, "stash", "-q")
+	stash := strings.TrimSpace(git(t, root, "rev-parse", "refs/stash"))
+	if result := refTransaction(t, repo, "refs/stash", "", stash); result.Written != 0 {
+		t.Fatalf("stash push without pending ranges = %+v, want no note", result)
 	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			root, repo, base, tip := stashPullRepo(t)
-			agentEditsBeforePull(t, root, repo)
-			git(t, root, "stash", "-q")
-			stash := strings.TrimSpace(git(t, root, "rev-parse", "refs/stash"))
-			if result := refTransaction(t, repo, "refs/stash", "", stash); result.Written != 0 {
-				t.Fatalf("stash push without pending ranges = %+v, want no note", result)
-			}
-			git(t, root, "merge", "-q", "--ff-only", "forge")
-			transaction := runFastForwardHooks(t, repo, base, tip)
-			if transaction.Written != 1 {
-				t.Fatalf("fast-forward = %+v, want the consumed checkpoints saved in the stash note", transaction)
-			}
-			// Checkpoints on local.txt stay live, so only forge.txt is saved.
-			if note := readStashNote(t, repo, stash); len(note.Files) != 1 || note.Files["forge.txt"].Blob == "" {
-				t.Fatalf("stash note after fast-forward = %+v, want only forge.txt", note)
-			}
-			if tc.tipNote {
-				fetched := makeCoverageNoteForContent(mustBlob(t, repo, tip, "forge.txt"), "forge.txt", 3)
-				if err := repo.WriteNote(tip, encodeCoverageNote(t, fetched)); err != nil {
-					t.Fatal(err)
-				}
-			}
+	git(t, root, "merge", "-q", "--ff-only", "forge")
+	transaction := runFastForwardHooks(t, repo, base, tip)
+	if transaction.Written != 1 {
+		t.Fatalf("fast-forward = %+v, want the consumed checkpoints saved in the stash note", transaction)
+	}
+	// Checkpoints on local.txt stay live, so only forge.txt is saved.
+	if note := readStashNote(t, repo, stash); len(note.Files) != 1 || note.Files["forge.txt"].Blob == "" {
+		t.Fatalf("stash note after fast-forward = %+v, want only forge.txt", note)
+	}
+	if tipNote {
+		fetched := makeCoverageNoteForContent(mustBlob(t, repo, tip, "forge.txt"), "forge.txt", 3)
+		if err := repo.WriteNote(tip, encodeCoverageNote(t, fetched)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
-			git(t, root, "stash", "pop", "-q")
-			if result := refTransaction(t, repo, "refs/stash", stash, ""); result.Mapped != 1 {
-				t.Fatalf("stash pop = %+v, want forge.txt restored", result)
-			}
-			assertNoStashNotes(t, repo)
-			assertNoParkedCheckpoints(t, repo, commitAndAnnotate(t, root, repo, tip, "stashed work"))
-			assertBlameAuthors(t, repo, "forge.txt", tc.forge...)
-			assertBlameAuthors(t, repo, "local.txt", human, ai)
-		})
+	git(t, root, "stash", "pop", "-q")
+	if result := refTransaction(t, repo, "refs/stash", stash, ""); result.Mapped != 1 {
+		t.Fatalf("stash pop = %+v, want forge.txt restored", result)
 	}
+	assertNoStashNotes(t, repo)
+	assertNoParkedCheckpoints(t, repo, commitAndAnnotate(t, root, repo, tip, "stashed work"))
+	assertBlameAuthors(t, repo, "forge.txt", forge...)
+	assertBlameAuthors(t, repo, "local.txt", model.AuthorHuman, model.AuthorAI)
+}
+
+// The pulled line has no evidence until the forge note arrives.
+func TestStashPopAfterFastForwardPullWithoutTipNote(t *testing.T) {
+	t.Parallel()
+	stashPopAfterFastForwardPull(t, false,
+		model.AuthorAI, model.AuthorHuman, model.AuthorHuman, model.AuthorUntracked)
+}
+
+// The forge note fetched before the pop turns the pulled line human.
+func TestStashPopAfterFastForwardPullWithFetchedTipNote(t *testing.T) {
+	t.Parallel()
+	stashPopAfterFastForwardPull(t, true,
+		model.AuthorAI, model.AuthorHuman, model.AuthorHuman, model.AuthorHuman)
 }
 
 func TestStashPopAfterFastForwardPullWithAddedAndDeletedPaths(t *testing.T) {
@@ -205,6 +206,24 @@ func TestStashDropAfterFastForwardPullRestoresNothing(t *testing.T) {
 		model.AuthorUntracked, model.AuthorUntracked, model.AuthorUntracked, model.AuthorHuman)
 }
 
+// TestStashPushOverEntryWithoutNote covers a push onto a list whose old top
+// has no note: an ordinary push, not a pop of the entry below.
+func TestStashPushOverEntryWithoutNote(t *testing.T) {
+	t.Parallel()
+	root, repo, _, _ := stashPullRepo(t)
+	write(t, root, "local.txt", "local\nfirst\n")
+	git(t, root, "stash", "-q")
+	entry := strings.TrimSpace(git(t, root, "rev-parse", "refs/stash"))
+	refTransaction(t, repo, "refs/stash", "", entry)
+	write(t, root, "forge.txt", "one\ntwo\nsecond\n")
+	git(t, root, "stash", "-q")
+	top := strings.TrimSpace(git(t, root, "rev-parse", "refs/stash"))
+	if result := refTransaction(t, repo, "refs/stash", entry, top); result.Written != 0 {
+		t.Fatalf("push over an entry without a note = %+v, want an ordinary push", result)
+	}
+	assertNoStashNotes(t, repo)
+}
+
 func TestAutostashFastForwardPullKeepsAgentLines(t *testing.T) {
 	t.Parallel()
 	root, repo, base, tip := stashPullRepo(t)
@@ -254,6 +273,38 @@ func TestConflictingAutostashKeepsAgentLinesUntilDrop(t *testing.T) {
 	assertNoStashNotes(t, repo)
 	commitAndAnnotate(t, root, repo, tip, "resolved")
 	assertBlameAuthors(t, repo, "forge.txt", model.AuthorHuman, model.AuthorAI, model.AuthorUntracked)
+}
+
+// TestConflictingAutostashStoreKeepsOlderStashNote covers git stash store of
+// a conflicting autostash: it pushes onto the list with the older entry
+// below, while MERGE_AUTOSTASH still names the stored entry. The store must
+// not read as a pop of the entry it covers.
+func TestConflictingAutostashStoreKeepsOlderStashNote(t *testing.T) {
+	t.Parallel()
+	root, repo, base, tip := stashPullRepo(t)
+	// An older entry with its note stays in the list.
+	write(t, root, "local.txt", "local\nstashed\n")
+	git(t, root, "stash", "-q")
+	entry := strings.TrimSpace(git(t, root, "rev-parse", "refs/stash"))
+	writeStashFixtureNote(t, repo, entry,
+		encodeCoverageNote(t, makeCoverageNoteForContent(mustBlob(t, repo, entry, "local.txt"), "local.txt", 2)))
+	// The agent edits the line next to the one the pull appends, so the
+	// autostash does not apply cleanly.
+	write(t, root, "forge.txt", "one\nagent two\n")
+	captureAI(t, repo, "stash-session", "forge.txt")
+	stash, _ := autostashFastForward(t, root, repo, base, tip)
+	// Git stores the autostash it cannot apply onto the list and deletes
+	// MERGE_AUTOSTASH only after the store.
+	git(t, root, "stash", "store", "-q", "-m", "autostash", stash)
+	if result := refTransaction(t, repo, "refs/stash", entry, stash); result.Written != 0 {
+		t.Fatalf("stored autostash over an entry = %+v, want both notes kept", result)
+	}
+	git(t, root, "update-ref", "-d", "MERGE_AUTOSTASH")
+	if result := refTransaction(t, repo, "MERGE_AUTOSTASH", stash, ""); result.Written != 0 || result.Mapped != 0 {
+		t.Fatalf("deleted MERGE_AUTOSTASH = %+v, want the stored autostash untouched", result)
+	}
+	readStashNote(t, repo, entry)
+	readStashNote(t, repo, stash)
 }
 
 func TestAutostashAbortKeepsPendingRanges(t *testing.T) {

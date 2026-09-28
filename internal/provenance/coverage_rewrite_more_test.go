@@ -92,6 +92,7 @@ func TestCoverageReferenceAndHeadErrorBranches(t *testing.T) {
 
 func TestCoverageStashMoveAndDropBranches(t *testing.T) {
 	t.Run("move old note error", coverageStashMoveOldNoteError)
+	t.Run("move autostash read error", coverageStashMoveAutostashReadError)
 	t.Run("move new note error", coverageStashMoveNewNoteError)
 	t.Run("move common lock", coverageStashMoveCommonLockError)
 	t.Run("move worktree lock", coverageStashMoveWorktreeLockError)
@@ -511,6 +512,16 @@ func coverageStashMoveOldNoteError(t *testing.T) {
 		Old: strings.Repeat("a", 40), New: stash,
 	}); err == nil {
 		t.Fatal("handleStashMove accepted an old note read failure")
+	}
+}
+
+func coverageStashMoveAutostashReadError(t *testing.T) {
+	root, _, stash, _ := stashCoverageFixture(t)
+	repo := fakeRewriteRepo(t, root, "autostash-ref-error", "")
+	if _, err := handleStashMove(repo, rewrite.RefUpdate{
+		Ref: "refs/stash", Old: strings.Repeat("a", 40), New: stash,
+	}); err == nil {
+		t.Fatal("handleStashMove accepted an autostash read failure")
 	}
 }
 
