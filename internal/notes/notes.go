@@ -24,7 +24,36 @@ const (
 	MaxFiles = 500
 )
 
-type noteSession = model.NoteSession
+type noteSession struct {
+	model.NoteSession
+	hasTokenUsageField bool
+}
+
+var tokenUsageFields = map[string]struct{}{
+	"tokens_in":   {},
+	"tokens_out":  {},
+	"cache_read":  {},
+	"cache_write": {},
+}
+
+func (session *noteSession) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&session.NoteSession); err != nil {
+		return err
+	}
+	for name := range tokenUsageFields {
+		if _, ok := fields[name]; ok {
+			session.hasTokenUsageField = true
+			break
+		}
+	}
+	return nil
+}
 
 // Encode returns canonical JSON with a trailing newline.
 func Encode(note model.Note) ([]byte, error) {
@@ -111,10 +140,17 @@ func Decode(data []byte) (model.Note, error) {
 	if wire.Version >= model.NoteVersionV2 {
 		note.Sessions = make(map[string]model.NoteSession, len(wire.Sessions))
 		for name, session := range wire.Sessions {
-			if err := validateSession(name, *session); err != nil {
+			if err := validateSession(name, session.NoteSession); err != nil {
 				return model.Note{}, err
 			}
-			note.Sessions[name] = *session
+			if wire.Version < model.NoteVersion && session.hasTokenUsageField {
+				return model.Note{}, fmt.Errorf(
+					"note session %q carries token usage, which requires version %d",
+					name,
+					model.NoteVersion,
+				)
+			}
+			note.Sessions[name] = session.NoteSession
 		}
 	}
 	if note.Files == nil {

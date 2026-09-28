@@ -192,6 +192,24 @@ func TestDecodeRejectsUsageBeforeVersion4(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsExplicitZeroUsageBeforeVersion4(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"tokens_in", "tokens_out", "cache_read", "cache_write"} {
+		field := field
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			data := []byte(`{"version":3,"files":{"a.go":{"blob":"abcd1234",` +
+				`"ranges":[{"start":1,"end":1,"author":"ai","agent":"droid","model":"model","session":"s1"}]}},` +
+				`"sessions":{"droid::s1":{"agent":"droid","model":"model","added":1,"deleted":0,"accepted":1,"overridden":0,"` +
+				field + `":0}}}`)
+			if _, err := Decode(data); err == nil ||
+				!strings.Contains(err.Error(), "requires version 4") {
+				t.Fatalf("Decode(v3 with explicit zero %s) error = %v", field, err)
+			}
+		})
+	}
+}
+
 func TestDecodeAcceptsUsageAtVersion4(t *testing.T) {
 	t.Parallel()
 	data := []byte(`{"version":4,"files":{"a.go":{"blob":"abcd1234",` +
