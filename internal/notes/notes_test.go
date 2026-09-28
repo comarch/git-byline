@@ -210,6 +210,23 @@ func TestDecodeRejectsExplicitZeroUsageBeforeVersion4(t *testing.T) {
 	}
 }
 
+func TestValidateNoteRejectsUsageBeforeVersion4(t *testing.T) {
+	t.Parallel()
+	note := model.Note{
+		Version: model.NoteVersionV3,
+		Sessions: map[string]model.NoteSession{
+			"droid::s1": {
+				Agent:    "droid",
+				TokensIn: 1,
+			},
+		},
+	}
+	if err := validateNote(note); err == nil ||
+		!strings.Contains(err.Error(), "requires version 4") {
+		t.Fatalf("validateNote(v3 with usage) error = %v", err)
+	}
+}
+
 func TestDecodeAcceptsUsageAtVersion4(t *testing.T) {
 	t.Parallel()
 	data := []byte(`{"version":4,"files":{"a.go":{"blob":"abcd1234",` +
@@ -247,6 +264,11 @@ func TestDecodeV2Sessions(t *testing.T) {
 		{
 			name: "null session",
 			data: `{"version":2,"files":{},"sessions":{"droid::session-1":null}}`,
+			err:  true,
+		},
+		{
+			name: "invalid session shape",
+			data: `{"version":2,"files":{},"sessions":{"droid::session-1":[]}}`,
 			err:  true,
 		},
 		{
