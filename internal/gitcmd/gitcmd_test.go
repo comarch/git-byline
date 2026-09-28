@@ -1,6 +1,7 @@
 package gitcmd
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -397,10 +398,25 @@ func TestRewriteRepositoryHelpers(t *testing.T) {
 	if err := repo.WriteNoteRef("refs/notes/helper", first, note); err != nil {
 		t.Fatal(err)
 	}
+	replacement := []byte("replacement\n")
+	if replaced, err := repo.ReplaceNoteRefIfEqual(
+		"refs/notes/helper", first, []byte("other\n"), replacement,
+	); err != nil || replaced {
+		t.Fatalf("ReplaceNoteRefIfEqual(mismatch) = %t, %v", replaced, err)
+	}
+	if replaced, err := repo.ReplaceNoteRefIfEqual(
+		"refs/notes/helper", first, note, replacement,
+	); err != nil || !replaced {
+		t.Fatalf("ReplaceNoteRefIfEqual(match) = %t, %v", replaced, err)
+	}
+	if got, found, err := repo.ReadNoteRef("refs/notes/helper", first); err != nil ||
+		!found || !bytes.Equal(got, replacement) {
+		t.Fatalf("replaced note = %q, %t, %v", got, found, err)
+	}
 	if deleted, err := repo.DeleteNoteRefIfEqual("refs/notes/helper", first, []byte("other\n")); err != nil || deleted {
 		t.Fatalf("DeleteNoteRefIfEqual(mismatch) = %t, %v", deleted, err)
 	}
-	if deleted, err := repo.DeleteNoteRefIfEqual("refs/notes/helper", first, note); err != nil || !deleted {
+	if deleted, err := repo.DeleteNoteRefIfEqual("refs/notes/helper", first, replacement); err != nil || !deleted {
 		t.Fatalf("DeleteNoteRefIfEqual(match) = %t, %v", deleted, err)
 	}
 }

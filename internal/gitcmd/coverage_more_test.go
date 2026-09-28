@@ -351,11 +351,45 @@ exit 2
 	if err := readFailure.WriteNoteRef(coverageNotesName, coverageOID, []byte("note")); err == nil {
 		t.Fatal("WriteNoteRef accepted a failed note read")
 	}
+	if _, err := readFailure.ReplaceNoteRefIfEqual(
+		coverageNotesName, coverageOID, []byte("note"), []byte("replacement"),
+	); err == nil {
+		t.Fatal("ReplaceNoteRefIfEqual accepted a failed note read")
+	}
+	if _, err := readFailure.ReplaceNoteRefIfEqual(
+		"refs/heads/main", coverageOID, []byte("note"), []byte("replacement"),
+	); err == nil {
+		t.Fatal("ReplaceNoteRefIfEqual accepted an invalid note ref")
+	}
+	if _, err := readFailure.ReplaceNoteRefIfEqual(
+		coverageNotesName, "bad", []byte("note"), []byte("replacement"),
+	); err == nil {
+		t.Fatal("ReplaceNoteRefIfEqual accepted an invalid commit")
+	}
 
 	missingDirectory := coverageOutputRepo(t, "", "", 1)
 	missingDirectory.GitDir = filepath.Join(missingDirectory.Root, "missing")
 	if err := missingDirectory.WriteNoteRef(coverageNotesName, coverageOID, []byte("note")); err == nil {
 		t.Fatal("WriteNoteRef accepted an unavailable note directory")
+	}
+	replaceMissingDirectory := coverageOutputRepo(t, "note", "", 0)
+	replaceMissingDirectory.GitDir = filepath.Join(replaceMissingDirectory.Root, "missing")
+	if _, err := replaceMissingDirectory.ReplaceNoteRefIfEqual(
+		coverageNotesName, coverageOID, []byte("note"), []byte("replacement"),
+	); err == nil {
+		t.Fatal("ReplaceNoteRefIfEqual accepted an unavailable note directory")
+	}
+	replaceFailure := coverageRepo(t, `
+if [ "$1" = "notes" ] && [ "$3" = "show" ]; then
+	printf 'note'
+	exit 0
+fi
+exit 2
+`)
+	if _, err := replaceFailure.ReplaceNoteRefIfEqual(
+		coverageNotesName, coverageOID, []byte("note"), []byte("replacement"),
+	); err == nil {
+		t.Fatal("ReplaceNoteRefIfEqual accepted a failed write")
 	}
 }
 

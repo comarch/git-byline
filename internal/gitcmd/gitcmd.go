@@ -1083,12 +1083,42 @@ func (repo *Repo) WriteNoteRef(ref, commit string, data []byte) error {
 		}
 		return errors.New("commit already has a different attribution note")
 	}
+	return repo.writeNoteData(ref, commit, data, false)
+}
+
+// ReplaceNoteRefIfEqual replaces a note only when its bytes still match.
+func (repo *Repo) ReplaceNoteRefIfEqual(ref, commit string, expected, replacement []byte) (bool, error) {
+	if err := validateNoteRef(ref); err != nil {
+		return false, err
+	}
+	if !model.ValidObjectID(commit) {
+		return false, errors.New("invalid commit object ID")
+	}
+	actual, found, err := repo.ReadNoteRef(ref, commit)
+	if err != nil {
+		return false, err
+	}
+	if !found || !bytes.Equal(actual, expected) {
+		return false, nil
+	}
+	if err := repo.writeNoteData(ref, commit, replacement, true); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (repo *Repo) writeNoteData(ref, commit string, data []byte, force bool) error {
 	path, err := tempFile(repo.GitDir, "byline-note-", data)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(path)
-	_, err = repo.run("write attribution note", nil, "notes", "--ref="+ref, "add", "-F", path, commit)
+	args := []string{"notes", "--ref=" + ref, "add"}
+	if force {
+		args = append(args, "-f")
+	}
+	args = append(args, "-F", path, commit)
+	_, err = repo.run("write attribution note", nil, args...)
 	return noteWriteError(err)
 }
 

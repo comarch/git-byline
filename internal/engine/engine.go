@@ -458,12 +458,14 @@ func equalPairsBudget(oldLines, newLines []string, budget *MatcherBudget) ([]lin
 
 func exactPairsBudget(oldLines, newLines []string, budget *MatcherBudget) ([]linePair, error) {
 	prefix := 0
-	for prefix < len(oldLines) && prefix < len(newLines) && oldLines[prefix] == newLines[prefix] {
+	for prefix < len(oldLines) && prefix < len(newLines) &&
+		exactLineEqual(oldLines[prefix], newLines[prefix]) {
 		prefix++
 	}
 	oldEnd := len(oldLines)
 	newEnd := len(newLines)
-	for oldEnd > prefix && newEnd > prefix && oldLines[oldEnd-1] == newLines[newEnd-1] {
+	for oldEnd > prefix && newEnd > prefix &&
+		exactLineEqual(oldLines[oldEnd-1], newLines[newEnd-1]) {
 		oldEnd--
 		newEnd--
 	}
@@ -475,13 +477,14 @@ func exactPairsBudget(oldLines, newLines []string, budget *MatcherBudget) ([]lin
 	middleNew := newLines[prefix:newEnd]
 	var middle []linePair
 	if len(middleOld) > 0 && len(middleNew) > 0 {
-		if len(middleOld) <= maxLCSCells/len(middleNew) {
-			if budget != nil && !budget.reserve(len(middleOld), len(middleNew)) {
-				return nil, ErrMatcherBudget
-			}
-			middle = lcsPairs(middleOld, middleNew)
+		var err error
+		if hasCRLF(middleOld) || hasCRLF(middleNew) {
+			middle, err = matchLinePairs(exactLineKeys(middleOld), exactLineKeys(middleNew), budget)
 		} else {
-			middle = greedyPairs(middleOld, middleNew)
+			middle, err = matchLinePairs(middleOld, middleNew, budget)
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	for _, value := range middle {
@@ -492,6 +495,53 @@ func exactPairsBudget(oldLines, newLines []string, budget *MatcherBudget) ([]lin
 		pairs = append(pairs, linePair{old: oldEnd + i, new: newEnd + i})
 	}
 	return pairs, nil
+}
+
+type exactLineKey struct {
+	content    string
+	terminated bool
+}
+
+func exactLineEqual(left, right string) bool {
+	return left == right || exactLineKeyFor(left) == exactLineKeyFor(right)
+}
+
+func exactLineKeys(lines []string) []exactLineKey {
+	keys := make([]exactLineKey, len(lines))
+	for index, line := range lines {
+		keys[index] = exactLineKeyFor(line)
+	}
+	return keys
+}
+
+func exactLineKeyFor(line string) exactLineKey {
+	switch {
+	case strings.HasSuffix(line, "\r\n"):
+		return exactLineKey{content: line[:len(line)-2], terminated: true}
+	case strings.HasSuffix(line, "\n"):
+		return exactLineKey{content: line[:len(line)-1], terminated: true}
+	default:
+		return exactLineKey{content: line}
+	}
+}
+
+func hasCRLF(lines []string) bool {
+	for _, line := range lines {
+		if strings.HasSuffix(line, "\r\n") {
+			return true
+		}
+	}
+	return false
+}
+
+func matchLinePairs[T comparable](oldLines, newLines []T, budget *MatcherBudget) ([]linePair, error) {
+	if len(oldLines) <= maxLCSCells/len(newLines) {
+		if budget != nil && !budget.reserve(len(oldLines), len(newLines)) {
+			return nil, ErrMatcherBudget
+		}
+		return lcsPairs(oldLines, newLines), nil
+	}
+	return greedyPairs(oldLines, newLines), nil
 }
 
 func whitespacePairsBudget(
@@ -512,14 +562,9 @@ func whitespacePairsBudget(
 	for i, line := range newLines {
 		newKeys[i] = strings.TrimSpace(line)
 	}
-	var pairs []linePair
-	if len(oldLines) <= maxLCSCells/len(newLines) {
-		if budget != nil && !budget.reserve(len(oldLines), len(newLines)) {
-			return nil, ErrMatcherBudget
-		}
-		pairs = lcsPairs(oldKeys, newKeys)
-	} else {
-		pairs = greedyPairs(oldKeys, newKeys)
+	pairs, err := matchLinePairs(oldKeys, newKeys, budget)
+	if err != nil {
+		return nil, err
 	}
 	for i := range pairs {
 		pairs[i].old += oldOffset
@@ -540,7 +585,7 @@ func (budget *MatcherBudget) reserve(oldCount, newCount int) bool {
 	return true
 }
 
-func lcsPairs(oldLines, newLines []string) []linePair {
+func lcsPairs[T comparable](oldLines, newLines []T) []linePair {
 	width := len(newLines) + 1
 	cells := make([]uint32, (len(oldLines)+1)*width)
 	at := func(i, j int) int { return i*width + j }
@@ -571,8 +616,8 @@ func lcsPairs(oldLines, newLines []string) []linePair {
 	return pairs
 }
 
-func greedyPairs(oldLines, newLines []string) []linePair {
-	positions := make(map[string][]int, len(oldLines))
+func greedyPairs[T comparable](oldLines, newLines []T) []linePair {
+	positions := make(map[T][]int, len(oldLines))
 	for i, line := range oldLines {
 		positions[line] = append(positions[line], i)
 	}

@@ -153,7 +153,11 @@ func TestMoveCheckpointsRewritesListedRecords(t *testing.T) {
 	}
 	if err := value.MoveCheckpoints("refs/heads/main", map[uint64]CheckpointMove{
 		1: {BaseCommit: "aaaa", LaneID: model.CheckpointLaneID(3)},
-		2: {BaseCommit: "bbbb", LaneID: model.CheckpointLaneID(1)},
+		2: {
+			BaseCommit: "bbbb",
+			LaneID:     model.CheckpointLaneID(1),
+			Files:      []model.Snapshot{{Path: "kept.go", Exists: true, Blob: "dcba4321"}},
+		},
 		3: {BaseCommit: "aaaa", LaneID: model.CheckpointLaneID(3)},
 	}); err != nil {
 		t.Fatal(err)
@@ -165,16 +169,19 @@ func TestMoveCheckpointsRewritesListedRecords(t *testing.T) {
 	want := []struct {
 		base string
 		lane string
+		path string
 	}{
-		{"aaaa", model.CheckpointLaneID(3)},
-		{"bbbb", model.CheckpointLaneID(1)},
-		{"aaaa", model.CheckpointLaneID(3)},
-		{"aaaa", model.CheckpointLaneID(1)},
+		{"aaaa", model.CheckpointLaneID(3), "file.go"},
+		{"bbbb", model.CheckpointLaneID(1), "kept.go"},
+		{"aaaa", model.CheckpointLaneID(3), "file.go"},
+		{"aaaa", model.CheckpointLaneID(1), "file.go"},
 	}
 	for i, expected := range want {
 		if records[i].BaseCommit != expected.base || records[i].LaneID != expected.lane ||
-			records[i].BranchRef != "refs/heads/main" || records[i].Seq != uint64(i+1) {
-			t.Fatalf("record %d = %+v, want base %s lane %s", i+1, records[i], expected.base, expected.lane)
+			records[i].BranchRef != "refs/heads/main" || records[i].Seq != uint64(i+1) ||
+			len(records[i].Files) != 1 || records[i].Files[0].Path != expected.path {
+			t.Fatalf("record %d = %+v, want base %s lane %s path %s",
+				i+1, records[i], expected.base, expected.lane, expected.path)
 		}
 	}
 
@@ -232,6 +239,7 @@ func TestMoveCheckpointsRejectsInvalidMovesWithoutMutation(t *testing.T) {
 		{"symbolic target", "refs/heads/main", map[uint64]CheckpointMove{3: {BaseCommit: "main", LaneID: lane}}, "move target for checkpoint 3"},
 		{"invalid lane", "refs/heads/main", map[uint64]CheckpointMove{3: {BaseCommit: "bbbb", LaneID: "lane"}}, "move lane for checkpoint 3"},
 		{"legacy lane", "refs/heads/main", map[uint64]CheckpointMove{3: {BaseCommit: "bbbb", LaneID: model.LegacyCheckpointLaneID("aaaa")}}, "move lane for checkpoint 3"},
+		{"empty files", "refs/heads/main", map[uint64]CheckpointMove{3: {BaseCommit: "bbbb", LaneID: lane, Files: []model.Snapshot{}}}, "files are empty"},
 		{"version one record", "refs/heads/main", map[uint64]CheckpointMove{1: {BaseCommit: "bbbb", LaneID: lane}}, "checkpoint 1 is outside branch context"},
 		{"other branch", "refs/heads/main", map[uint64]CheckpointMove{2: {BaseCommit: "bbbb", LaneID: lane}}, "checkpoint 2 is outside branch context"},
 		{"missing record", "refs/heads/main", map[uint64]CheckpointMove{3: {BaseCommit: "bbbb", LaneID: lane}, 9: {BaseCommit: "bbbb", LaneID: lane}}, "checkpoint 9 is missing"},
