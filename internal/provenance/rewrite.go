@@ -2202,7 +2202,7 @@ func replaceStashNote(repo *gitcmd.Repo, commit string, oldData, newData []byte)
 	}
 	rolledBack, rollbackErr := repo.ReplaceNoteRefIfEqual(stashNotesRef, commit, newData, oldData)
 	if rollbackErr != nil {
-		return false, fmt.Errorf("replace stash attribution ownership: %v; rollback note: %w", ownershipCause, rollbackErr)
+		return false, fmt.Errorf("replace stash attribution ownership: %w; rollback note: %w", ownershipCause, rollbackErr)
 	}
 	if !rolledBack {
 		return false, errors.New("stash attribution changed while rolling back ownership")

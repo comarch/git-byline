@@ -239,6 +239,45 @@ func TestCoverageSaveNoteWriteErrors(t *testing.T) {
 	}
 }
 
+// TestCoverageSaveNoteChangedBeforeReplace keeps the original note when its
+// ownership changes after the initial read.
+func TestCoverageSaveNoteChangedBeforeReplace(t *testing.T) {
+	root, repo, base, stash, records := stashSaveFixture(t)
+	old := stashFileNote(t, repo, stash)
+	writeStashFixtureNote(t, repo, stash, old)
+	fake := fakeRewriteRepo(t, root, "ownership-replace-race", "")
+	result, err := saveStashNote(fake, stash, base, records, []string{coverageFile})
+	if err != nil || result.Written != 0 || !containsCoverageWarning(result.Warnings, "changed") {
+		t.Fatalf("saveStashNote(changed ownership) = %+v, %v", result, err)
+	}
+	data, found, err := repo.ReadNoteRef(stashNotesRef, stash)
+	if err != nil || !found || !bytes.Equal(data, old) {
+		t.Fatalf("stash note after changed ownership = %q, %t, %v; want original", data, found, err)
+	}
+}
+
+// TestCoverageSaveNoteRollbackFailures covers a failed rollback and a note
+// changed by another writer before rollback.
+func TestCoverageSaveNoteRollbackFailures(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want string
+	}{
+		{"ownership-write-rollback-error", "rollback note"},
+		{"ownership-write-rollback-race", "changed while rolling back"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			root, repo, base, stash, records := stashSaveFixture(t)
+			writeStashFixtureNote(t, repo, stash, stashFileNote(t, repo, stash))
+			fake := fakeRewriteRepo(t, root, tc.mode, "")
+			_, err := saveStashNote(fake, stash, base, records, []string{coverageFile})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("saveStashNote(%s) = %v, want %q", tc.mode, err, tc.want)
+			}
+		})
+	}
+}
+
 func coverageStashedFileErrors(t *testing.T) {
 	root, repo, base, stash, records := stashSaveFixture(t)
 	state := model.NewState()

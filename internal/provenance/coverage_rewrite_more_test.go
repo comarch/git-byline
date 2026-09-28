@@ -2160,6 +2160,50 @@ if [ "$FAKE_GIT_MODE" = "ownership-write-error" ] &&
   printf '%s\n' 'forced ownership write failure' >&2
   exit 2
 fi
+if [ "$FAKE_GIT_MODE" = "ownership-replace-race" ] &&
+   [ "$1" = "notes" ] && [ "$2" = "--ref=refs/notes/byline-stash-owner" ] &&
+   [ "$3" = "show" ]; then
+  if [ -f "$FAKE_GIT_COUNTER" ]; then
+    printf '%s\n' 'different ownership'
+    exit 0
+  fi
+  : > "$FAKE_GIT_COUNTER"
+fi
+if { [ "$FAKE_GIT_MODE" = "ownership-write-rollback-error" ] ||
+     [ "$FAKE_GIT_MODE" = "ownership-write-rollback-race" ]; } &&
+   [ "$1" = "notes" ] && [ "$2" = "--ref=refs/notes/byline-stash-owner" ] &&
+   [ "$3" = "add" ]; then
+  printf '%s\n' 'forced ownership write failure' >&2
+  exit 2
+fi
+if [ "$FAKE_GIT_MODE" = "ownership-write-rollback-error" ] &&
+   [ "$1" = "notes" ] && [ "$2" = "--ref=refs/notes/byline-stash" ] &&
+   [ "$3" = "add" ]; then
+  count=0
+  if [ -f "$FAKE_GIT_COUNTER" ]; then
+    count=$(cat "$FAKE_GIT_COUNTER")
+  fi
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$FAKE_GIT_COUNTER"
+  if [ "$count" -eq 2 ]; then
+    printf '%s\n' 'forced rollback write failure' >&2
+    exit 2
+  fi
+fi
+if [ "$FAKE_GIT_MODE" = "ownership-write-rollback-race" ] &&
+   [ "$1" = "notes" ] && [ "$2" = "--ref=refs/notes/byline-stash" ] &&
+   [ "$3" = "show" ]; then
+  count=0
+  if [ -f "$FAKE_GIT_COUNTER" ]; then
+    count=$(cat "$FAKE_GIT_COUNTER")
+  fi
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$FAKE_GIT_COUNTER"
+  if [ "$count" -eq 3 ]; then
+    printf '%s\n' 'different note'
+    exit 0
+  fi
+fi
 if [ "$FAKE_GIT_MODE" = "ownership-read-error" ] &&
    [ "$1" = "notes" ] && [ "$2" = "--ref=refs/notes/byline-stash-owner" ] &&
    [ "$3" = "show" ]; then

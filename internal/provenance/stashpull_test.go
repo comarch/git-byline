@@ -156,7 +156,6 @@ func TestStashPopAfterFastForwardPullWithFetchedTipNote(t *testing.T) {
 }
 
 func TestStashPathspecKeepsUnstashedCheckpointFiles(t *testing.T) {
-	t.Parallel()
 	root, repo, base, tip := stashPullRepo(t)
 	write(t, root, "forge.txt", "agent\none\ntwo\n")
 	write(t, root, "local.txt", "local\nagent\n")
@@ -186,7 +185,6 @@ func TestStashPathspecKeepsUnstashedCheckpointFiles(t *testing.T) {
 }
 
 func TestAppliedStashDetectedWithCRLFWorktree(t *testing.T) {
-	t.Parallel()
 	root, repo, _, stash, _ := stashSaveFixture(t)
 	note := makeCoverageNoteForContent(mustBlob(t, repo, stash, coverageFile), coverageFile, 2)
 	file := note.Files[coverageFile]
@@ -214,11 +212,9 @@ func TestAppliedStashDetectedWithCRLFWorktree(t *testing.T) {
 }
 
 func TestSaveStashNoteUpgradesLegacyVersions(t *testing.T) {
-	t.Parallel()
 	for _, version := range []int{model.NoteVersionV1, model.NoteVersionV2} {
 		version := version
 		t.Run(fmt.Sprintf("version %d", version), func(t *testing.T) {
-			t.Parallel()
 			_, repo, base, stash, records := stashSaveFixture(t)
 			legacy := makeCoverageNoteForContent(mustBlob(t, repo, stash, coverageFile), coverageFile, 2)
 			legacy.Version = version

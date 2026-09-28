@@ -184,6 +184,15 @@ func TestExactLineKeys(t *testing.T) {
 	if !hasCRLF(lines) || hasCRLF([]string{"lf\n"}) {
 		t.Fatal("hasCRLF returned an unexpected result")
 	}
+	pairs, err := exactPairsBudget(
+		[]string{"start\n", "left\r\n", "end\n"},
+		[]string{"start\n", "right\r\n", "end\n"},
+		NewMatcherBudget(100),
+	)
+	wantPairs := []linePair{{old: 0, new: 0}, {old: 2, new: 2}}
+	if err != nil || !reflect.DeepEqual(pairs, wantPairs) {
+		t.Fatalf("exactPairsBudget(CRLF middle) = %+v, %v, want %+v", pairs, err, wantPairs)
+	}
 }
 
 func TestProjectLayeredRejectsInvalidSource(t *testing.T) {
