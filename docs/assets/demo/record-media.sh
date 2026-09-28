@@ -173,7 +173,23 @@ Sleep 4500ms
 EOF
 } >"$work/stats.tape"
 
-# 3. The policy gate and the audit pair, one exit code per view.
+# 3. Token usage in line blame and per-session stats.
+{
+  tape_header token-usage 1300 500
+  cat <<'EOF'
+Type "git byline blame --tokens src/invoice.go"
+Enter
+Sleep 5000ms
+Type "clear"
+Enter
+Sleep 300ms
+Type "git byline stats HEAD~6..HEAD | sed -n '/^Sessions:/,/^Files:/p'"
+Enter
+Sleep 4500ms
+EOF
+} >"$work/token-usage.tape"
+
+# 4. The policy gate and the audit pair, one exit code per view.
 {
   tape_header audit 1300 200
   cat <<'EOF'
@@ -207,7 +223,7 @@ for name in tour-1 tour-2 tour-3 tour-4; do
 done
 render_sequence tour 10 tour-1 tour-2 tour-3 tour-4
 
-for name in stats audit; do
+for name in stats token-usage audit; do
   echo "recording $name"
   (cd "$work" && vhs "$work/$name.tape" >/dev/null)
   render "$name" 12

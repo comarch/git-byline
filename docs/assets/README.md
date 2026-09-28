@@ -33,12 +33,15 @@ appearance documents supported integrations and does not imply endorsement.
 
 ## Demo animations
 
-`git-byline-tour.gif`, `git-byline-stats.gif`, and `git-byline-audit.gif`
+`git-byline-tour.gif`, `git-byline-stats.gif`, `git-byline-token-usage.gif`,
+and `git-byline-audit.gif`
 are real terminal recordings of the binary built from this repository. The
 colors are the ones `git byline blame` prints itself, taken from the
 palette in [design](../DESIGN.md). `git-byline-dashboard.gif` switches between four viewport captures
 of the two HTML files that `git byline dashboard` writes for the same
 repository. No frame is retouched and no output is edited by hand.
+`git-byline-token-usage.png` is a direct browser capture of the dashboard
+session table from that same demo repository.
 
 The tour is the hero animation. It is assembled from four separate
 recordings on one 1250 by 486 canvas: two at font size 15 and two at font
@@ -70,13 +73,15 @@ available step instead of a new color.
 ## Demo repository
 
 `build-demo-repo.sh` creates a synthetic repository whose attribution is
-real: every state comes from agent-v1 hook events sent to
+real: every state comes from hook events sent to
 `git byline checkpoint` and from annotating actual commits. It contains:
 
 - 7 commits including one merge, all annotated;
 - all four attribution states, including untracked merge content;
 - 3 agents (droid, codex, claude) and 3 representative model labels;
 - 4 sessions and 3 files;
+- one Claude session with aggregate input, output, cache-read, and cache-write
+  usage;
 - 2 human identities, `john.doe` and `maya.chen`, from the commit authors.
 
 Agent, model, and person names are representative metadata. They are not

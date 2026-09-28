@@ -17,6 +17,7 @@ Choose the shortest path to your question.
 | Install the binary or Factory plugin | [Installation](INSTALL.md) |
 | Roll out to a team on self-hosted GitLab | [Rollout on self-hosted GitLab](ROLLOUT.md) |
 | Understand hooks, checkpoints, and notes | [Architecture and data formats](ARCHITECTURE.md) |
+| Inspect per-session token usage | [Session token usage](SESSION_TOKEN_USAGE.md) |
 | Exchange attribution with Git AI or Agent Trace | [Interoperability](INTEROP.md) |
 | Generate a private local HTML report | [README dashboard guide](../README.md#local-dashboard-no-hosted-service) |
 | Diagnose local state | [README troubleshooting](../README.md#troubleshooting) |

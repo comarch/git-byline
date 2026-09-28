@@ -2084,7 +2084,7 @@ func headLayer(repo *gitcmd.Repo, head, path string, blobCache *rewriteBlobCache
 	if err != nil || !exists {
 		return engine.Snapshot{}, false, err
 	}
-	file, found, _, err := notes.FindFile(repo, head, path, blob)
+	note, found, _, err := notes.FindFile(repo, head, path, blob)
 	if err != nil || !found {
 		return engine.Snapshot{}, false, err
 	}
@@ -2092,7 +2092,7 @@ func headLayer(repo *gitcmd.Repo, head, path string, blobCache *rewriteBlobCache
 	if err != nil {
 		return engine.Snapshot{}, false, err
 	}
-	layer, err := engine.NewSnapshot(content, file.Ranges)
+	layer, err := engine.NewSnapshot(content, note.Files[path].Ranges)
 	return layer, err == nil, nil
 }
 

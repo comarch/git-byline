@@ -29,6 +29,9 @@ git config commit.gpgsign false
 byline() { "$binary" "$@"; }
 
 checkpoint() { printf '%s' "$1" | byline checkpoint agent-v1 --hook-input stdin; }
+claude_checkpoint() {
+  printf '%s' "$1" | byline checkpoint claude --type ai --hook-input stdin
+}
 
 commit() {
   git add -A
@@ -110,6 +113,14 @@ checkpoint '{"type":"shell_post","agent_name":"codex","model":"gpt-5-codex","con
 commit "feat(pricing): render invoice line"
 
 # Commit 5: a third agent extends the file, then a second person commits.
+usage_transcript="$target.claude-session.jsonl"
+cat >"$usage_transcript" <<'EOF'
+{"type":"assistant","message":{"id":"msg_demo_claude_1","model":"claude-opus-4-6","usage":{"input_tokens":1840,"output_tokens":312,"cache_creation_input_tokens":96,"cache_read_input_tokens":728}}}
+EOF
+final_usage_transcript="$target.claude-session-final.jsonl"
+cat >"$final_usage_transcript" <<'EOF'
+{"type":"assistant","message":{"id":"msg_demo_claude_2","model":"claude-opus-4-6","usage":{"input_tokens":2320,"output_tokens":410,"cache_creation_input_tokens":128,"cache_read_input_tokens":960}}}
+EOF
 checkpoint '{"type":"human","agent_name":"claude","edited_filepaths":["src/invoice.go"]}'
 cat >>src/invoice.go <<'EOF'
 
@@ -118,8 +129,7 @@ func Summary(count int) string {
 	return fmt.Sprintf("%d plans invoiced", count)
 }
 EOF
-checkpoint '{"type":"ai_agent","agent_name":"claude","model":"claude-opus-4-6","conversation_id":"pr-4817-claude","edited_filepaths":["src/invoice.go"]}'
-
+claude_checkpoint '{"tool_name":"Edit","session_id":"pr-4817-claude","transcript_path":"'"$usage_transcript"'","tool_input":{"file_path":"src/invoice.go"}}'
 # A second person adds two lines by hand with no agent involved. No hook
 # observes the edit, so annotate records them as her human lines.
 cat >>src/invoice.go <<'EOF'
@@ -163,6 +173,14 @@ func (p Plan) Annual(unit int) int {
 }
 EOF
 checkpoint '{"type":"ai_agent","agent_name":"droid","model":"claude-sonnet-4-5","conversation_id":"pr-4823-droid","edited_filepaths":["src/pricing.go"]}'
+cat >>src/pricing.go <<'EOF'
+
+// Monthly returns the annual price split across twelve months.
+func (p Plan) Monthly(unit int) int {
+	return p.Annual(unit) / 12
+}
+EOF
+claude_checkpoint '{"tool_name":"Edit","session_id":"pr-4817-claude","transcript_path":"'"$final_usage_transcript"'","tool_input":{"file_path":"src/pricing.go"}}'
 cat >>src/tax.go <<'EOF'
 
 // WithTax applies the flat rate to one amount.
@@ -173,3 +191,4 @@ EOF
 commit "feat(pricing): add annual price and tax helper"
 
 byline status
+rm -f "$usage_transcript" "$final_usage_transcript"

@@ -26,6 +26,8 @@ import (
 
 var checkpointInputTimeoutNanos atomic.Int64
 
+const jsonFlag = "--json"
+
 // checkpointArgs holds the validated checkpoint command surface.
 type checkpointArgs struct {
 	presetName string
@@ -388,8 +390,8 @@ type blameOptions struct {
 
 func (options *blameOptions) parse(arg string) (bool, error) {
 	switch {
-	case arg == "--json":
-		return true, setBlameFlag("--json", &options.jsonOutput)
+	case arg == jsonFlag:
+		return true, setBlameFlag(jsonFlag, &options.jsonOutput)
 	case arg == "--tokens":
 		return true, setBlameFlag("--tokens", &options.showTokens)
 	case arg == "-h" || arg == "--help":
@@ -672,9 +674,9 @@ func parseJSONFlag(args []string) (bool, []string, error) {
 	var rest []string
 	for _, arg := range args {
 		switch arg {
-		case "--json":
+		case jsonFlag:
 			if jsonOutput {
-				return false, nil, errors.New("--json specified more than once")
+				return false, nil, fmt.Errorf("%s specified more than once", jsonFlag)
 			}
 			jsonOutput = true
 		case "-h", "--help":
