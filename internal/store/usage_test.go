@@ -58,3 +58,17 @@ func TestCheckCheckpointAppendUsage(t *testing.T) {
 		t.Fatalf("separator msg id error = %v", err)
 	}
 }
+
+func TestReadStateForUpdateMarksNoteVersionMigration(t *testing.T) {
+	t.Parallel()
+	value := New(t.TempDir())
+	data := []byte(`{"version":3,"last_checkpoint_seq":0,"notes_version":3,"pending":{"files":{}},"lanes":{}}`)
+	writeStoreFile(t, value.StatePath(), data)
+	state, migrated, err := value.ReadStateForUpdate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !migrated || state.NotesVersion != model.NoteVersion {
+		t.Fatalf("ReadStateForUpdate() = %+v, %t, want note migration", state, migrated)
+	}
+}

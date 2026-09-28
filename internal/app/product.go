@@ -452,8 +452,7 @@ func tokenSuffix(sessions map[string]model.NoteSession, attribution model.Attrib
 	if !ok {
 		return ""
 	}
-	if session.TokensIn == 0 && session.TokensOut == 0 &&
-		session.CacheRead == 0 && session.CacheWrite == 0 {
+	if !session.HasTokenUsage() {
 		return ""
 	}
 	parts := []string{

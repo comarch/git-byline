@@ -297,8 +297,10 @@ whose edits this commit consumed, not every turn of the session. A session
 whose lines were not committed reports no usage, consistent with the
 `added` and `deleted` counters.
 
-Usage stays on local surfaces: `blame --tokens`, `stats`, and the dashboard
-show it, and the interop exports do not forward it.
+Usage is stored in local checkpoints and in `refs/notes/byline`. The managed
+pre-push hook publishes that notes ref by default unless installation used
+`--local-notes`. `blame --tokens`, `stats`, and the dashboard show usage;
+interop exports and disclosures do not forward it.
 
 Readers accept only supported note versions. Unknown versions, missing notes,
 and blob mismatches produce warnings and `untracked` output instead of guessed

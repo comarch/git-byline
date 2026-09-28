@@ -195,7 +195,7 @@ func validateNote(note model.Note) error {
 		if err := validateSession(name, session); err != nil {
 			return err
 		}
-		if note.Version < model.NoteVersion && sessionUsagePresent(session) {
+		if note.Version < model.NoteVersion && session.HasTokenUsage() {
 			return fmt.Errorf(
 				"note session %q carries token usage, which requires version %d",
 				name,
@@ -333,12 +333,6 @@ func validateSession(name string, session model.NoteSession) error {
 		}
 	}
 	return nil
-}
-
-// sessionUsagePresent reports whether one session carries token usage.
-func sessionUsagePresent(session model.NoteSession) bool {
-	return session.TokensIn != 0 || session.TokensOut != 0 ||
-		session.CacheRead != 0 || session.CacheWrite != 0
 }
 
 // FindFile walks first-parent history to find attribution for the exact blob.

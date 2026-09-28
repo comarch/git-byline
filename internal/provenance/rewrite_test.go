@@ -1027,11 +1027,13 @@ func TestRewriteSessionAggregation(t *testing.T) {
 		Agent: "droid", Model: "model",
 		FirstTS: "2026-01-02T03:04:05Z", LastTS: "2026-01-02T03:04:06Z",
 		Added: 2, Deleted: 1, Accepted: 3, Overridden: 4,
+		TokensIn: 11, TokensOut: 12, CacheRead: 13, CacheWrite: 14,
 	}
 	second := model.NoteSession{
 		Agent: "droid", Model: "model",
 		FirstTS: "2026-01-01T03:04:05Z", LastTS: "2026-01-03T03:04:06Z",
 		Added: 5, Deleted: 6, Accepted: 7, Overridden: 8,
+		TokensIn: 21, TokensOut: 22, CacheRead: 23, CacheWrite: 24,
 	}
 	if err := addRewriteSession(sessions, "droid::session", first); err != nil {
 		t.Fatal(err)
@@ -1041,8 +1043,28 @@ func TestRewriteSessionAggregation(t *testing.T) {
 	}
 	got := sessions["droid::session"]
 	if got.FirstTS != second.FirstTS || got.LastTS != second.LastTS ||
-		got.Added != 7 || got.Deleted != 7 || got.Accepted != 10 || got.Overridden != 12 {
+		got.Added != 7 || got.Deleted != 7 || got.Accepted != 10 || got.Overridden != 12 ||
+		got.TokensIn != 32 || got.TokensOut != 34 ||
+		got.CacheRead != 36 || got.CacheWrite != 38 {
 		t.Fatalf("aggregated session = %+v", got)
+	}
+}
+
+func TestRewriteSessionAggregationCapsUsage(t *testing.T) {
+	t.Parallel()
+	sessions := map[string]model.NoteSession{
+		"droid::session": {
+			Agent: "droid", Model: "model",
+			TokensIn: model.MaxCheckpointUsageTokens - 1,
+		},
+	}
+	if err := addRewriteSession(sessions, "droid::session", model.NoteSession{
+		Agent: "droid", Model: "model", TokensIn: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessions["droid::session"].TokensIn; got != model.MaxCheckpointUsageTokens {
+		t.Fatalf("tokens in = %d, want cap %d", got, model.MaxCheckpointUsageTokens)
 	}
 }
 

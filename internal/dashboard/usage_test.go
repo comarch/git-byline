@@ -122,3 +122,23 @@ func TestRenderWithoutSessionUsageOmitsSection(t *testing.T) {
 		t.Fatal("dashboard rendered a usage section without usage data")
 	}
 }
+
+func TestRenderRangeWithoutSessionUsageOmitsSection(t *testing.T) {
+	t.Parallel()
+	data, err := RenderRange(report.Aggregate{
+		Version: model.NoteVersion,
+		Totals:  report.Totals{Lines: 1, AI: 1},
+		Sessions: []report.SessionTotals{{
+			Session: "session-a",
+			Agent:   "droid",
+			Model:   "model-a",
+			Totals:  report.Totals{Lines: 1, AI: 1},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "<h2>Sessions</h2>") {
+		t.Fatal("range dashboard rendered a session section without usage data")
+	}
+}

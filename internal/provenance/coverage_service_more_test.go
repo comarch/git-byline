@@ -42,7 +42,7 @@ func coverageCaptureMigrationWriteError(t *testing.T) {
 	if err := os.MkdirAll(dataStore.Dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	legacy := []byte(`{"version":1,"notes_version":3,"pending":{"files":{}}}` + "\n")
+	legacy := []byte(`{"version":3,"notes_version":3,"pending":{"files":{}},"lanes":{}}` + "\n")
 	if err := os.WriteFile(dataStore.StatePath(), legacy, 0o600); err != nil {
 		t.Fatal(err)
 	}

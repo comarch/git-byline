@@ -351,8 +351,7 @@ func addAgentTotals(
 // aggregation so both paths meet in one SessionTotals.
 func mergeSessionUsage(sessions map[string]*SessionTotals, noteSessions map[string]model.NoteSession) {
 	for name, value := range noteSessions {
-		if value.TokensIn == 0 && value.TokensOut == 0 &&
-			value.CacheRead == 0 && value.CacheWrite == 0 {
+		if !value.HasTokenUsage() {
 			continue
 		}
 		session := strings.TrimPrefix(name, value.Agent+model.NoteSessionSeparator)

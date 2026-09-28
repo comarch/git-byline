@@ -14,8 +14,8 @@ func TestParseSemver(t *testing.T) {
 	tests := []struct {
 		in, want string
 	}{
-		{"1.18.1", "1.18.1"},
-		{"promptscript 1.18.1 darwin-arm64 node/v24.0.0", "1.18.1"},
+		{"1.19.1", "1.19.1"},
+		{"promptscript 1.19.1 darwin-arm64 node/v24.0.0", "1.19.1"},
 		{"v2.0.0-rc.1", "2.0.0"},
 		{"no version here", ""},
 	}

@@ -569,7 +569,7 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 		Files:   map[string]model.NoteFile{},
 	}
 	sessions := sessionMetrics{}
-	foldSessionUsage(sessions, allRecords)
+	foldSessionUsage(sessions, active)
 	nextPending := map[string]model.PendingFile{}
 	identity, err := commitIdentity(repo, head)
 	if err != nil {
@@ -1109,11 +1109,19 @@ func foldSessionUsage(sessions sessionMetrics, records []model.Checkpoint) {
 			}
 			seen[key] = true
 		}
-		session.TokensIn += record.Usage.TokensIn
-		session.TokensOut += record.Usage.TokensOut
-		session.CacheRead += record.Usage.CacheRead
-		session.CacheWrite += record.Usage.CacheWrite
+		session.TokensIn = cappedUsageSum(session.TokensIn, record.Usage.TokensIn)
+		session.TokensOut = cappedUsageSum(session.TokensOut, record.Usage.TokensOut)
+		session.CacheRead = cappedUsageSum(session.CacheRead, record.Usage.CacheRead)
+		session.CacheWrite = cappedUsageSum(session.CacheWrite, record.Usage.CacheWrite)
 	}
+}
+
+func cappedUsageSum(current, value uint64) uint64 {
+	if current >= model.MaxCheckpointUsageTokens ||
+		value > model.MaxCheckpointUsageTokens-current {
+		return model.MaxCheckpointUsageTokens
+	}
+	return current + value
 }
 
 func addTransitionSessionMetrics(sessions sessionMetrics, stats []engine.TransitionStats) {

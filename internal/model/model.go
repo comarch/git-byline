@@ -189,6 +189,12 @@ type NoteSession struct {
 	CacheWrite uint64 `json:"cache_write,omitempty"`
 }
 
+// HasTokenUsage reports whether the session carries any token count.
+func (value NoteSession) HasTokenUsage() bool {
+	return value.TokensIn != 0 || value.TokensOut != 0 ||
+		value.CacheRead != 0 || value.CacheWrite != 0
+}
+
 // Note is the versioned value stored in refs/notes/byline.
 type Note struct {
 	Version  int                    `json:"version"`

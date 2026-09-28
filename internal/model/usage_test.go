@@ -44,3 +44,13 @@ func TestValidateCheckpointUsage(t *testing.T) {
 		})
 	}
 }
+
+func TestNoteSessionHasTokenUsage(t *testing.T) {
+	t.Parallel()
+	if (NoteSession{}).HasTokenUsage() {
+		t.Fatal("empty session reports token usage")
+	}
+	if !(NoteSession{CacheRead: 1}).HasTokenUsage() {
+		t.Fatal("nonzero session reports no token usage")
+	}
+}

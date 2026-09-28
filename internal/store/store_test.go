@@ -128,7 +128,7 @@ func TestRewriteCheckpointBasesUsesBranchContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	if records[0].BaseCommit != "bbbb" ||
-		records[0].Version != model.CheckpointVersion ||
+		records[0].Version != model.CheckpointVersionV2 ||
 		records[0].LaneID != model.LegacyCheckpointLaneID("aaaa") ||
 		records[1].BaseCommit != "bbbb" ||
 		records[1].LaneID != model.CheckpointLaneID(2) ||

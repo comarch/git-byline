@@ -760,6 +760,10 @@ func addRewriteSession(
 	if current.Overridden, ok = addRewriteMetric(current.Overridden, value.Overridden); !ok {
 		return fmt.Errorf("session %q overridden counter overflows", key)
 	}
+	current.TokensIn = cappedUsageSum(current.TokensIn, value.TokensIn)
+	current.TokensOut = cappedUsageSum(current.TokensOut, value.TokensOut)
+	current.CacheRead = cappedUsageSum(current.CacheRead, value.CacheRead)
+	current.CacheWrite = cappedUsageSum(current.CacheWrite, value.CacheWrite)
 	sessions[key] = current
 	return nil
 }

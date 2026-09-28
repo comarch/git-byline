@@ -38,12 +38,12 @@ jobs:
           node-version: 24
 
       - name: Validate PromptScript
-        run: npm exec --yes --package @promptscript/cli@1.18.1 -- prs validate --strict
+        run: npm exec --yes --package @promptscript/cli@1.19.1 -- prs validate --strict
 
       - name: Compile PromptScript
         run: |
-          npm exec --yes --package @promptscript/cli@1.18.1 -- prs compile --all-builds --force --strict
-          npm exec --yes --package @promptscript/cli@1.18.1 -- prs compile --all --force --strict
+          npm exec --yes --package @promptscript/cli@1.19.1 -- prs compile --all-builds --force --strict
+          npm exec --yes --package @promptscript/cli@1.19.1 -- prs compile --all --force --strict
 
       - name: Check generated files
         run: |

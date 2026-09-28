@@ -190,7 +190,7 @@ func buildRangeView(aggregate report.Aggregate) (rangePageView, error) {
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].Name < models[j].Name })
 
-	sessions := make([]rangeSessionView, 0, len(aggregate.Sessions))
+	var sessions []rangeSessionView
 	for _, session := range aggregate.Sessions {
 		if err := validateRangeText("session", session.Session, false); err != nil {
 			return rangePageView{}, err
@@ -203,6 +203,14 @@ func buildRangeView(aggregate report.Aggregate) (rangePageView, error) {
 		}
 		if err := validateRangeTotals("session "+session.Session, session.Totals); err != nil {
 			return rangePageView{}, err
+		}
+		if !(model.NoteSession{
+			TokensIn:   session.TokensIn,
+			TokensOut:  session.TokensOut,
+			CacheRead:  session.CacheRead,
+			CacheWrite: session.CacheWrite,
+		}).HasTokenUsage() {
+			continue
 		}
 		sourceBytes += len(session.Session) + len(session.Agent) + len(session.Model)
 		sessions = append(sessions, rangeSessionView{
@@ -666,9 +674,9 @@ var rangeReportTemplate = template.Must(template.New("dashboard-range").Parse(`<
         </div>
         {{else}}<p class="muted">No models in this range.</p>{{end}}
       </div>
+      {{if .Sessions}}
       <div class="card panel">
         <h2>Sessions</h2>
-        {{if .Sessions}}
         <div class="table-scroll">
           <table aria-label="Attribution and token usage by agent session">
             <thead><tr><th>Session</th><th>Agent</th><th>Model</th><th>Lines</th><th>Tokens in</th><th>Tokens out</th><th>Cache read</th><th>Cache write</th></tr></thead>
@@ -679,8 +687,8 @@ var rangeReportTemplate = template.Must(template.New("dashboard-range").Parse(`<
             </tbody>
           </table>
         </div>
-        {{else}}<p class="muted">No agent sessions in this range.</p>{{end}}
       </div>
+      {{end}}
     </section>
 
     {{range .Warnings}}<div class="warning">{{.}}</div>{{end}}

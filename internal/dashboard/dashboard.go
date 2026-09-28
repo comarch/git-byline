@@ -302,8 +302,7 @@ func sessionUsageViews(sessions map[string]model.NoteSession) []sessionView {
 	result := make([]sessionView, 0, len(keys))
 	for _, key := range keys {
 		value := sessions[key]
-		if value.TokensIn == 0 && value.TokensOut == 0 &&
-			value.CacheRead == 0 && value.CacheWrite == 0 {
+		if !value.HasTokenUsage() {
 			continue
 		}
 		modelName := value.Model

@@ -536,7 +536,7 @@ stash pop to remove it. Hook input accepts only full repository object IDs.
 
 ### Generic agent adapter
 
-PromptScript 1.18.1 compiles native project hooks for Factory, Claude Code,
+PromptScript 1.19.1 compiles native project hooks for Factory, Claude Code,
 GitHub Copilot, VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, and Grok.
 The generic agent-v1 adapter accepts its standard JSON payload through stdin:
 

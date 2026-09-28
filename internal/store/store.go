@@ -124,7 +124,7 @@ func baseRewrite(branchRef string, bases map[string]string) checkpointRewrite {
 			return record, false, nil
 		}
 		if record.Version == model.CheckpointVersionV1 {
-			record.Version = model.CheckpointVersion
+			record.Version = model.CheckpointVersionV2
 			record.LaneID = model.LegacyCheckpointLaneID(record.BaseCommit)
 		}
 		record.BaseCommit = target
@@ -809,6 +809,7 @@ func (store Store) ReadStateForUpdate() (model.State, bool, error) {
 	switch state.NotesVersion {
 	case model.NoteVersionV1, model.NoteVersionV2, model.NoteVersionV3:
 		state.NotesVersion = model.NoteVersion
+		migrated = true
 	case model.NoteVersion:
 	default:
 		return model.State{}, false, fmt.Errorf("unsupported notes version %d", state.NotesVersion)

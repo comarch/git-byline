@@ -186,13 +186,17 @@ warning and writes no notes.
 ## Stored data
 
 Checkpoint JSON includes repository-relative paths, timestamps, agent names,
-model names, session identifiers, and Git object IDs. Notes contain the same
-metadata plus line ranges and a human identity token on human and
-human-override ranges. That token is derived from the commit author Git
-already publishes in every commit object, reduced to the email local part, so
-notes disclose less than the commit history beside them. Stash ownership notes
-contain only a SHA-256 digest of the exact stash attribution note. Snapshot
-blobs contain full selected file content.
+model names, session identifiers, Git object IDs, and optional assistant
+message IDs with per-turn aggregate token counts. Notes contain repository
+paths, timestamps, agent names, model names, session identifiers, Git object
+IDs, line ranges, per-session token totals, and a human identity token on human
+and human-override ranges. Assistant message IDs stay in the local checkpoint
+log and are not copied into notes. The identity token is derived from the
+commit author Git already publishes in every commit object, reduced to the
+email local part. Managed hooks publish attribution notes by default unless
+installation used `--local-notes`. Stash ownership notes contain only a
+SHA-256 digest of the exact stash attribution note. Snapshot blobs contain
+full selected file content.
 
 Raw hook payloads, prompts, transcripts, tool responses, environment variables,
 authorization data, and logs are not persisted.
