@@ -129,7 +129,7 @@ Path: worktree-specific Git directory plus `byline/checkpoints.jsonl`.
 One JSON object per line:
 
 ```json
-{"version":3,"kind":"edit","seq":2,"base_commit":"abc123","branch_ref":"refs/heads/feature","lane_id":"seq:2","ts":"2026-01-02T03:04:05Z","type":"ai","session":"session-1","agent":"droid","model":"model-name","usage":{"msg_id":"msg_01","tokens_in":120,"tokens_out":34,"cache_read":56,"cache_write":78},"files":[{"path":"src/example.go","exists":true,"blob":"def456"}]}
+{"version":3,"kind":"edit","seq":2,"base_commit":"abc123","branch_ref":"refs/heads/feature","lane_id":"seq:2","ts":"2026-01-02T03:04:05Z","type":"ai","session":"session-1","agent":"claude","model":"claude-opus-4-6","usage":{"msg_id":"msg_01","tokens_in":120,"tokens_out":34,"cache_read":56,"cache_write":78},"files":[{"path":"src/example.go","exists":true,"blob":"def456"}]}
 ```
 
 Properties:

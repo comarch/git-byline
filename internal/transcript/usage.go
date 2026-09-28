@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 )
 
@@ -58,9 +59,22 @@ func ResolveUsage(transcriptPath string) (Usage, bool, error) {
 		return Usage{}, false, fmt.Errorf("open transcript %s: %w", transcriptPath, err)
 	}
 	defer file.Close()
+	return resolveUsageFile(file, info.Size(), transcriptPath, transcriptTail)
+}
+
+func resolveUsageFile(
+	file *os.File,
+	size int64,
+	transcriptPath string,
+	tail func(io.ReaderAt, int64) (io.Reader, error),
+) (Usage, bool, error) {
 	var reader io.Reader = io.LimitReader(file, maxTranscriptBytes+1)
-	if size := info.Size(); size > tailWindowBytes {
-		reader = io.NewSectionReader(file, size-tailWindowBytes, tailWindowBytes)
+	if size > tailWindowBytes {
+		var err error
+		reader, err = tail(file, size)
+		if err != nil {
+			return Usage{}, false, fmt.Errorf("read transcript %s: %w", transcriptPath, err)
+		}
 	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
@@ -76,6 +90,23 @@ func ResolveUsage(transcriptPath string) (Usage, bool, error) {
 		return Usage{}, false, fmt.Errorf("scan transcript %s: %w", transcriptPath, err)
 	}
 	return usage, found, nil
+}
+
+func transcriptTail(file io.ReaderAt, size int64) (io.Reader, error) {
+	offset := size - tailWindowBytes
+	reader := io.NewSectionReader(file, offset, tailWindowBytes)
+	var previous [1]byte
+	if _, err := file.ReadAt(previous[:], offset-1); err != nil {
+		return nil, err
+	}
+	if previous[0] == '\n' {
+		return reader, nil
+	}
+	buffered := bufio.NewReader(reader)
+	if _, err := buffered.ReadBytes('\n'); err != nil && err != io.EOF {
+		return nil, err
+	}
+	return buffered, nil
 }
 
 // lineUsage extracts the usage of one transcript entry. Claude Code
