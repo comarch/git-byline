@@ -244,6 +244,46 @@ func TestDecodeAcceptsUsageAtVersion4(t *testing.T) {
 	}
 }
 
+func TestDecodeNoteWireErrors(t *testing.T) {
+	t.Parallel()
+	valid := `{"version":2,"files":{},"sessions":{}}`
+	tests := []struct {
+		name    string
+		data    string
+		version int
+		want    string
+	}{
+		{
+			name:    "multiple JSON values",
+			data:    valid + ` {}`,
+			version: 2,
+			want:    "multiple JSON values",
+		},
+		{
+			name:    "invalid tail",
+			data:    valid + ` {`,
+			version: 2,
+			want:    "decode note tail",
+		},
+		{
+			name:    "version changed",
+			data:    valid,
+			version: 3,
+			want:    "note version changed",
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := decodeNoteWire([]byte(test.data), test.version); err == nil ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("decodeNoteWire() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestDecodeV2Sessions(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

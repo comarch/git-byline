@@ -30,7 +30,8 @@ byline() { "$binary" "$@"; }
 
 checkpoint() { printf '%s' "$1" | byline checkpoint agent-v1 --hook-input stdin; }
 claude_checkpoint() {
-  printf '%s' "$1" | byline checkpoint claude --type ai --hook-input stdin
+  local payload="$1"
+  printf '%s' "$payload" | byline checkpoint claude --type ai --hook-input stdin
 }
 
 commit() {

@@ -55,6 +55,75 @@ func (session *noteSession) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type noteWire struct {
+	Version  int                       `json:"version"`
+	Files    map[string]model.NoteFile `json:"files"`
+	Sessions map[string]*noteSession   `json:"sessions"`
+}
+
+func decodeNoteWire(data []byte, version int) (noteWire, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var wire noteWire
+	if version == model.NoteVersionV1 {
+		var legacy struct {
+			Version int                       `json:"version"`
+			Files   map[string]model.NoteFile `json:"files"`
+		}
+		if err := decoder.Decode(&legacy); err != nil {
+			return noteWire{}, fmt.Errorf("decode note: %w", err)
+		}
+		wire.Version = legacy.Version
+		wire.Files = legacy.Files
+	} else if err := decoder.Decode(&wire); err != nil {
+		return noteWire{}, fmt.Errorf("decode note: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return noteWire{}, errors.New("multiple JSON values in note")
+		}
+		return noteWire{}, fmt.Errorf("decode note tail: %w", err)
+	}
+	if wire.Version != version {
+		return noteWire{}, fmt.Errorf(
+			"note version changed during decode from %d to %d",
+			version,
+			wire.Version,
+		)
+	}
+	return wire, nil
+}
+
+func decodeNoteSessions(
+	version int,
+	sessions map[string]*noteSession,
+) (map[string]model.NoteSession, error) {
+	for name, session := range sessions {
+		if session == nil {
+			return nil, fmt.Errorf("decode note session %q: session must be an object", name)
+		}
+	}
+	if version < model.NoteVersionV2 {
+		return nil, nil
+	}
+	decoded := make(map[string]model.NoteSession, len(sessions))
+	for name, session := range sessions {
+		if err := validateSession(name, session.NoteSession); err != nil {
+			return nil, err
+		}
+		if version < model.NoteVersion && session.hasTokenUsageField {
+			return nil, fmt.Errorf(
+				"note session %q carries token usage, which requires version %d",
+				name,
+				model.NoteVersion,
+			)
+		}
+		decoded[name] = session.NoteSession
+	}
+	return decoded, nil
+}
+
 // Encode returns canonical JSON with a trailing newline.
 func Encode(note model.Note) ([]byte, error) {
 	if note.Version != model.NoteVersion {
@@ -101,58 +170,16 @@ func Decode(data []byte) (model.Note, error) {
 	default:
 		return model.Note{}, fmt.Errorf("unsupported note version %d", header.Version)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	var wire struct {
-		Version  int                       `json:"version"`
-		Files    map[string]model.NoteFile `json:"files"`
-		Sessions map[string]*noteSession   `json:"sessions"`
+	wire, err := decodeNoteWire(data, header.Version)
+	if err != nil {
+		return model.Note{}, err
 	}
-	if header.Version == model.NoteVersionV1 {
-		var legacy struct {
-			Version int                       `json:"version"`
-			Files   map[string]model.NoteFile `json:"files"`
-		}
-		if err := decoder.Decode(&legacy); err != nil {
-			return model.Note{}, fmt.Errorf("decode note: %w", err)
-		}
-		wire.Version = legacy.Version
-		wire.Files = legacy.Files
-	} else if err := decoder.Decode(&wire); err != nil {
-		return model.Note{}, fmt.Errorf("decode note: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return model.Note{}, errors.New("multiple JSON values in note")
-		}
-		return model.Note{}, fmt.Errorf("decode note tail: %w", err)
-	}
-	if wire.Version != header.Version {
-		return model.Note{}, fmt.Errorf("note version changed during decode from %d to %d", header.Version, wire.Version)
-	}
-	for name, session := range wire.Sessions {
-		if session == nil {
-			return model.Note{}, fmt.Errorf("decode note session %q: session must be an object", name)
-		}
+	sessions, err := decodeNoteSessions(wire.Version, wire.Sessions)
+	if err != nil {
+		return model.Note{}, err
 	}
 	note := model.Note{Version: wire.Version, Files: wire.Files}
-	if wire.Version >= model.NoteVersionV2 {
-		note.Sessions = make(map[string]model.NoteSession, len(wire.Sessions))
-		for name, session := range wire.Sessions {
-			if err := validateSession(name, session.NoteSession); err != nil {
-				return model.Note{}, err
-			}
-			if wire.Version < model.NoteVersion && session.hasTokenUsageField {
-				return model.Note{}, fmt.Errorf(
-					"note session %q carries token usage, which requires version %d",
-					name,
-					model.NoteVersion,
-				)
-			}
-			note.Sessions[name] = session.NoteSession
-		}
-	}
+	note.Sessions = sessions
 	if note.Files == nil {
 		note.Files = map[string]model.NoteFile{}
 	}
