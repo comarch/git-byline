@@ -87,9 +87,11 @@ func commands() []*command {
 		{
 			name:  "blame",
 			short: "show line-level attribution",
-			usage: "Usage: git-byline blame [--json] [--color=auto|always|never] <file>\n\n" +
+			usage: "Usage: git-byline blame [--json] [--tokens] [--color=auto|always|never] <file>\n\n" +
 				"Show human, AI, human-override, or untracked attribution for every line at HEAD.\n" +
 				"Human lines carry the identity of the commit author that introduced them.\n" +
+				"--tokens appends session token usage to AI lines, such as [120i/34o],\n" +
+				"with cache counts only when nonzero.\n" +
 				"The file argument resolves against the working directory first, then\n" +
 				"the repository root.",
 			run: runBlame,

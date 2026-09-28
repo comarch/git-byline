@@ -330,7 +330,7 @@ func annotateOperationalError(
 }
 
 func runBlame(env *Env, command *command, args []string) (int, error) {
-	jsonOutput, mode, rest, err := parseBlameFlags(args)
+	jsonOutput, showTokens, mode, rest, err := parseBlameFlags(args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(env.Stdout, command.usage)
@@ -356,14 +356,15 @@ func runBlame(env *Env, command *command, args []string) (int, error) {
 		return ExitSuccess, nil
 	}
 	writeWarnings(env, result.Warnings)
-	writeBlameText(env.Stdout, result.Lines, useColor(mode, env.Stdout))
+	writeBlameText(env.Stdout, result.Lines, result.Sessions, useColor(mode, env.Stdout), showTokens)
 	return ExitSuccess, nil
 }
 
 // parseBlameFlags accepts the blame flags without a flag set, so the file
 // argument can follow or precede them.
-func parseBlameFlags(args []string) (bool, colorMode, []string, error) {
+func parseBlameFlags(args []string) (bool, bool, colorMode, []string, error) {
 	jsonOutput := false
+	showTokens := false
 	mode := colorAuto
 	colorSet := false
 	var rest []string
@@ -371,38 +372,53 @@ func parseBlameFlags(args []string) (bool, colorMode, []string, error) {
 		switch {
 		case arg == "--json":
 			if jsonOutput {
-				return false, mode, nil, errors.New("--json specified more than once")
+				return false, false, mode, nil, errors.New("--json specified more than once")
 			}
 			jsonOutput = true
+		case arg == "--tokens":
+			if showTokens {
+				return false, false, mode, nil, errors.New("--tokens specified more than once")
+			}
+			showTokens = true
 		case arg == "-h" || arg == "--help":
-			return false, mode, nil, flag.ErrHelp
+			return false, false, mode, nil, flag.ErrHelp
 		case strings.HasPrefix(arg, "--color="):
 			if colorSet {
-				return false, mode, nil, errors.New("--color specified more than once")
+				return false, false, mode, nil, errors.New("--color specified more than once")
 			}
 			parsed, err := parseColorMode(strings.TrimPrefix(arg, "--color="))
 			if err != nil {
-				return false, mode, nil, err
+				return false, false, mode, nil, err
 			}
 			mode = parsed
 			colorSet = true
 		case strings.HasPrefix(arg, "-"):
-			return false, mode, nil, fmt.Errorf("unknown flag %q", arg)
+			return false, false, mode, nil, fmt.Errorf("unknown flag %q", arg)
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	return jsonOutput, mode, rest, nil
+	return jsonOutput, showTokens, mode, rest, nil
 }
 
 // writeBlameText prints one aligned row per line. The label column is sized
 // from the widest label so a long human-override label cannot push the line
 // numbers out of alignment.
-func writeBlameText(out io.Writer, lines []provenance.BlameLine, color bool) {
+func writeBlameText(
+	out io.Writer,
+	lines []provenance.BlameLine,
+	sessions map[string]model.NoteSession,
+	color bool,
+	showTokens bool,
+) {
 	labels := make([]string, len(lines))
 	width := 0
 	for index, line := range lines {
-		labels[index] = line.Attribution.Label()
+		label := line.Attribution.Label()
+		if showTokens {
+			label += tokenSuffix(sessions, line.Attribution)
+		}
+		labels[index] = label
 		if count := utf8.RuneCountInString(labels[index]); count > width {
 			width = count
 		}
@@ -420,6 +436,35 @@ func writeBlameText(out io.Writer, lines []provenance.BlameLine, color bool) {
 		}
 		fmt.Fprintf(out, "%s %s %s\n", label, number, line.Content)
 	}
+}
+
+// tokenSuffix renders the session token usage of one attribution as a
+// compact bracket, such as [120i/34o], with cache counts only when nonzero.
+// Lines without an attributed agent session carry no suffix, so the plain
+// text path and the color path stay identical in content.
+func tokenSuffix(sessions map[string]model.NoteSession, attribution model.Attribution) string {
+	if attribution.Agent == "" || attribution.Session == "" {
+		return ""
+	}
+	session, ok := sessions[model.NoteSessionKey(attribution.Agent, attribution.Session)]
+	if !ok {
+		return ""
+	}
+	if session.TokensIn == 0 && session.TokensOut == 0 &&
+		session.CacheRead == 0 && session.CacheWrite == 0 {
+		return ""
+	}
+	parts := []string{
+		strconv.FormatUint(session.TokensIn, 10) + "i",
+		strconv.FormatUint(session.TokensOut, 10) + "o",
+	}
+	if session.CacheRead > 0 {
+		parts = append(parts, strconv.FormatUint(session.CacheRead, 10)+"cr")
+	}
+	if session.CacheWrite > 0 {
+		parts = append(parts, strconv.FormatUint(session.CacheWrite, 10)+"cw")
+	}
+	return " [" + strings.Join(parts, "/") + "]"
 }
 
 func runStatus(env *Env, command *command, args []string) (int, error) {

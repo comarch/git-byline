@@ -168,7 +168,7 @@ func TestWriteBlameTextAlignsAndColors(t *testing.T) {
 		{Number: 3, Content: "three", Attribution: model.Attribution{Author: model.AuthorUntracked}},
 	}
 	var plain bytes.Buffer
-	writeBlameText(&plain, lines, false)
+	writeBlameText(&plain, lines, nil, false, false)
 	rows := strings.Split(strings.TrimRight(plain.String(), "\n"), "\n")
 	if len(rows) != 3 {
 		t.Fatalf("rows = %d", len(rows))
@@ -190,7 +190,7 @@ func TestWriteBlameTextAlignsAndColors(t *testing.T) {
 	}
 
 	var colored bytes.Buffer
-	writeBlameText(&colored, lines, true)
+	writeBlameText(&colored, lines, nil, true, false)
 	for _, expected := range []string{
 		labelColor(model.AuthorHuman),
 		labelColor(model.AuthorHumanOverride),
@@ -207,7 +207,7 @@ func TestWriteBlameTextAlignsAndColors(t *testing.T) {
 func TestWriteBlameTextHandlesNoLines(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	writeBlameText(&out, nil, true)
+	writeBlameText(&out, nil, nil, true, false)
 	if out.Len() != 0 {
 		t.Fatalf("empty blame wrote %q", out.String())
 	}
@@ -216,18 +216,21 @@ func TestWriteBlameTextHandlesNoLines(t *testing.T) {
 func TestParseBlameFlags(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		args  []string
-		json  bool
-		mode  colorMode
-		rest  []string
-		valid bool
+		name   string
+		args   []string
+		json   bool
+		tokens bool
+		mode   colorMode
+		rest   []string
+		valid  bool
 	}{
 		{name: "file only", args: []string{"a.go"}, mode: colorAuto, rest: []string{"a.go"}, valid: true},
 		{name: "json", args: []string{"--json", "a.go"}, json: true, mode: colorAuto, rest: []string{"a.go"}, valid: true},
+		{name: "tokens", args: []string{"--tokens", "a.go"}, tokens: true, mode: colorAuto, rest: []string{"a.go"}, valid: true},
 		{name: "color never", args: []string{"--color=never", "a.go"}, mode: colorNever, rest: []string{"a.go"}, valid: true},
 		{name: "color after file", args: []string{"a.go", "--color=always"}, mode: colorAlways, rest: []string{"a.go"}, valid: true},
 		{name: "duplicate json", args: []string{"--json", "--json"}},
+		{name: "duplicate tokens", args: []string{"--tokens", "--tokens"}},
 		{name: "duplicate color", args: []string{"--color=auto", "--color=never"}},
 		{name: "bad color", args: []string{"--color=maybe"}},
 		{name: "unknown flag", args: []string{"--nope"}},
@@ -236,19 +239,19 @@ func TestParseBlameFlags(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			jsonOutput, mode, rest, err := parseBlameFlags(test.args)
+			jsonOutput, showTokens, mode, rest, err := parseBlameFlags(test.args)
 			if (err == nil) != test.valid {
 				t.Fatalf("parseBlameFlags(%v) error = %v, valid = %t", test.args, err, test.valid)
 			}
 			if !test.valid {
 				return
 			}
-			if jsonOutput != test.json || mode != test.mode || strings.Join(rest, ",") != strings.Join(test.rest, ",") {
-				t.Fatalf("parseBlameFlags(%v) = %t, %q, %v", test.args, jsonOutput, mode, rest)
+			if jsonOutput != test.json || showTokens != test.tokens || mode != test.mode || strings.Join(rest, ",") != strings.Join(test.rest, ",") {
+				t.Fatalf("parseBlameFlags(%v) = %t, %t, %q, %v", test.args, jsonOutput, showTokens, mode, rest)
 			}
 		})
 	}
-	if _, _, _, err := parseBlameFlags([]string{"--help"}); err == nil {
+	if _, _, _, _, err := parseBlameFlags([]string{"--help"}); err == nil {
 		t.Fatal("parseBlameFlags(--help) returned no error")
 	}
 }

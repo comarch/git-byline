@@ -1236,12 +1236,13 @@ type BlameLine struct {
 
 // BlameResult is attribution for one committed file.
 type BlameResult struct {
-	Version  int         `json:"version"`
-	File     string      `json:"file"`
-	Blob     string      `json:"blob"`
-	Commit   string      `json:"commit"`
-	Lines    []BlameLine `json:"lines"`
-	Warnings []string    `json:"warnings,omitempty"`
+	Version  int                          `json:"version"`
+	File     string                       `json:"file"`
+	Blob     string                       `json:"blob"`
+	Commit   string                       `json:"commit"`
+	Lines    []BlameLine                  `json:"lines"`
+	Sessions map[string]model.NoteSession `json:"sessions,omitempty"`
+	Warnings []string                     `json:"warnings,omitempty"`
 }
 
 // BlameCollection is attribution for every file recorded on HEAD.
@@ -1275,7 +1276,7 @@ func BlameHead(repo *gitcmd.Repo) (BlameCollection, error) {
 	}
 	result := BlameCollection{Commit: head}
 	for index, path := range paths {
-		file, err := blameNotedFile(repo, head, path, blobs[index], note.Files[path])
+		file, err := blameNotedFile(repo, head, path, blobs[index], note.Files[path], note.Sessions)
 		if err != nil {
 			return BlameCollection{}, fmt.Errorf("blame %q: %w", path, err)
 		}
@@ -1336,7 +1337,7 @@ func BlameHeadFile(repo *gitcmd.Repo, path string) (BlameResult, error) {
 		if err != nil {
 			return BlameResult{}, err
 		}
-		result, err := blameNotedFile(repo, head, candidate, blobs[0], file)
+		result, err := blameNotedFile(repo, head, candidate, blobs[0], file, note.Sessions)
 		if err != nil {
 			return BlameResult{}, fmt.Errorf("blame %q: %w", candidate, err)
 		}
@@ -1411,7 +1412,12 @@ func preflightBlameFiles(repo *gitcmd.Repo, head string, paths []string, note mo
 	return blobs, nil
 }
 
-func blameNotedFile(repo *gitcmd.Repo, head, path, blob string, file model.NoteFile) (BlameResult, error) {
+func blameNotedFile(
+	repo *gitcmd.Repo,
+	head, path, blob string,
+	file model.NoteFile,
+	sessions map[string]model.NoteSession,
+) (BlameResult, error) {
 	normalized, err := repo.NormalizeWorktreePath(path)
 	if err != nil {
 		return BlameResult{}, err
@@ -1427,7 +1433,7 @@ func blameNotedFile(repo *gitcmd.Repo, head, path, blob string, file model.NoteF
 	if err != nil {
 		return BlameResult{}, err
 	}
-	return renderBlameResult(head, path, blob, snapshot, nil), nil
+	return renderBlameResult(head, path, blob, snapshot, sessions, nil), nil
 }
 
 // Blame reads line attribution for path at HEAD.
@@ -1477,8 +1483,10 @@ func blamePath(repo *gitcmd.Repo, head, path string) (BlameResult, error) {
 		return BlameResult{}, err
 	}
 	var snapshot engine.Snapshot
+	var sessions map[string]model.NoteSession
 	if found {
 		snapshot, err = engine.NewSnapshot(content, note.Files[path].Ranges)
+		sessions = note.Sessions
 	} else {
 		var ranges []model.Range
 		ranges, err = engine.UniformRanges(content, model.Attribution{Author: model.AuthorUntracked})
@@ -1489,10 +1497,15 @@ func blamePath(repo *gitcmd.Repo, head, path string) (BlameResult, error) {
 	if err != nil {
 		return BlameResult{}, err
 	}
-	return renderBlameResult(head, path, blob, snapshot, warnings), nil
+	return renderBlameResult(head, path, blob, snapshot, sessions, warnings), nil
 }
 
-func renderBlameResult(head, path, blob string, snapshot engine.Snapshot, warnings []string) BlameResult {
+func renderBlameResult(
+	head, path, blob string,
+	snapshot engine.Snapshot,
+	sessions map[string]model.NoteSession,
+	warnings []string,
+) BlameResult {
 	lines := make([]BlameLine, len(snapshot.Lines))
 	for i, line := range snapshot.Lines {
 		line = strings.TrimSuffix(line, "\r\n")
@@ -1505,6 +1518,7 @@ func renderBlameResult(head, path, blob string, snapshot engine.Snapshot, warnin
 		Blob:     blob,
 		Commit:   head,
 		Lines:    lines,
+		Sessions: sessions,
 		Warnings: warnings,
 	}
 }
