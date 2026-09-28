@@ -37,9 +37,10 @@ var palette = []string{
 
 // Report contains all local data rendered into one HTML file.
 type Report struct {
-	Commit string
-	Status provenance.StatusResult
-	Files  []provenance.BlameResult
+	Commit   string
+	Status   provenance.StatusResult
+	Files    []provenance.BlameResult
+	Sessions map[string]model.NoteSession
 }
 
 type pageView struct {
@@ -65,6 +66,7 @@ type pageView struct {
 	AIOffset             float64
 	FileCount            int
 	ModelCount           int
+	Sessions             []sessionView
 	Status               provenance.StatusResult
 	Warnings             []string
 }
@@ -100,6 +102,15 @@ type sourceView struct {
 	Tone    string
 	Lines   int
 	Percent float64
+}
+
+type sessionView struct {
+	Key        string
+	Model      string
+	TokensIn   uint64
+	TokensOut  uint64
+	CacheRead  uint64
+	CacheWrite uint64
 }
 
 type sourceCount struct {
@@ -184,6 +195,10 @@ func buildView(report Report) (pageView, error) {
 	if totalLines > maxLines {
 		return pageView{}, fmt.Errorf("dashboard has %d lines, limit is %d", totalLines, maxLines)
 	}
+	sessions := sessionUsageViews(report.Sessions)
+	for _, session := range sessions {
+		totalBytes += len(session.Key) + len(session.Model)
+	}
 	if totalBytes > maxSourceBytes {
 		return pageView{}, fmt.Errorf("dashboard content and metadata exceed %d bytes", maxSourceBytes)
 	}
@@ -197,6 +212,7 @@ func buildView(report Report) (pageView, error) {
 		Commit:      report.Commit,
 		CommitShort: shortID(report.Commit),
 		Sources:     sources,
+		Sessions:    sessions,
 		TotalLines:  totalLines,
 		FileCount:   len(files),
 		ModelCount:  len(models),
@@ -273,6 +289,37 @@ func buildView(report Report) (pageView, error) {
 		view.Files = append(view.Files, item)
 	}
 	return view, nil
+}
+
+// sessionUsageViews returns the token usage of each attributed session,
+// sorted by its key, so the dashboard renders the same order on every run.
+func sessionUsageViews(sessions map[string]model.NoteSession) []sessionView {
+	keys := make([]string, 0, len(sessions))
+	for key := range sessions {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]sessionView, 0, len(keys))
+	for _, key := range keys {
+		value := sessions[key]
+		if value.TokensIn == 0 && value.TokensOut == 0 &&
+			value.CacheRead == 0 && value.CacheWrite == 0 {
+			continue
+		}
+		modelName := value.Model
+		if modelName == "" {
+			modelName = "unknown"
+		}
+		result = append(result, sessionView{
+			Key:        key,
+			Model:      modelName,
+			TokensIn:   value.TokensIn,
+			TokensOut:  value.TokensOut,
+			CacheRead:  value.CacheRead,
+			CacheWrite: value.CacheWrite,
+		})
+	}
+	return result
 }
 
 func dashboardAttribution(value model.Attribution) model.Attribution {
@@ -620,6 +667,11 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
     .line-number { width: 4rem; padding: 0.22rem 0.85rem; color: var(--faint); text-align: right; user-select: none; }
     .line-code { min-width: 28rem; padding: 0.22rem 0.5rem; color: var(--text); white-space: pre; }
     .line-label { width: 13rem; padding: 0.22rem 0.8rem; color: currentColor; white-space: nowrap; }
+    .table-scroll { overflow-x: auto; margin-top: 1rem; }
+    .usage-table th, .usage-table td { padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--cl-black-600); text-align: right; white-space: nowrap; }
+    .usage-table th:first-child, .usage-table td:first-child { text-align: left; }
+    .usage-table thead th { color: var(--muted); font-weight: 600; }
+    .usage-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.012); }
     footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 1.5rem; color: var(--faint); font-family: var(--cl-mono); font-size: 0.78rem; }
     .tone-human { color: var(--human); }
     .tone-human-override { color: var(--human-override); }
@@ -724,6 +776,23 @@ var reportTemplate = template.Must(template.New("dashboard").Parse(`<!doctype ht
       </div>
       {{range .Warnings}}<div class="warning">{{.}}</div>{{end}}
     </section>
+
+    {{if .Sessions}}
+    <section class="card panel">
+      <h2>Session token usage</h2>
+      <p class="subtitle">Token counts of the agent turns this commit consumed, keyed by agent session.</p>
+      <div class="table-scroll">
+        <table class="usage-table" aria-label="Session token usage">
+          <thead><tr><th>Session</th><th>Model</th><th>Tokens in</th><th>Tokens out</th><th>Cache read</th><th>Cache write</th></tr></thead>
+          <tbody>
+            {{range .Sessions}}
+            <tr><td><code>{{.Key}}</code></td><td>{{.Model}}</td><td>{{.TokensIn}}</td><td>{{.TokensOut}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td></tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {{end}}
 
     <div class="files-title">
       <h2>Line provenance</h2>

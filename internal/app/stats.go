@@ -128,6 +128,11 @@ func writeStatsText(out io.Writer, result report.Aggregate) {
 		fmt.Fprintf(out, "  %s (agent %s, model %s): %d lines (human %d, AI %d, untracked %d, human override %d)\n",
 			session.Session, session.Agent, session.Model, session.Lines,
 			session.Human, session.AI, session.Untracked, session.HumanOverride)
+		if session.TokensIn != 0 || session.TokensOut != 0 ||
+			session.CacheRead != 0 || session.CacheWrite != 0 {
+			fmt.Fprintf(out, "    tokens in %d, out %d, cache read %d, cache write %d\n",
+				session.TokensIn, session.TokensOut, session.CacheRead, session.CacheWrite)
+		}
 	}
 
 	fmt.Fprintln(out, "Files:")

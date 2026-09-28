@@ -60,6 +60,10 @@ type SessionTotals struct {
 	Agent   string `json:"agent"`
 	Model   string `json:"model"`
 	Totals
+	TokensIn   uint64 `json:"tokens_in,omitempty"`
+	TokensOut  uint64 `json:"tokens_out,omitempty"`
+	CacheRead  uint64 `json:"cache_read,omitempty"`
+	CacheWrite uint64 `json:"cache_write,omitempty"`
 }
 
 // CommitTotals contains totals and the committer timestamp for one commit.
@@ -170,6 +174,7 @@ func Collect(repo *gitcmd.Repo, from, to string, limit int) (Aggregate, error) {
 		}
 		result.Commits.Annotated++
 		commitTotals := CommitTotals{Commit: commit, Timestamp: timestamp}
+		mergeSessionUsage(sessions, note.Sessions)
 		paths := make([]string, 0, len(note.Files))
 		for path := range note.Files {
 			paths = append(paths, path)
@@ -338,6 +343,34 @@ func addAgentTotals(
 		sessions[key] = session
 	}
 	return addTotals(&session.Totals, attribution, count)
+}
+
+// mergeSessionUsage adds the usage of the note's sessions into the
+// aggregate sessions. Usage is session-level, so it merges once per note
+// instead of once per line, and it reuses the composite key of the line
+// aggregation so both paths meet in one SessionTotals.
+func mergeSessionUsage(sessions map[string]*SessionTotals, noteSessions map[string]model.NoteSession) {
+	for name, value := range noteSessions {
+		if value.TokensIn == 0 && value.TokensOut == 0 &&
+			value.CacheRead == 0 && value.CacheWrite == 0 {
+			continue
+		}
+		session := strings.TrimPrefix(name, value.Agent+model.NoteSessionSeparator)
+		modelName := value.Model
+		if modelName == "" {
+			modelName = "unknown"
+		}
+		key := session + "\x00" + value.Agent + "\x00" + modelName
+		totals := sessions[key]
+		if totals == nil {
+			totals = &SessionTotals{Session: session, Agent: value.Agent, Model: modelName}
+			sessions[key] = totals
+		}
+		totals.TokensIn += value.TokensIn
+		totals.TokensOut += value.TokensOut
+		totals.CacheRead += value.CacheRead
+		totals.CacheWrite += value.CacheWrite
+	}
 }
 
 func addAuthorTotals(authors map[string]*AuthorTotals, attribution model.Attribution, count int) error {

@@ -33,8 +33,20 @@ type rangePageView struct {
 	Files          []rangeTotalsView
 	Agents         []rangeTotalsView
 	Models         []rangeTotalsView
+	Sessions       []rangeSessionView
 	Trend          []rangeTrendView
 	Warnings       []string
+}
+
+type rangeSessionView struct {
+	Name       string
+	Agent      string
+	Model      string
+	Lines      int
+	TokensIn   uint64
+	TokensOut  uint64
+	CacheRead  uint64
+	CacheWrite uint64
 }
 
 type rangeTotalsView struct {
@@ -178,6 +190,33 @@ func buildRangeView(aggregate report.Aggregate) (rangePageView, error) {
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].Name < models[j].Name })
 
+	sessions := make([]rangeSessionView, 0, len(aggregate.Sessions))
+	for _, session := range aggregate.Sessions {
+		if err := validateRangeText("session", session.Session, false); err != nil {
+			return rangePageView{}, err
+		}
+		if err := validateRangeText("session agent", session.Agent, false); err != nil {
+			return rangePageView{}, err
+		}
+		if err := validateRangeText("session model", session.Model, false); err != nil {
+			return rangePageView{}, err
+		}
+		if err := validateRangeTotals("session "+session.Session, session.Totals); err != nil {
+			return rangePageView{}, err
+		}
+		sourceBytes += len(session.Session) + len(session.Agent) + len(session.Model)
+		sessions = append(sessions, rangeSessionView{
+			Name:       session.Session,
+			Agent:      session.Agent,
+			Model:      session.Model,
+			Lines:      session.Lines,
+			TokensIn:   session.TokensIn,
+			TokensOut:  session.TokensOut,
+			CacheRead:  session.CacheRead,
+			CacheWrite: session.CacheWrite,
+		})
+	}
+
 	trend := make([]rangeTrendView, 0, len(aggregate.Commit))
 	for _, commit := range aggregate.Commit {
 		if !model.ValidObjectID(commit.Commit) {
@@ -277,6 +316,7 @@ func buildRangeView(aggregate report.Aggregate) (rangePageView, error) {
 		Files:          files,
 		Agents:         agents,
 		Models:         models,
+		Sessions:       sessions,
 		Trend:          trend,
 		Warnings:       warnings,
 	}, nil
@@ -625,6 +665,21 @@ var rangeReportTemplate = template.Must(template.New("dashboard-range").Parse(`<
           </table>
         </div>
         {{else}}<p class="muted">No models in this range.</p>{{end}}
+      </div>
+      <div class="card panel">
+        <h2>Sessions</h2>
+        {{if .Sessions}}
+        <div class="table-scroll">
+          <table aria-label="Attribution and token usage by agent session">
+            <thead><tr><th>Session</th><th>Agent</th><th>Model</th><th>Lines</th><th>Tokens in</th><th>Tokens out</th><th>Cache read</th><th>Cache write</th></tr></thead>
+            <tbody>
+              {{range .Sessions}}
+              <tr><td><code>{{.Name}}</code></td><td>{{.Agent}}</td><td>{{.Model}}</td><td>{{.Lines}}</td><td>{{.TokensIn}}</td><td>{{.TokensOut}}</td><td>{{.CacheRead}}</td><td>{{.CacheWrite}}</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{else}}<p class="muted">No agent sessions in this range.</p>{{end}}
       </div>
     </section>
 

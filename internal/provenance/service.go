@@ -1249,6 +1249,7 @@ type BlameResult struct {
 type BlameCollection struct {
 	Commit   string
 	Files    []BlameResult
+	Sessions map[string]model.NoteSession
 	Warnings []string
 }
 
@@ -1274,7 +1275,7 @@ func BlameHead(repo *gitcmd.Repo) (BlameCollection, error) {
 	if err != nil {
 		return BlameCollection{}, err
 	}
-	result := BlameCollection{Commit: head}
+	result := BlameCollection{Commit: head, Sessions: note.Sessions}
 	for index, path := range paths {
 		file, err := blameNotedFile(repo, head, path, blobs[index], note.Files[path], note.Sessions)
 		if err != nil {

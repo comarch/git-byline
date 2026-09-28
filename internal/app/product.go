@@ -232,6 +232,7 @@ func runDashboard(env *Env, command *command, args []string) (int, error) {
 		}
 		report.Commit = file.Commit
 		report.Files = []provenance.BlameResult{file}
+		report.Sessions = file.Sessions
 	} else {
 		collection, err := provenance.BlameHead(repo)
 		if err != nil {
@@ -239,6 +240,7 @@ func runDashboard(env *Env, command *command, args []string) (int, error) {
 		}
 		report.Commit = collection.Commit
 		report.Files = collection.Files
+		report.Sessions = collection.Sessions
 		writeWarnings(env, collection.Warnings)
 	}
 	data, err := dashboard.Render(report)
