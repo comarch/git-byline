@@ -1185,6 +1185,37 @@ func handleFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResu
 		}
 	}
 	originalState := state
+	state, remaps, moves, warnings := planFastForwardMoves(state, split, update, branchRef)
+	result, err := rebasePendingLocked(repo, update.New, dataStore, state)
+	if err != nil {
+		return RewriteResult{}, err
+	}
+	var moveErr error
+	if len(moves) > 0 {
+		moveErr = dataStore.MoveCheckpoints(branchRef, moves)
+	} else {
+		moveErr = dataStore.RewriteCheckpointBases(branchRef, remaps)
+	}
+	if moveErr != nil {
+		moveErr = fmt.Errorf("move checkpoints to fast-forwarded commit: %w", moveErr)
+		if rollbackErr := writeRewriteState(repo, dataStore, originalState); rollbackErr != nil {
+			return RewriteResult{}, fmt.Errorf("%w; rollback state: %w", moveErr, rollbackErr)
+		}
+		return RewriteResult{}, moveErr
+	}
+	result.Written += saved.Written
+	result.Warnings = append(result.Warnings, warnings...)
+	result.Warnings = append(result.Warnings, saved.Warnings...)
+	return result, nil
+}
+
+// planFastForwardMoves plans state and checkpoint changes after classification.
+func planFastForwardMoves(
+	state model.State,
+	split fastForwardCheckpoints,
+	update rewrite.RefUpdate,
+	branchRef string,
+) (model.State, map[string]string, map[uint64]store.CheckpointMove, []string) {
 	state.Pending.Files = unchangedPendingFiles(state.Pending.Files, split.changed)
 	remaps := map[string]string{}
 	moves := map[uint64]store.CheckpointMove{}
@@ -1227,27 +1258,7 @@ func handleFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResu
 			"fast-forward changed %d paths with pending checkpoints; consumed %d checkpoints that no longer match the worktree",
 			split.changedPaths, len(split.touched)))
 	}
-	result, err := rebasePendingLocked(repo, update.New, dataStore, state)
-	if err != nil {
-		return RewriteResult{}, err
-	}
-	var moveErr error
-	if len(moves) > 0 {
-		moveErr = dataStore.MoveCheckpoints(branchRef, moves)
-	} else {
-		moveErr = dataStore.RewriteCheckpointBases(branchRef, remaps)
-	}
-	if moveErr != nil {
-		moveErr = fmt.Errorf("move checkpoints to fast-forwarded commit: %w", moveErr)
-		if rollbackErr := writeRewriteState(repo, dataStore, originalState); rollbackErr != nil {
-			return RewriteResult{}, fmt.Errorf("%w; rollback state: %w", moveErr, rollbackErr)
-		}
-		return RewriteResult{}, moveErr
-	}
-	result.Written += saved.Written
-	result.Warnings = append(result.Warnings, warnings...)
-	result.Warnings = append(result.Warnings, saved.Warnings...)
-	return result, nil
+	return state, remaps, moves, warnings
 }
 
 // fastForwardCheckpoints holds the unconsumed checkpoints taken on the old
