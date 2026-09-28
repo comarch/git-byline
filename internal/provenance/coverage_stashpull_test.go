@@ -1,6 +1,7 @@
 package provenance
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -207,22 +208,32 @@ func TestCoverageSaveNoteBlobBudgetWarning(t *testing.T) {
 // Git failures while replacing the stash note surface as errors.
 func TestCoverageSaveNoteWriteErrors(t *testing.T) {
 	for _, tc := range []struct {
+		name     string
 		mode     string
 		existing bool
 	}{
-		{"author-error", false},
-		{"notes-remove-error", true},
-		{"notes-write-error", false},
-		{"ownership-write-error", false},
+		{"author error", "author-error", false},
+		{"new note write", "notes-write-error", false},
+		{"new ownership write", "ownership-write-error", false},
+		{"replacement note write", "notes-write-error", true},
+		{"replacement ownership write", "ownership-write-error", true},
 	} {
-		t.Run(tc.mode, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			root, repo, base, stash, records := stashSaveFixture(t)
+			var old []byte
 			if tc.existing {
-				writeStashFixtureNote(t, repo, stash, stashFileNote(t, repo, stash))
+				old = stashFileNote(t, repo, stash)
+				writeStashFixtureNote(t, repo, stash, old)
 			}
 			fake := fakeRewriteRepo(t, root, tc.mode, "")
 			if _, err := saveStashNote(fake, stash, base, records, []string{coverageFile}); err == nil {
 				t.Fatalf("saveStashNote accepted %s", tc.mode)
+			}
+			if tc.existing {
+				data, found, err := repo.ReadNoteRef(stashNotesRef, stash)
+				if err != nil || !found || !bytes.Equal(data, old) {
+					t.Fatalf("stash note after %s = %q, %t, %v; want original", tc.mode, data, found, err)
+				}
 			}
 		})
 	}

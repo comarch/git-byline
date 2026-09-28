@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -131,13 +132,16 @@ func baseRewrite(branchRef string, bases map[string]string) checkpointRewrite {
 	}
 }
 
-// CheckpointMove is the new base commit and lane of one checkpoint.
+// CheckpointMove is the new base commit, lane, and optional file subset of
+// one checkpoint. A nil Files slice keeps every file.
 type CheckpointMove struct {
 	BaseCommit string
 	LaneID     string
+	Files      []model.Snapshot
 }
 
-// MoveCheckpoints rewrites the base commit and lane of the listed records.
+// MoveCheckpoints rewrites the base commit, lane, and optional files of the
+// listed records.
 // Every listed record must be a current-version record on branchRef with
 // a branch lane, so splitting a lane never rewrites a legacy context.
 func (store Store) MoveCheckpoints(branchRef string, moves map[uint64]CheckpointMove) error {
@@ -205,11 +209,18 @@ func moveRewrite(branchRef string, moves map[uint64]CheckpointMove, found map[ui
 			record.BranchRef != branchRef {
 			return record, false, fmt.Errorf("checkpoint %d is outside branch context %q", record.Seq, branchRef)
 		}
-		if record.BaseCommit == move.BaseCommit && record.LaneID == move.LaneID {
+		filesChanged := move.Files != nil && !slices.Equal(record.Files, move.Files)
+		if record.BaseCommit == move.BaseCommit && record.LaneID == move.LaneID && !filesChanged {
 			return record, false, nil
 		}
 		record.BaseCommit = move.BaseCommit
 		record.LaneID = move.LaneID
+		if move.Files != nil {
+			record.Files = move.Files
+		}
+		if err := validateCheckpoint(record); err != nil {
+			return record, false, fmt.Errorf("move checkpoint %d: %w", record.Seq, err)
+		}
 		return record, true, nil
 	}
 }

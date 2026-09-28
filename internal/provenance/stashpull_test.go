@@ -1,8 +1,11 @@
 package provenance
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/comarch/git-byline/internal/gitcmd"
 	"github.com/comarch/git-byline/internal/model"
@@ -150,6 +153,97 @@ func TestStashPopAfterFastForwardPullWithFetchedTipNote(t *testing.T) {
 	t.Parallel()
 	stashPopAfterFastForwardPull(t, true,
 		model.AuthorAI, model.AuthorHuman, model.AuthorHuman, model.AuthorHuman)
+}
+
+func TestStashPathspecKeepsUnstashedCheckpointFiles(t *testing.T) {
+	t.Parallel()
+	root, repo, base, tip := stashPullRepo(t)
+	write(t, root, "forge.txt", "agent\none\ntwo\n")
+	write(t, root, "local.txt", "local\nagent\n")
+	event := presetAI("shared-session", "forge.txt")
+	event.Paths = []string{"forge.txt", "local.txt"}
+	if _, err := Capture(repo, event, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	git(t, root, "stash", "push", "-qm", "partial", "--", "forge.txt")
+	stash := strings.TrimSpace(git(t, root, "rev-parse", stashRef))
+	refTransaction(t, repo, stashRef, "", stash)
+	git(t, root, "merge", "-q", "--ff-only", "forge")
+	runFastForwardHooks(t, repo, base, tip)
+
+	records, state := readCheckpointsAndState(t, repo)
+	if len(records) != 1 || records[0].BaseCommit != tip ||
+		checkpointConsumed(records[0], state) || len(records[0].Files) != 1 ||
+		records[0].Files[0].Path != "local.txt" {
+		t.Fatalf("checkpoint after fast-forward = %+v, state %+v; want live local.txt only", records, state)
+	}
+
+	git(t, root, "stash", "pop", "-q")
+	refTransaction(t, repo, stashRef, stash, "")
+	commitAndAnnotate(t, root, repo, tip, "stashed work")
+	assertBlameAuthors(t, repo, "local.txt", model.AuthorHuman, model.AuthorAI)
+}
+
+func TestAppliedStashDetectedWithCRLFWorktree(t *testing.T) {
+	t.Parallel()
+	root, repo, _, stash, _ := stashSaveFixture(t)
+	note := makeCoverageNoteForContent(mustBlob(t, repo, stash, coverageFile), coverageFile, 2)
+	file := note.Files[coverageFile]
+	file.Ranges = []model.Range{
+		{Start: 1, End: 1, Attribution: model.Attribution{Author: model.AuthorHuman}},
+		{Start: 2, End: 2, Attribution: model.Attribution{
+			Author: model.AuthorAI, Agent: "droid", Model: "model", Session: "crlf",
+		}},
+	}
+	note.Files[coverageFile] = file
+	writeStashFixtureNote(t, repo, stash, encodeCoverageNote(t, note))
+	git(t, root, "config", "core.autocrlf", "true")
+	git(t, root, "reset", "-q", "--hard", "HEAD")
+	git(t, root, "stash", "apply", "-q", stash)
+
+	restored, result, err := restoreAppliedStash(repo, stash)
+	if err != nil || !restored || result.Mapped != 1 {
+		t.Fatalf("restoreAppliedStash(CRLF) = %t, %+v, %v", restored, result, err)
+	}
+	_, state := readCheckpointsAndState(t, repo)
+	ranges := state.Pending.Files[coverageFile].Ranges
+	if len(ranges) != 2 || ranges[1].Author != model.AuthorAI {
+		t.Fatalf("restored CRLF ranges = %+v, want AI second line", ranges)
+	}
+}
+
+func TestSaveStashNoteUpgradesLegacyVersions(t *testing.T) {
+	t.Parallel()
+	for _, version := range []int{model.NoteVersionV1, model.NoteVersionV2} {
+		version := version
+		t.Run(fmt.Sprintf("version %d", version), func(t *testing.T) {
+			t.Parallel()
+			_, repo, base, stash, records := stashSaveFixture(t)
+			legacy := makeCoverageNoteForContent(mustBlob(t, repo, stash, coverageFile), coverageFile, 2)
+			legacy.Version = version
+			var value any = legacy
+			if version == model.NoteVersionV1 {
+				value = struct {
+					Version int                       `json:"version"`
+					Files   map[string]model.NoteFile `json:"files"`
+				}{Version: version, Files: legacy.Files}
+			}
+			data, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeStashFixtureNote(t, repo, stash, append(data, '\n'))
+
+			result, err := saveStashNote(repo, stash, base, records, []string{coverageFile})
+			if err != nil || result.Written != 1 || len(result.Warnings) != 0 {
+				t.Fatalf("saveStashNote(version %d) = %+v, %v", version, result, err)
+			}
+			if note := readStashNote(t, repo, stash); note.Version != model.NoteVersion {
+				t.Fatalf("saved stash note version = %d, want %d", note.Version, model.NoteVersion)
+			}
+		})
+	}
 }
 
 func TestStashPopAfterFastForwardPullWithAddedAndDeletedPaths(t *testing.T) {

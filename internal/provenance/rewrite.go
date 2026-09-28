@@ -1199,21 +1199,30 @@ func handleFastForward(repo *gitcmd.Repo, update rewrite.RefUpdate) (RewriteResu
 		warnings = append(warnings,
 			"fast-forward changed paths with pending checkpoints; they stay parked on the previous commit")
 	default:
-		last := split.touched[len(split.touched)-1].Seq
-		// A lane is named after the checkpoint that opened it, so this name
-		// matches an existing lane only when the last touched checkpoint
-		// opened it. No untouched checkpoint precedes it then, and
-		// consuming the lane up to it still consumes only touched ones.
-		consumedLane := model.CheckpointLaneID(last)
-		for _, record := range split.touched {
-			moves[record.Seq] = store.CheckpointMove{BaseCommit: update.Old, LaneID: consumedLane}
+		if len(split.consumed) > 0 {
+			last := split.consumed[len(split.consumed)-1].Seq
+			// A lane is named after the checkpoint that opened it, so this name
+			// matches an existing lane only when the last consumed checkpoint
+			// opened it. No carried checkpoint precedes it then, and consuming
+			// the lane up to it still consumes only fully touched records.
+			consumedLane := model.CheckpointLaneID(last)
+			for _, record := range split.consumed {
+				moves[record.Seq] = store.CheckpointMove{BaseCommit: update.Old, LaneID: consumedLane}
+			}
+			state.Lanes = advanceLanes(state.Lanes, laneSelection{Consumed: map[laneContext]uint64{
+				{BranchRef: branchRef, LaneID: consumedLane}: last,
+			}})
 		}
 		for _, record := range split.untouched {
 			moves[record.Seq] = store.CheckpointMove{BaseCommit: update.New, LaneID: record.LaneID}
 		}
-		state.Lanes = advanceLanes(state.Lanes, laneSelection{Consumed: map[laneContext]uint64{
-			{BranchRef: branchRef, LaneID: consumedLane}: last,
-		}})
+		for _, record := range split.carried {
+			moves[record.Seq] = store.CheckpointMove{
+				BaseCommit: update.New,
+				LaneID:     record.LaneID,
+				Files:      record.Files,
+			}
+		}
 		warnings = append(warnings, fmt.Sprintf(
 			"fast-forward changed %d paths with pending checkpoints; consumed %d checkpoints that no longer match the worktree",
 			split.changedPaths, len(split.touched)))
@@ -1248,6 +1257,8 @@ type fastForwardCheckpoints struct {
 	changed      map[string]bool
 	untouched    []model.Checkpoint
 	touched      []model.Checkpoint
+	consumed     []model.Checkpoint
+	carried      []model.Checkpoint
 	changedPaths int
 	legacy       bool
 }
@@ -1277,10 +1288,19 @@ func splitFastForwardCheckpoints(
 	hit := map[string]bool{}
 	for _, record := range oldTip {
 		split.legacy = split.legacy || recordUsesLegacyContext(record)
-		if markChangedPaths(record, split.changed, hit) {
-			split.touched = append(split.touched, record)
-		} else {
+		touched, untouched := splitCheckpointFiles(record, split.changed, hit)
+		switch {
+		case len(touched) == 0:
 			split.untouched = append(split.untouched, record)
+		case len(untouched) == 0:
+			split.touched = append(split.touched, record)
+			split.consumed = append(split.consumed, record)
+		default:
+			touchedRecord := record
+			touchedRecord.Files = touched
+			split.touched = append(split.touched, touchedRecord)
+			record.Files = untouched
+			split.carried = append(split.carried, record)
 		}
 	}
 	split.changedPaths = len(hit)
@@ -1310,17 +1330,34 @@ func unchangedPendingFiles(files map[string]model.PendingFile, changed map[strin
 	return kept
 }
 
-// markChangedPaths adds the paths of record that are in changed to hit and
-// reports whether there was any.
-func markChangedPaths(record model.Checkpoint, changed, hit map[string]bool) bool {
-	touched := false
+func splitCheckpointFiles(
+	record model.Checkpoint,
+	changed,
+	hit map[string]bool,
+) ([]model.Snapshot, []model.Snapshot) {
+	touchedCount := 0
 	for _, file := range record.Files {
 		if changed[file.Path] {
-			touched = true
+			touchedCount++
 			hit[file.Path] = true
 		}
 	}
-	return touched
+	if touchedCount == 0 {
+		return nil, record.Files
+	}
+	if touchedCount == len(record.Files) {
+		return record.Files, nil
+	}
+	touched := make([]model.Snapshot, 0, touchedCount)
+	untouched := make([]model.Snapshot, 0, len(record.Files)-touchedCount)
+	for _, file := range record.Files {
+		if changed[file.Path] {
+			touched = append(touched, file)
+		} else {
+			untouched = append(untouched, file)
+		}
+	}
+	return touched, untouched
 }
 
 func writeRewriteState(repo *gitcmd.Repo, dataStore store.Store, state model.State) error {
@@ -1618,6 +1655,7 @@ func saveStashNote(
 			}}, nil
 		}
 		note = decoded
+		note.Version = model.NoteVersion
 	}
 	identity, err := commitIdentity(repo, stash)
 	if err != nil {
@@ -1655,16 +1693,22 @@ func saveStashNote(
 		return result, nil
 	}
 	if found {
-		// A note changed since the read stays, and the write below fails.
-		if _, err := removeStashNote(repo, stash, existing, true); err != nil {
+		replaced, err := replaceStashNote(repo, stash, existing, data)
+		if err != nil {
 			return RewriteResult{}, err
 		}
-	}
-	if err := repo.WriteNoteRef(stashNotesRef, stash, data); err != nil {
-		return RewriteResult{}, fmt.Errorf("write stash attribution: %w", err)
-	}
-	if err := writeStashOwnership(repo, stash, data); err != nil {
-		return RewriteResult{}, err
+		if !replaced {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("skipped replacing changed stash attribution note on %s", stash))
+			return result, nil
+		}
+	} else {
+		if err := repo.WriteNoteRef(stashNotesRef, stash, data); err != nil {
+			return RewriteResult{}, fmt.Errorf("write stash attribution: %w", err)
+		}
+		if err := writeStashOwnership(repo, stash, data); err != nil {
+			return RewriteResult{}, err
+		}
 	}
 	result.Written++
 	return result, nil
@@ -2131,12 +2175,47 @@ func deleteDroppedStashNote(repo *gitcmd.Repo, commit string) (RewriteResult, er
 }
 
 func writeStashOwnership(repo *gitcmd.Repo, commit string, data []byte) error {
-	digest := sha256.Sum256(data)
-	ownership := []byte(fmt.Sprintf("%x\n", digest[:]))
+	ownership := stashOwnership(data)
 	if err := repo.WriteNoteRef(stashOwnershipRef, commit, ownership); err != nil {
 		return fmt.Errorf("write stash attribution ownership: %w", err)
 	}
 	return nil
+}
+
+func replaceStashNote(repo *gitcmd.Repo, commit string, oldData, newData []byte) (bool, error) {
+	replaced, err := repo.ReplaceNoteRefIfEqual(stashNotesRef, commit, oldData, newData)
+	if err != nil || !replaced {
+		return replaced, err
+	}
+	ownershipReplaced, ownershipErr := repo.ReplaceNoteRefIfEqual(
+		stashOwnershipRef,
+		commit,
+		stashOwnership(oldData),
+		stashOwnership(newData),
+	)
+	if ownershipErr == nil && ownershipReplaced {
+		return true, nil
+	}
+	ownershipCause := ownershipErr
+	if ownershipCause == nil {
+		ownershipCause = errors.New("stash attribution ownership changed")
+	}
+	rolledBack, rollbackErr := repo.ReplaceNoteRefIfEqual(stashNotesRef, commit, newData, oldData)
+	if rollbackErr != nil {
+		return false, fmt.Errorf("replace stash attribution ownership: %v; rollback note: %w", ownershipCause, rollbackErr)
+	}
+	if !rolledBack {
+		return false, errors.New("stash attribution changed while rolling back ownership")
+	}
+	if ownershipErr != nil {
+		return false, fmt.Errorf("replace stash attribution ownership: %w", ownershipErr)
+	}
+	return false, nil
+}
+
+func stashOwnership(data []byte) []byte {
+	digest := sha256.Sum256(data)
+	return []byte(fmt.Sprintf("%x\n", digest[:]))
 }
 
 func stashNoteOwned(repo *gitcmd.Repo, commit string, data []byte) (bool, error) {
@@ -2147,15 +2226,11 @@ func stashNoteOwned(repo *gitcmd.Repo, commit string, data []byte) (bool, error)
 	if !found {
 		return false, nil
 	}
-	digest := sha256.Sum256(data)
-	expected := []byte(fmt.Sprintf("%x\n", digest[:]))
-	return bytes.Equal(ownership, expected), nil
+	return bytes.Equal(ownership, stashOwnership(data)), nil
 }
 
 func removeStashOwnership(repo *gitcmd.Repo, commit string, data []byte) error {
-	digest := sha256.Sum256(data)
-	expected := []byte(fmt.Sprintf("%x\n", digest[:]))
-	_, err := repo.DeleteNoteRefIfEqual(stashOwnershipRef, commit, expected)
+	_, err := repo.DeleteNoteRefIfEqual(stashOwnershipRef, commit, stashOwnership(data))
 	if err != nil {
 		return fmt.Errorf("remove stash attribution ownership: %w", err)
 	}
