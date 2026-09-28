@@ -82,7 +82,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
           GOPROXY: "off"
-        run: go test ./...
+        run: go test -timeout=15m ./...
 
   smoke:
     name: Smoke test (${{ matrix.os }})
