@@ -24,3 +24,6 @@ coverage*.out
 
 # macOS Finder metadata
 .DS_Store
+
+# Playwright MCP browser session artifacts
+.playwright-mcp/
