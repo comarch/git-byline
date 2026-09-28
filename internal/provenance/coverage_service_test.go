@@ -426,13 +426,13 @@ func coverageBlameNoteFailures(t *testing.T) {
 	if _, err := blamePath(repo, head, "not\x00a-path"); err == nil {
 		t.Fatal("blamePath accepted a NUL path")
 	}
-	if _, err := blameNotedFile(repo, head, "../outside", blob, model.NoteFile{}); err == nil {
+	if _, err := blameNotedFile(repo, head, "../outside", blob, model.NoteFile{}, nil); err == nil {
 		t.Fatal("blameNotedFile accepted an escaping path")
 	}
-	if _, err := blameNotedFile(repo, head, "coverage/../"+coverageFile, blob, model.NoteFile{}); err == nil {
+	if _, err := blameNotedFile(repo, head, "coverage/../"+coverageFile, blob, model.NoteFile{}, nil); err == nil {
 		t.Fatal("blameNotedFile accepted a non-normalized path")
 	}
-	if _, err := blameNotedFile(repo, head, coverageFile, "not-a-blob", model.NoteFile{}); err == nil {
+	if _, err := blameNotedFile(repo, head, coverageFile, "not-a-blob", model.NoteFile{}, nil); err == nil {
 		t.Fatal("blameNotedFile accepted an invalid blob")
 	}
 }

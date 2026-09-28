@@ -50,6 +50,14 @@ func TestWriteBlameTextTokens(t *testing.T) {
 	if strings.Contains(noUsage.String(), "[") {
 		t.Fatalf("suffix without sessions: %q", noUsage.String())
 	}
+
+	var zeroUsage bytes.Buffer
+	writeBlameText(&zeroUsage, lines, map[string]model.NoteSession{
+		model.NoteSessionKey("droid", "s1"): {Agent: "droid"},
+	}, false, true)
+	if strings.Contains(zeroUsage.String(), "[") {
+		t.Fatalf("suffix without usage: %q", zeroUsage.String())
+	}
 }
 
 func TestTokenSuffixCacheOnlyWhenNonzero(t *testing.T) {

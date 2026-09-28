@@ -58,6 +58,47 @@ func TestCollectMergesSessionUsage(t *testing.T) {
 	}
 }
 
+func TestCollectKeepsUsageForSessionWithoutLines(t *testing.T) {
+	t.Parallel()
+	root := reportTestRepository(t)
+	writeReportFile(t, root, "file", "one\n")
+	head := reportCommit(t, root, "usage only")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReportNote(t, repo, head, model.Note{
+		Version: model.NoteVersion,
+		Files: map[string]model.NoteFile{
+			"file": {Blob: "badcafe1", Ranges: []model.Range{{
+				Start: 1, End: 1,
+				Attribution: model.Attribution{Author: model.AuthorHuman},
+			}}},
+		},
+		Sessions: map[string]model.NoteSession{
+			model.NoteSessionKey("droid", "session-a"): {
+				Agent:    "droid",
+				TokensIn: 120, TokensOut: 34,
+			},
+		},
+	})
+
+	got, err := Collect(repo, "", head, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 1 {
+		t.Fatalf("sessions = %+v, want one", got.Sessions)
+	}
+	session := got.Sessions[0]
+	if session.Session != "session-a" || session.Lines != 0 || session.Model != "unknown" {
+		t.Fatalf("session identity = %+v", session)
+	}
+	if session.TokensIn != 120 || session.TokensOut != 34 {
+		t.Fatalf("session usage = %+v, want 120/34", session)
+	}
+}
+
 func TestCollectSumsSessionUsageAcrossCommits(t *testing.T) {
 	t.Parallel()
 	root := reportTestRepository(t)

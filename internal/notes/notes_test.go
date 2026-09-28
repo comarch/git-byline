@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -165,6 +166,18 @@ func TestDecodeRejectsIdentityBeforeVersion3(t *testing.T) {
 	if _, err := Decode(data); err == nil ||
 		!strings.Contains(err.Error(), "requires version 3") {
 		t.Fatalf("Decode(v2 with identity) error = %v", err)
+	}
+}
+
+func TestDecodeRejectsOversizedSessionUsage(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{"version":4,"files":{"a.go":{"blob":"abcd1234",` +
+		`"ranges":[{"start":1,"end":1,"author":"ai","agent":"droid","model":"model","session":"s1"}]}},` +
+		`"sessions":{"droid::s1":{"agent":"droid","model":"model","added":1,"deleted":0,"accepted":1,"overridden":0,` +
+		`"tokens_in":` + strconv.FormatUint(model.MaxCheckpointUsageTokens+1, 10) + `}}}`)
+	if _, err := Decode(data); err == nil ||
+		!strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("Decode(oversized usage) error = %v", err)
 	}
 }
 
