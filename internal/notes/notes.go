@@ -342,19 +342,21 @@ func sessionUsagePresent(session model.NoteSession) bool {
 }
 
 // FindFile walks first-parent history to find attribution for the exact blob.
-func FindFile(repo *gitcmd.Repo, start, path, blob string) (model.NoteFile, bool, []string, error) {
+// It returns the whole note that carries the file, so callers can reuse its
+// session metrics.
+func FindFile(repo *gitcmd.Repo, start, path, blob string) (model.Note, bool, []string, error) {
 	if start == "" {
-		return model.NoteFile{}, false, nil, nil
+		return model.Note{}, false, nil, nil
 	}
 	history, err := repo.FirstParentHistory(start)
 	if err != nil {
-		return model.NoteFile{}, false, nil, err
+		return model.Note{}, false, nil, err
 	}
 	var warnings []string
 	for _, commit := range history {
 		data, ok, err := repo.ReadNote(commit)
 		if err != nil {
-			return model.NoteFile{}, false, warnings, err
+			return model.Note{}, false, warnings, err
 		}
 		if !ok {
 			continue
@@ -369,9 +371,9 @@ func FindFile(repo *gitcmd.Repo, start, path, blob string) (model.NoteFile, bool
 			continue
 		}
 		if file.Blob != blob {
-			return model.NoteFile{}, false, append(warnings, fmt.Sprintf("attribution blob mismatch for %s", path)), nil
+			return model.Note{}, false, append(warnings, fmt.Sprintf("attribution blob mismatch for %s", path)), nil
 		}
-		return file, true, warnings, nil
+		return note, true, warnings, nil
 	}
-	return model.NoteFile{}, false, warnings, nil
+	return model.Note{}, false, warnings, nil
 }

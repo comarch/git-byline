@@ -367,9 +367,9 @@ func TestFindFile(t *testing.T) {
 	if err := repo.WriteNote(head, data); err != nil {
 		t.Fatal(err)
 	}
-	file, found, warnings, err := FindFile(repo, head, "file", blob)
-	if err != nil || !found || len(warnings) != 0 || file.Blob != blob {
-		t.Fatalf("FindFile(valid) = %+v, %t, %v, %v", file, found, warnings, err)
+	note, found, warnings, err := FindFile(repo, head, "file", blob)
+	if err != nil || !found || len(warnings) != 0 || note.Files["file"].Blob != blob {
+		t.Fatalf("FindFile(valid) = %+v, %t, %v, %v", note, found, warnings, err)
 	}
 	if _, found, warnings, err := FindFile(repo, head, "file", "aaaa"); err != nil || found || len(warnings) != 1 {
 		t.Fatalf("FindFile(mismatch) = %t, %v, %v", found, warnings, err)
