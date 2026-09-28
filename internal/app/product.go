@@ -365,42 +365,59 @@ func runBlame(env *Env, command *command, args []string) (int, error) {
 // parseBlameFlags accepts the blame flags without a flag set, so the file
 // argument can follow or precede them.
 func parseBlameFlags(args []string) (bool, bool, colorMode, []string, error) {
-	jsonOutput := false
-	showTokens := false
-	mode := colorAuto
-	colorSet := false
-	var rest []string
+	options := blameOptions{mode: colorAuto}
 	for _, arg := range args {
-		switch {
-		case arg == "--json":
-			if jsonOutput {
-				return false, false, mode, nil, errors.New("--json specified more than once")
-			}
-			jsonOutput = true
-		case arg == "--tokens":
-			if showTokens {
-				return false, false, mode, nil, errors.New("--tokens specified more than once")
-			}
-			showTokens = true
-		case arg == "-h" || arg == "--help":
-			return false, false, mode, nil, flag.ErrHelp
-		case strings.HasPrefix(arg, "--color="):
-			if colorSet {
-				return false, false, mode, nil, errors.New("--color specified more than once")
-			}
-			parsed, err := parseColorMode(strings.TrimPrefix(arg, "--color="))
-			if err != nil {
-				return false, false, mode, nil, err
-			}
-			mode = parsed
-			colorSet = true
-		case strings.HasPrefix(arg, "-"):
-			return false, false, mode, nil, fmt.Errorf("unknown flag %q", arg)
-		default:
-			rest = append(rest, arg)
+		handled, err := options.parse(arg)
+		if err != nil {
+			return false, false, options.mode, nil, err
+		}
+		if !handled {
+			options.rest = append(options.rest, arg)
 		}
 	}
-	return jsonOutput, showTokens, mode, rest, nil
+	return options.jsonOutput, options.showTokens, options.mode, options.rest, nil
+}
+
+type blameOptions struct {
+	jsonOutput bool
+	showTokens bool
+	mode       colorMode
+	colorSet   bool
+	rest       []string
+}
+
+func (options *blameOptions) parse(arg string) (bool, error) {
+	switch {
+	case arg == "--json":
+		return true, setBlameFlag("--json", &options.jsonOutput)
+	case arg == "--tokens":
+		return true, setBlameFlag("--tokens", &options.showTokens)
+	case arg == "-h" || arg == "--help":
+		return true, flag.ErrHelp
+	case strings.HasPrefix(arg, "--color="):
+		if options.colorSet {
+			return true, errors.New("--color specified more than once")
+		}
+		mode, err := parseColorMode(strings.TrimPrefix(arg, "--color="))
+		if err != nil {
+			return true, err
+		}
+		options.mode = mode
+		options.colorSet = true
+		return true, nil
+	case strings.HasPrefix(arg, "-"):
+		return true, fmt.Errorf("unknown flag %q", arg)
+	default:
+		return false, nil
+	}
+}
+
+func setBlameFlag(name string, value *bool) error {
+	if *value {
+		return fmt.Errorf("%s specified more than once", name)
+	}
+	*value = true
+	return nil
 }
 
 // writeBlameText prints one aligned row per line. The label column is sized

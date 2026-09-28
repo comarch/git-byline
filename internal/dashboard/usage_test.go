@@ -142,3 +142,15 @@ func TestRenderRangeWithoutSessionUsageOmitsSection(t *testing.T) {
 		t.Fatal("range dashboard rendered a session section without usage data")
 	}
 }
+
+func TestSessionUsageViewsFiltersZeroAndDefaultsModel(t *testing.T) {
+	t.Parallel()
+	views := sessionUsageViews(map[string]model.NoteSession{
+		"droid::zero": {Agent: "droid"},
+		"droid::used": {Agent: "droid", TokensIn: 1},
+	})
+	if len(views) != 1 || views[0].Key != "droid::used" ||
+		views[0].Model != "unknown" {
+		t.Fatalf("sessionUsageViews() = %+v", views)
+	}
+}

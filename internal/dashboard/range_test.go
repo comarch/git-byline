@@ -203,6 +203,21 @@ func TestBuildRangeViewValidation(t *testing.T) {
 		{name: "control path", change: func(value *report.Aggregate) {
 			value.Files = []report.FileTotals{{Path: "bad\npath", Totals: report.Totals{Human: 1, Lines: 1}}}
 		}},
+		{name: "empty session", change: func(value *report.Aggregate) {
+			value.Sessions = []report.SessionTotals{{Agent: "droid", Model: "model"}}
+		}},
+		{name: "empty session agent", change: func(value *report.Aggregate) {
+			value.Sessions = []report.SessionTotals{{Session: "session", Model: "model"}}
+		}},
+		{name: "empty session model", change: func(value *report.Aggregate) {
+			value.Sessions = []report.SessionTotals{{Session: "session", Agent: "droid"}}
+		}},
+		{name: "invalid session totals", change: func(value *report.Aggregate) {
+			value.Sessions = []report.SessionTotals{{
+				Session: "session", Agent: "droid", Model: "model",
+				Totals: report.Totals{AI: 1},
+			}}
+		}},
 	}
 	for _, test := range tests {
 		test := test

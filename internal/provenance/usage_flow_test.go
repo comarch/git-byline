@@ -18,8 +18,16 @@ const usageTurnA = `{"type":"assistant","message":{"id":"msg_a","usage":{"input_
 
 const usageTurnB = `{"type":"assistant","message":{"id":"msg_b","usage":{"input_tokens":100,"output_tokens":200,"cache_creation_input_tokens":50,"cache_read_input_tokens":70}}}` + "\n"
 
-func TestAnnotateFoldsSessionUsage(t *testing.T) {
-	t.Parallel()
+type usageFixture struct {
+	root           string
+	repo           *gitcmd.Repo
+	transcriptPath string
+	event          preset.Event
+	now            time.Time
+}
+
+func newUsageFixture(t *testing.T) usageFixture {
+	t.Helper()
 	root := testRepo(t)
 	write(t, root, "file.txt", "base\n")
 	commit(t, root, "base")
@@ -28,110 +36,46 @@ func TestAnnotateFoldsSessionUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	transcriptPath := filepath.Join(t.TempDir(), "session.jsonl")
-	if err := os.WriteFile(transcriptPath, []byte(usageTurnA), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ai := preset.Event{
-		Type: model.AuthorAI, Agent: "droid", Model: "test-model",
-		Session: "session-1", Paths: []string{"file.txt"},
-		TranscriptPath: transcriptPath,
-	}
-	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-
-	write(t, root, "file.txt", "base\nai-one\n")
-	if result, err := Capture(repo, ai, now); err != nil || result.Recorded != 1 {
-		t.Fatalf("Capture(turn a) = %+v, %v", result, err)
-	}
-	if err := os.WriteFile(transcriptPath, []byte(usageTurnA+usageTurnB), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	write(t, root, "file.txt", "base\nai-one\nai-two\n")
-	if result, err := Capture(repo, ai, now.Add(time.Second)); err != nil || result.Recorded != 1 {
-		t.Fatalf("Capture(turn b) = %+v, %v", result, err)
-	}
-	// The same assistant turn still ends the transcript, so a third edit of
-	// the same turn must not add its usage a second time.
-	write(t, root, "file.txt", "base\nai-one\nai-two\nai-three\n")
-	if result, err := Capture(repo, ai, now.Add(2*time.Second)); err != nil || result.Recorded != 1 {
-		t.Fatalf("Capture(turn b again) = %+v, %v", result, err)
-	}
-
-	dataStore := store.New(repo.GitDir)
-	records, _, err := dataStore.ReadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 3 {
-		t.Fatalf("checkpoint records = %d, want 3", len(records))
-	}
-	if records[0].Usage == nil || records[0].Usage.MsgID != "msg_a" || records[0].Usage.TokensIn != 10 {
-		t.Fatalf("turn a usage = %+v", records[0].Usage)
-	}
-	if records[1].Usage == nil || records[1].Usage.MsgID != "msg_b" || records[1].Usage.TokensOut != 200 {
-		t.Fatalf("turn b usage = %+v", records[1].Usage)
-	}
-	if records[2].Usage == nil || records[2].Usage.MsgID != "msg_b" {
-		t.Fatalf("turn b repeat usage = %+v", records[2].Usage)
-	}
-
-	git(t, root, "add", "file.txt")
-	git(t, root, "commit", "-m", "ai edits")
-	if result, err := Annotate(repo); err != nil || result.Files != 1 {
-		t.Fatalf("Annotate(usage) = %+v, %v", result, err)
-	}
-	head, err := repo.Head()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, found, err := repo.ReadNote(head)
-	if err != nil || !found {
-		t.Fatalf("ReadNote(usage) = %t, %v", found, err)
-	}
-	note, err := notes.Decode(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session := note.Sessions[model.NoteSessionKey("droid", "session-1")]
-	if session.TokensIn != 110 || session.TokensOut != 220 ||
-		session.CacheRead != 77 || session.CacheWrite != 55 {
-		t.Fatalf("session usage = %+v, want 110/220/77/55", session)
+	return usageFixture{
+		root:           root,
+		repo:           repo,
+		transcriptPath: transcriptPath,
+		event: preset.Event{
+			Type: model.AuthorAI, Agent: "droid", Model: "test-model",
+			Session: "session-1", Paths: []string{"file.txt"},
+			TranscriptPath: transcriptPath,
+		},
+		now: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
 }
 
-func TestAnnotateExcludesUsageFromPendingWork(t *testing.T) {
-	t.Parallel()
-	root := testRepo(t)
-	write(t, root, "file.txt", "base\n")
-	commit(t, root, "base")
-	repo, err := gitcmd.Discover(root)
+func (fixture usageFixture) capture(t *testing.T, content string, offset time.Duration) {
+	t.Helper()
+	write(t, fixture.root, "file.txt", content)
+	result, err := Capture(fixture.repo, fixture.event, fixture.now.Add(offset))
+	if err != nil || result.Recorded != 1 {
+		t.Fatalf("Capture() = %+v, %v", result, err)
+	}
+}
+
+func (fixture usageFixture) writeTranscript(t *testing.T, content []byte) {
+	t.Helper()
+	if err := os.WriteFile(fixture.transcriptPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func usageRecords(t *testing.T, repo *gitcmd.Repo) []model.Checkpoint {
+	t.Helper()
+	records, _, err := store.New(repo.GitDir).ReadCheckpoints()
 	if err != nil {
 		t.Fatal(err)
 	}
-	transcriptPath := filepath.Join(t.TempDir(), "session.jsonl")
-	if err := os.WriteFile(transcriptPath, []byte(usageTurnA), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ai := preset.Event{
-		Type: model.AuthorAI, Agent: "droid", Model: "test-model",
-		Session: "session-1", Paths: []string{"file.txt"},
-		TranscriptPath: transcriptPath,
-	}
-	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	return records
+}
 
-	write(t, root, "file.txt", "base\ncommitted\n")
-	if _, err := Capture(repo, ai, now); err != nil {
-		t.Fatal(err)
-	}
-	git(t, root, "add", "file.txt")
-	git(t, root, "commit", "-m", "partial")
-
-	if err := os.WriteFile(transcriptPath, []byte(usageTurnA+usageTurnB), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	write(t, root, "file.txt", "base\ncommitted\npending\n")
-	if _, err := Capture(repo, ai, now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
+func annotateUsageNote(t *testing.T, repo *gitcmd.Repo) model.Note {
+	t.Helper()
 	if _, err := Annotate(repo); err != nil {
 		t.Fatal(err)
 	}
@@ -147,11 +91,66 @@ func TestAnnotateExcludesUsageFromPendingWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session := note.Sessions[model.NoteSessionKey("droid", "session-1")]
-	if session.TokensIn != 10 || session.TokensOut != 20 ||
-		session.CacheRead != 7 || session.CacheWrite != 5 {
-		t.Fatalf("session usage = %+v, want committed turn only", session)
+	return note
+}
+
+func assertCheckpointUsage(t *testing.T, usage *model.CheckpointUsage, msgID string, tokensIn, tokensOut uint64) {
+	t.Helper()
+	if usage == nil || usage.MsgID != msgID ||
+		usage.TokensIn != tokensIn || usage.TokensOut != tokensOut {
+		t.Fatalf("checkpoint usage = %+v, want %s %d/%d", usage, msgID, tokensIn, tokensOut)
 	}
+}
+
+func assertSessionUsage(t *testing.T, session model.NoteSession, tokensIn, tokensOut, cacheRead, cacheWrite uint64) {
+	t.Helper()
+	if session.TokensIn != tokensIn || session.TokensOut != tokensOut ||
+		session.CacheRead != cacheRead || session.CacheWrite != cacheWrite {
+		t.Fatalf("session usage = %+v, want %d/%d/%d/%d", session, tokensIn, tokensOut, cacheRead, cacheWrite)
+	}
+}
+
+func TestAnnotateFoldsSessionUsage(t *testing.T) {
+	t.Parallel()
+	fixture := newUsageFixture(t)
+
+	fixture.writeTranscript(t, []byte(usageTurnA))
+	fixture.capture(t, "base\nai-one\n", 0)
+	fixture.writeTranscript(t, []byte(usageTurnA+usageTurnB))
+	fixture.capture(t, "base\nai-one\nai-two\n", time.Second)
+	// The same assistant turn still ends the transcript, so a third edit of
+	// the same turn must not add its usage a second time.
+	fixture.capture(t, "base\nai-one\nai-two\nai-three\n", 2*time.Second)
+
+	records := usageRecords(t, fixture.repo)
+	if len(records) != 3 {
+		t.Fatalf("checkpoint records = %d, want 3", len(records))
+	}
+	assertCheckpointUsage(t, records[0].Usage, "msg_a", 10, 20)
+	assertCheckpointUsage(t, records[1].Usage, "msg_b", 100, 200)
+	assertCheckpointUsage(t, records[2].Usage, "msg_b", 100, 200)
+
+	git(t, fixture.root, "add", "file.txt")
+	git(t, fixture.root, "commit", "-m", "ai edits")
+	note := annotateUsageNote(t, fixture.repo)
+	session := note.Sessions[model.NoteSessionKey("droid", "session-1")]
+	assertSessionUsage(t, session, 110, 220, 77, 55)
+}
+
+func TestAnnotateExcludesUsageFromPendingWork(t *testing.T) {
+	t.Parallel()
+	fixture := newUsageFixture(t)
+
+	fixture.writeTranscript(t, []byte(usageTurnA))
+	fixture.capture(t, "base\ncommitted\n", 0)
+	git(t, fixture.root, "add", "file.txt")
+	git(t, fixture.root, "commit", "-m", "partial")
+	fixture.writeTranscript(t, []byte(usageTurnA+usageTurnB))
+	fixture.capture(t, "base\ncommitted\npending\n", time.Second)
+
+	note := annotateUsageNote(t, fixture.repo)
+	session := note.Sessions[model.NoteSessionKey("droid", "session-1")]
+	assertSessionUsage(t, session, 10, 20, 7, 5)
 }
 
 func TestFoldSessionUsageCapsTotals(t *testing.T) {
@@ -175,67 +174,25 @@ func TestFoldSessionUsageCapsTotals(t *testing.T) {
 
 func TestCaptureDropsUsageFromMissingTranscript(t *testing.T) {
 	t.Parallel()
-	root := testRepo(t)
-	write(t, root, "file.txt", "base\n")
-	commit(t, root, "base")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	transcriptPath := filepath.Join(t.TempDir(), "missing.jsonl")
-	ai := preset.Event{
-		Type: model.AuthorAI, Agent: "droid", Model: "test-model",
-		Session: "session-1", Paths: []string{"file.txt"},
-		TranscriptPath: transcriptPath,
-	}
-	write(t, root, "file.txt", "base\nai-one\n")
-	if result, err := Capture(repo, ai, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)); err != nil || result.Recorded != 1 {
-		t.Fatalf("Capture(missing transcript) = %+v, %v", result, err)
-	}
-	dataStore := store.New(repo.GitDir)
-	records, _, err := dataStore.ReadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixture := newUsageFixture(t)
+	fixture.capture(t, "base\nai-one\n", 0)
+	records := usageRecords(t, fixture.repo)
 	if len(records) != 1 || records[0].Usage != nil {
 		t.Fatalf("records = %+v, want one without usage", records)
 	}
 
-	git(t, root, "add", "file.txt")
-	git(t, root, "commit", "-m", "ai edit")
-	if _, err := Annotate(repo); err != nil {
-		t.Fatal(err)
-	}
-	head, err := repo.Head()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, found, err := repo.ReadNote(head)
-	if err != nil || !found {
-		t.Fatalf("ReadNote(no usage) = %t, %v", found, err)
-	}
-	note, err := notes.Decode(data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	git(t, fixture.root, "add", "file.txt")
+	git(t, fixture.root, "commit", "-m", "ai edit")
+	note := annotateUsageNote(t, fixture.repo)
 	session := note.Sessions[model.NoteSessionKey("droid", "session-1")]
-	if session.TokensIn != 0 || session.TokensOut != 0 ||
-		session.CacheRead != 0 || session.CacheWrite != 0 {
-		t.Fatalf("session usage = %+v, want zero", session)
-	}
+	assertSessionUsage(t, session, 0, 0, 0, 0)
 }
 
 // TestCaptureUsageOversizedValuesAreDropped locks the rule that usage over
 // the validation cap never blocks the checkpoint itself.
 func TestCaptureUsageOversizedValuesAreDropped(t *testing.T) {
 	t.Parallel()
-	root := testRepo(t)
-	write(t, root, "file.txt", "base\n")
-	commit(t, root, "base")
-	repo, err := gitcmd.Discover(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixture := newUsageFixture(t)
 	oversized, err := json.Marshal(map[string]any{
 		"message": map[string]any{
 			"id": "msg_big",
@@ -247,24 +204,9 @@ func TestCaptureUsageOversizedValuesAreDropped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transcriptPath := filepath.Join(t.TempDir(), "session.jsonl")
-	if err := os.WriteFile(transcriptPath, append(oversized, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ai := preset.Event{
-		Type: model.AuthorAI, Agent: "droid", Model: "test-model",
-		Session: "session-1", Paths: []string{"file.txt"},
-		TranscriptPath: transcriptPath,
-	}
-	write(t, root, "file.txt", "base\nai-one\n")
-	if result, err := Capture(repo, ai, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)); err != nil || result.Recorded != 1 {
-		t.Fatalf("Capture(oversized usage) = %+v, %v", result, err)
-	}
-	dataStore := store.New(repo.GitDir)
-	records, _, err := dataStore.ReadCheckpoints()
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixture.writeTranscript(t, append(oversized, '\n'))
+	fixture.capture(t, "base\nai-one\n", 0)
+	records := usageRecords(t, fixture.repo)
 	if len(records) != 1 || records[0].Usage != nil {
 		t.Fatalf("records = %+v, want one without usage", records)
 	}

@@ -175,6 +175,12 @@ func TestWriteStatsTextReportsPeople(t *testing.T) {
 			{Identity: "", Totals: report.Totals{Human: 2, Lines: 2}},
 			{Identity: "john.doe", Totals: report.Totals{Human: 4, HumanOverride: 2, Lines: 6}},
 		},
+		Sessions: []report.SessionTotals{{
+			Session:  "session-a",
+			Agent:    "droid",
+			Model:    "model-a",
+			TokensIn: 10, TokensOut: 20, CacheRead: 30, CacheWrite: 40,
+		}},
 		Commit: []report.CommitTotals{{
 			Commit:    "0123456789abcdef0123456789abcdef01234567",
 			Timestamp: "2026-01-02T03:04:05Z",
@@ -189,6 +195,7 @@ func TestWriteStatsTextReportsPeople(t *testing.T) {
 		"Authors:",
 		"  (unidentified): 2 lines (human 2, human override 0)",
 		"  john.doe: 6 lines (human 4, human override 2)",
+		"    tokens in 10, out 20, cache read 30, cache write 40",
 		"  0123456789ab (2026-01-02T03:04:05Z)",
 	} {
 		if !strings.Contains(text, want) {

@@ -25,6 +25,22 @@ type Usage struct {
 	CacheWrite uint64
 }
 
+type usageEntry struct {
+	Message usageMessage `json:"message"`
+}
+
+type usageMessage struct {
+	ID    string       `json:"id"`
+	Usage *usageCounts `json:"usage"`
+}
+
+type usageCounts struct {
+	InputTokens          uint64 `json:"input_tokens"`
+	OutputTokens         uint64 `json:"output_tokens"`
+	CacheCreationTokens  uint64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens uint64 `json:"cache_read_input_tokens"`
+}
+
 // ResolveUsage returns the usage of the newest assistant turn recorded in a
 // session JSONL file. found is false when the transcript names no usage,
 // which is honest absence rather than a zero guess. Droid session files
@@ -44,10 +60,7 @@ func ResolveUsage(transcriptPath string) (Usage, bool, error) {
 	defer file.Close()
 	var reader io.Reader = io.LimitReader(file, maxTranscriptBytes+1)
 	if size := info.Size(); size > tailWindowBytes {
-		if _, err := file.Seek(size-tailWindowBytes, io.SeekStart); err != nil {
-			return Usage{}, false, fmt.Errorf("seek transcript %s: %w", transcriptPath, err)
-		}
-		reader = io.LimitReader(file, tailWindowBytes)
+		reader = io.NewSectionReader(file, size-tailWindowBytes, tailWindowBytes)
 	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
@@ -70,17 +83,7 @@ func ResolveUsage(transcriptPath string) (Usage, bool, error) {
 // output_tokens, cache_creation_input_tokens, and cache_read_input_tokens.
 // An entry with all counts zero names no measurable turn.
 func lineUsage(line []byte) (Usage, bool) {
-	var entry struct {
-		Message struct {
-			ID    string `json:"id"`
-			Usage *struct {
-				InputTokens          uint64 `json:"input_tokens"`
-				OutputTokens         uint64 `json:"output_tokens"`
-				CacheCreationTokens  uint64 `json:"cache_creation_input_tokens"`
-				CacheReadInputTokens uint64 `json:"cache_read_input_tokens"`
-			} `json:"usage"`
-		} `json:"message"`
-	}
+	var entry usageEntry
 	if err := json.Unmarshal(line, &entry); err != nil {
 		return Usage{}, false
 	}

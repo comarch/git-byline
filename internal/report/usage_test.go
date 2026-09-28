@@ -157,3 +157,14 @@ func TestCollectSumsSessionUsageAcrossCommits(t *testing.T) {
 		t.Fatalf("session usage = %+v, want 20/8/4/2", value)
 	}
 }
+
+func TestMergeSessionUsageSkipsEmptyUsage(t *testing.T) {
+	t.Parallel()
+	sessions := map[string]*SessionTotals{}
+	mergeSessionUsage(sessions, map[string]model.NoteSession{
+		model.NoteSessionKey("droid", "session-a"): {Agent: "droid"},
+	})
+	if len(sessions) != 0 {
+		t.Fatalf("sessions = %+v, want none", sessions)
+	}
+}

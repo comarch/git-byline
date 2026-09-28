@@ -7,19 +7,21 @@ import (
 	"testing"
 )
 
+type resolveUsageCase struct {
+	name       string
+	transcript string
+	wantErr    bool
+	wantFound  bool
+	want       Usage
+}
+
 func TestResolveUsage(t *testing.T) {
 	t.Parallel()
 	claudeTurn := `{"type":"assistant","message":{"id":"msg_a","model":"claude-a","usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":30,"cache_read_input_tokens":40}}}`
 	claudeNewer := `{"type":"assistant","message":{"id":"msg_b","model":"claude-a","usage":{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":3,"cache_read_input_tokens":4}}}`
 	droidEntry := `{"message":{"role":"assistant","modelId":"droid-a"}}`
 
-	tests := []struct {
-		name       string
-		transcript string
-		wantErr    bool
-		wantFound  bool
-		want       Usage
-	}{
+	tests := []resolveUsageCase{
 		{
 			name:       "claude turn",
 			transcript: claudeTurn + "\n",
@@ -74,33 +76,38 @@ func TestResolveUsage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "session.jsonl")
-			if tt.transcript != "" {
-				if err := os.WriteFile(path, []byte(tt.transcript), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			got, found, err := ResolveUsage(path)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("ResolveUsage(%q) succeeded, want error", path)
-				}
-				if found {
-					t.Fatalf("ResolveUsage(%q) found usage alongside an error", path)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("ResolveUsage(%q) error = %v", path, err)
-			}
-			if found != tt.wantFound {
-				t.Fatalf("ResolveUsage(%q) found = %v, want %v", path, found, tt.wantFound)
-			}
-			if got != tt.want {
-				t.Fatalf("ResolveUsage(%q) = %+v, want %+v", path, got, tt.want)
-			}
+			checkResolveUsage(t, tt)
 		})
+	}
+}
+
+func checkResolveUsage(t *testing.T, test resolveUsageCase) {
+	t.Helper()
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if test.transcript != "" {
+		if err := os.WriteFile(path, []byte(test.transcript), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, found, err := ResolveUsage(path)
+	if test.wantErr {
+		if err == nil {
+			t.Fatalf("ResolveUsage(%q) succeeded, want error", path)
+		}
+		if found {
+			t.Fatalf("ResolveUsage(%q) found usage alongside an error", path)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("ResolveUsage(%q) error = %v", path, err)
+	}
+	if found != test.wantFound {
+		t.Fatalf("ResolveUsage(%q) found = %v, want %v", path, found, test.wantFound)
+	}
+	if got != test.want {
+		t.Fatalf("ResolveUsage(%q) = %+v, want %+v", path, got, test.want)
 	}
 }
 
@@ -132,6 +139,17 @@ func TestResolveUsageInvalidPath(t *testing.T) {
 		if _, _, err := ResolveUsage(path); err == nil {
 			t.Fatalf("ResolveUsage(%q) succeeded, want error", path)
 		}
+	}
+}
+
+func TestResolveUsageRejectsOversizedLine(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxLineBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := ResolveUsage(path); err == nil || found {
+		t.Fatalf("ResolveUsage(oversized line) = found %t, error %v", found, err)
 	}
 }
 
