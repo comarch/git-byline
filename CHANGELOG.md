@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.6.0](https://github.com/comarch/git-byline/compare/v1.5.0...v1.6.0) (2026-09-29)
+
+
+### Features
+
+* session token usage in attribution notes ([#66](https://github.com/comarch/git-byline/issues/66)) ([ffd0428](https://github.com/comarch/git-byline/commit/ffd04284f7c64a4fec12c2c98803a01b43ac7f81))
+
+
+### Bug Fixes
+
+* **provenance:** keep stashed agent edits across fast-forward pulls ([#65](https://github.com/comarch/git-byline/issues/65)) ([452cc57](https://github.com/comarch/git-byline/commit/452cc57342f1daa5dda21709a90b2e212dac25bd))
+* **provenance:** preserve stash attribution ([#68](https://github.com/comarch/git-byline/issues/68)) ([1f39267](https://github.com/comarch/git-byline/commit/1f39267299ff37ff4d77c6db4754bc47753d9793))
+
 ## [1.5.0](https://github.com/comarch/git-byline/compare/v1.4.2...v1.5.0) (2026-09-26)
 
 
