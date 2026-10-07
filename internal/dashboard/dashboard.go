@@ -387,7 +387,7 @@ func aiTone(key string) string {
 			return "tone-magenta-light"
 		case "codex":
 			return "tone-cyan-deep"
-		case "gemini":
+		case "gemini", "opencode":
 			return "tone-violet-light"
 		case "copilot":
 			return "tone-blue"

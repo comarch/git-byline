@@ -8,7 +8,7 @@ prebuilt archive is covered by `checksums.txt`.
 | You use | Path |
 | --- | --- |
 | Factory, Claude Code, or Gemini CLI | [agent package](#agent-packages), one command |
-| Copilot, VS Code Agent, Cursor, Codex, Windsurf, or Grok | [agent templates](#agents-without-a-package) |
+| Copilot, VS Code Agent, Cursor, Codex, Windsurf, Grok, or OpenCode | [agent templates](#agents-without-a-package) |
 | No agent, or a CI runner | [release installer](#linux-and-macos) |
 | Air-gapped or contributing | [Go toolchain](#go-toolchain) |
 
@@ -64,13 +64,13 @@ git-byline status
 
 ## Agents without a package
 
-Copilot, VS Code Agent, Cursor, Codex, Windsurf, and Grok have no package
-manager that installs from a repository. Two files give them the same result,
-and both are checked in under
+Copilot, VS Code Agent, Cursor, Codex, Windsurf, Grok, and OpenCode have no
+package manager that installs from a repository. Two files give them the same
+result, and both are checked in under
 [`marketplace/harness`](../marketplace/harness/README.md):
 
 1. a setup command, so the agent gains `/git-byline-setup`;
-2. a hook file, so the agent reports its edits.
+2. a hook file or plugin, so the agent reports its edits.
 
 | Agent | Setup command goes to | Hook file goes to |
 | --- | --- | --- |
@@ -80,6 +80,7 @@ and both are checked in under
 | Codex | `$HOME/.codex/prompts/git-byline-setup.md` | `.codex/hooks.json` |
 | Windsurf | `.windsurf/workflows/git-byline-setup.md` | `.windsurf/hooks.json` |
 | Grok | the prompt directory your build reads | `.grok/hooks/promptscript.json` |
+| OpenCode | `.opencode/commands/git-byline-setup.md` | `.opencode/plugins/promptscript.ts` |
 
 For example, Cursor:
 
@@ -93,9 +94,20 @@ Then run `/git-byline-setup` in Cursor, which installs the binary, the Git
 hooks, and `.cursor/hooks.json`.
 
 Each hook file is byte-identical to the one this repository generates for
-itself, and validation fails when they drift apart. The hook bodies carry no
-absolute path: they resolve the project root with
-`git rev-parse --show-toplevel` and find `git-byline` through `PATH`.
+itself, and validation fails when they drift apart. The shell hook bodies
+carry no absolute path: they resolve the project root with
+`git rev-parse --show-toplevel` and find `git-byline` through `PATH`. The
+OpenCode plugin uses its plugin context to resolve the project root.
+
+OpenCode's plugin uses PromptScript-generated `tool.execute.before` and
+`tool.execute.after` hooks for local edit, write, and Bash tools. The payload
+includes session and call IDs, but no active model. Attribution therefore
+keeps the model as `unknown`; configured PromptScript model profiles do not
+identify the model used by an individual event. See
+[compatibility](COMPATIBILITY.md#agent-adapters) for the hook limitations.
+PromptScript 1.19.1 declares the generated plugin Unix-only. Native Windows
+plugin loading has not been verified; the documented Windows path is to run
+OpenCode in WSL.
 
 `.gemini/settings.json` and `.claude/settings.json` can already hold
 unrelated settings, so merge their `hooks` block instead of replacing the
@@ -182,9 +194,9 @@ name or their configuration directory, and never writes during detection:
 
 - Factory and Claude Code get a user-level agent hook, which covers every
   repository, because git-byline installs those two itself.
-- Every other detected agent reads a project hook file that git-byline does
-  not own. The installer prints the one command that copies that file into
-  the current project and does not guess a user-level path for it.
+- Every other detected agent reads a project hook file or plugin that
+  git-byline does not own. The installer prints the one command that copies
+  that file into the current project and does not guess a user-level path.
 
 Pass `--no-agent-hooks` to skip detection. The per-agent files and their copy
 targets are listed in

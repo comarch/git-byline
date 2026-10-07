@@ -34,11 +34,20 @@ type stage struct {
 
 func main() {
 	stageSpec := flag.String("stages", "", "comma-separated subset of stages to run (default: all)")
+	patchOpenCode := flag.Bool("patch-opencode", false, "patch and sync the generated OpenCode plugin")
 	flag.Parse()
 	root, err := repoRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "validate: %v\n", err)
 		os.Exit(1)
+	}
+	if *patchOpenCode {
+		if err := patchOpenCodeArtifacts(root); err != nil {
+			fmt.Fprintf(os.Stderr, "validate: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("patched OpenCode plugin and harness template")
+		return
 	}
 	stages, err := selectStages(pipelineStages(), *stageSpec)
 	if err != nil {

@@ -43,8 +43,8 @@ pre-push hook uses Git to sync and publish attribution notes by default;
 ### Tool choice without one analytics vendor
 
 Native project hooks are generated for Factory, Claude Code, GitHub Copilot,
-VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, and Grok. The attribution
-format stays the same across supported agents.
+VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, Grok, and OpenCode. The
+attribution format stays the same across supported agents.
 
 ## Market landscape
 

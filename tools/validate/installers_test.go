@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -71,6 +72,17 @@ func TestShellInstallerVerifiesLocalRelease(t *testing.T) {
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	agentHome := t.TempDir()
+	xdgConfig := filepath.Join(agentHome, "xdg")
+	for _, path := range []string{
+		filepath.Join(xdgConfig, "opencode"),
+		filepath.Join(agentHome, ".vscode"),
+		filepath.Join(agentHome, ".grok"),
+	} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatalf("create agent config directory: %v", err)
+		}
+	}
 	fakeCurl := filepath.Join(bin, "curl")
 	curlScript := "#!/bin/sh\n" +
 		"out=\nurl=\n" +
@@ -91,10 +103,25 @@ func TestShellInstallerVerifiesLocalRelease(t *testing.T) {
 	)
 	command.Env = append(os.Environ(),
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME="+agentHome,
+		"XDG_CONFIG_HOME="+xdgConfig,
 		"INSTALLER_FIXTURE="+fixture,
 	)
-	if out, err := command.CombinedOutput(); err != nil {
+	out, err := command.CombinedOutput()
+	if err != nil {
 		t.Fatalf("install.sh: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"-o .opencode/plugins/promptscript.ts",
+		"marketplace/harness/opencode/promptscript.ts",
+		"-o .github/hooks/promptscript.json",
+		"marketplace/harness/copilot/hooks.json",
+		"-o .grok/hooks/promptscript.json",
+		"marketplace/harness/grok/hooks.json",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("install.sh output missing %q:\n%s", want, out)
+		}
 	}
 	installed := filepath.Join(installDir, "git-byline")
 	if out, err := exec.Command(installed, "version").CombinedOutput(); err != nil ||
@@ -114,6 +141,8 @@ func TestShellInstallerVerifiesLocalRelease(t *testing.T) {
 	)
 	command.Env = append(os.Environ(),
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME="+agentHome,
+		"XDG_CONFIG_HOME="+xdgConfig,
 		"INSTALLER_FIXTURE="+fixture,
 		"INSTALLER_HOOK_LOG="+hookLog,
 	)
@@ -145,6 +174,8 @@ func TestShellInstallerVerifiesLocalRelease(t *testing.T) {
 	)
 	command.Env = append(os.Environ(),
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME="+agentHome,
+		"XDG_CONFIG_HOME="+xdgConfig,
 		"INSTALLER_FIXTURE="+fixture,
 	)
 	if out, err := command.CombinedOutput(); err == nil {

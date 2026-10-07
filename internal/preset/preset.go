@@ -72,6 +72,7 @@ var portableAgents = []string{
 	"gemini",
 	"windsurf",
 	"grok",
+	"opencode",
 }
 
 // toolHookPayload is the shared Droid and Claude Code hook input shape.
@@ -295,6 +296,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 	var payload struct {
 		SessionID            string          `json:"session_id"`
 		SessionIDCamel       string          `json:"sessionId"`
+		SessionIDUpper       string          `json:"sessionID"`
 		ConversationID       string          `json:"conversation_id"`
 		ConversationIDCamel  string          `json:"conversationId"`
 		TrajectoryID         string          `json:"trajectory_id"`
@@ -309,13 +311,16 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		HookEventNameCamel   string          `json:"hookEventName"`
 		EventName            string          `json:"event_name"`
 		EventNameCamel       string          `json:"eventName"`
+		Event                string          `json:"event"`
 		AgentActionName      string          `json:"agent_action_name"`
 		AgentActionNameCamel string          `json:"agentActionName"`
 		ToolName             string          `json:"tool_name"`
 		ToolNameCamel        string          `json:"toolName"`
+		Tool                 string          `json:"tool"`
 		ID                   string          `json:"id"`
 		EventID              string          `json:"event_id"`
 		EventIDCamel         string          `json:"eventId"`
+		CallID               string          `json:"callID"`
 		ToolUseID            string          `json:"tool_use_id"`
 		ToolUseIDCamel       string          `json:"toolUseId"`
 		ToolCallID           string          `json:"tool_call_id"`
@@ -325,6 +330,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		ToolInfoCamel        json.RawMessage `json:"toolInfo"`
 		Arguments            json.RawMessage `json:"arguments"`
 		ToolArgs             json.RawMessage `json:"toolArgs"`
+		Args                 json.RawMessage `json:"args"`
 		FilePath             string          `json:"file_path"`
 		FilePathCamel        string          `json:"filePath"`
 		File                 string          `json:"file"`
@@ -343,10 +349,12 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		payload.HookEventNameCamel,
 		payload.EventName,
 		payload.EventNameCamel,
+		payload.Event,
 		payload.AgentActionName,
 		payload.AgentActionNameCamel,
 		payload.ToolName,
 		payload.ToolNameCamel,
+		payload.Tool,
 	)
 	modelName := payload.Model
 	if modelName == "" {
@@ -355,6 +363,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 	session := firstValue(
 		payload.SessionID,
 		payload.SessionIDCamel,
+		payload.SessionIDUpper,
 		payload.ConversationID,
 		payload.ConversationIDCamel,
 		payload.TrajectoryID,
@@ -364,6 +373,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 	)
 	eventID := firstValue(
 		payload.ID, payload.EventID, payload.EventIDCamel,
+		payload.CallID,
 		payload.ToolUseID, payload.ToolUseIDCamel,
 		payload.ToolCallID, payload.ToolCallIDCamel,
 	)
@@ -374,12 +384,13 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		readOnlyOperation(payload.HookEventNameCamel) ||
 		readOnlyOperation(payload.EventName) ||
 		readOnlyOperation(payload.EventNameCamel) ||
+		readOnlyOperation(payload.Event) ||
 		readOnlyOperation(payload.AgentActionName) ||
 		readOnlyOperation(payload.AgentActionNameCamel) ||
-		readOnlyOperation(firstValue(payload.ToolName, payload.ToolNameCamel)) {
+		readOnlyOperation(firstValue(payload.ToolName, payload.ToolNameCamel, payload.Tool)) {
 		return Event{}, false, nil
 	}
-	applyPatch := applyPatchTool(payload.ToolName, payload.ToolNameCamel)
+	applyPatch := applyPatchTool(payload.ToolName, payload.ToolNameCamel, payload.Tool)
 	requirePatchBody := agent == "factory" && applyPatch
 	patchBodyFound := false
 	paths := []string{payload.FilePath, payload.FilePathCamel, payload.File, payload.Path}
@@ -388,7 +399,10 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 	paths = append(paths, payload.EditedFilepaths...)
 	paths = append(paths, payload.EditedFilepathsCamel...)
 	paths = append(paths, payload.Files...)
-	for _, raw := range []json.RawMessage{payload.ToolInput, payload.ToolInfo, payload.ToolInfoCamel, payload.Arguments, payload.ToolArgs} {
+	for _, raw := range []json.RawMessage{
+		payload.ToolInput, payload.ToolInfo, payload.ToolInfoCamel,
+		payload.Arguments, payload.ToolArgs, payload.Args,
+	} {
 		if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			continue
 		}

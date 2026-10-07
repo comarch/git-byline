@@ -5,7 +5,9 @@
 /.github/ @mrwogu
 /.promptscript/ @mrwogu
 /.factory/droids/ @mrwogu
+/.opencode/plugins/ @mrwogu
 /AGENTS.md @mrwogu
+/OPENCODE.md @mrwogu
 /SECURITY.md @mrwogu
 /docs/SECURITY_MODEL.md @mrwogu
 /docs/SUPPLY_CHAIN.md @mrwogu

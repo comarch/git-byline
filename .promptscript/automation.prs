@@ -185,4 +185,42 @@
     enabled: false
     targets: { grok: { enabled: true } }
   }
+
+  opencode-pre-edit: {
+    event: "pre-tool-use"
+    matcher: "^(edit|write)$"
+    command: ["git-byline", "checkpoint", "portable-opencode", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    enabled: false
+    targets: { opencode: { enabled: true } }
+  }
+  opencode-post-edit: {
+    event: "post-tool-use"
+    matcher: "^(edit|write)$"
+    command: ["git-byline", "checkpoint", "portable-opencode", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    enabled: false
+    targets: { opencode: { enabled: true } }
+  }
+
+  opencode-shell-pre: {
+    event: "pre-tool-use"
+    matcher: "^bash$"
+    command: ["git-byline", "checkpoint", "portable-opencode", "--type", "human", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    enabled: false
+    targets: { opencode: { enabled: true } }
+  }
+  opencode-shell-post: {
+    event: "post-tool-use"
+    matcher: "^bash$"
+    command: ["git-byline", "checkpoint", "portable-opencode", "--type", "ai", "--hook-input", "stdin"]
+    cwd: "project"
+    timeoutMs: 30000
+    enabled: false
+    targets: { opencode: { enabled: true } }
+  }
 }

@@ -50,7 +50,7 @@ card:
 | droid, factory | `#00FFFF` | 13.88:1 |
 | claude | `#FF80CD` | 7.64:1 |
 | codex | `#00AAAA` | 6.08:1 |
-| gemini | `#D8BFEF` | 10.46:1 |
+| gemini, opencode | `#D8BFEF` | 10.46:1 |
 | copilot | `#8080FF` | 5.35:1 |
 | vscode, windsurf | `#BFBFFF` | 10.04:1 |
 | cursor | `#FF8080` | 7.17:1 |

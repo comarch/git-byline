@@ -33,6 +33,71 @@ var generatedCommentStampPattern = regexp.MustCompile(
 	`(?m)^<!-- PromptScript [^|\r\n]+ \| source: ([^|\r\n]+) \| target: [^>\r\n]+ -->$`,
 )
 
+const openCodePatchMarker = "// git-byline: preserve bounded file paths"
+
+const openCodePathArguments = `// git-byline: preserve bounded file paths
+const MAX_PATH_ARGUMENT_BYTES = 2048;
+
+function safePathArguments(value: unknown): Record<string, unknown> {
+  let args = value;
+  if (typeof args === 'string') {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      return {};
+    }
+  }
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) return {};
+  const input = args as Record<string, unknown>;
+  const safe: Record<string, unknown> = {};
+  let remaining = MAX_PATH_ARGUMENT_BYTES;
+  const keepPath = (path: unknown): path is string => {
+    if (typeof path !== 'string') return false;
+    const size = payloadByteLength(path);
+    if (size > remaining) return false;
+    remaining -= size;
+    return true;
+  };
+  for (const key of ['filePath', 'file_path', 'file', 'path']) {
+    const path = input[key];
+    if (keepPath(path)) safe[key] = path;
+  }
+  for (const key of [
+    'filePaths', 'file_paths', 'editedFilepaths', 'edited_filepaths', 'files'
+  ]) {
+    const paths = input[key];
+    if (!Array.isArray(paths)) continue;
+    const kept: string[] = [];
+    for (const path of paths.slice(0, 100)) {
+      if (keepPath(path)) kept.push(path);
+    }
+    if (kept.length > 0) safe[key] = kept;
+  }
+  return safe;
+}
+
+`
+
+const openCodeTruncatedArgsLine = "const withoutArgs = { ...payload, args: '[truncated]' };"
+
+const openCodeTruncatedFallback = `return '{"target":"opencode","args":"[truncated]","result":"[truncated]"}';`
+
+const openCodeSafeFallback = `const minimal: Record<string, unknown> = {
+    target: 'opencode',
+    hook: payload.hook,
+    event: payload.event,
+    tool: payload.tool,
+    args: {},
+    timestamp: payload.timestamp
+  };
+  for (const key of ['sessionID', 'callID']) {
+    const value = payload[key];
+    if (typeof value === 'string' && payloadByteLength(value) <= 1024) {
+      minimal[key] = value;
+    }
+  }
+  return safeStringify(minimal);`
+
 var promptScriptOutputs = []string{
 	"AGENTS.md",
 	"CLAUDE.md",
@@ -72,6 +137,11 @@ var promptScriptOutputs = []string{
 	filepath.Join(".promptscript", "generated", "codex.md"),
 	filepath.Join(".windsurf", "hooks.json"),
 	filepath.Join(".windsurf", "rules", "project.md"),
+	"OPENCODE.md",
+	filepath.Join(".opencode", "agents", "code-reviewer.md"),
+	filepath.Join(".opencode", "agents", "release-keeper.md"),
+	filepath.Join(".opencode", "agents", "security-reviewer.md"),
+	filepath.Join(".opencode", "plugins", "promptscript.ts"),
 }
 
 // parseSemver extracts the first semantic version from text.
@@ -119,6 +189,7 @@ func checkPortableHookOutputs(root string) error {
 		filepath.Join(".gemini", "settings.json"):                     "gemini",
 		filepath.Join(".windsurf", "hooks.json"):                      "windsurf",
 		filepath.Join(".grok", "hooks", "promptscript.json"):          "grok",
+		filepath.Join(".opencode", "plugins", "promptscript.ts"):      "opencode",
 	}
 	for rel, agent := range outputs {
 		data, err := os.ReadFile(filepath.Join(root, rel))
@@ -127,12 +198,69 @@ func checkPortableHookOutputs(root string) error {
 		}
 		for _, author := range []string{"human", "ai"} {
 			signature := fmt.Sprintf("checkpoint portable-%s --type %s", agent, author)
+			if agent == "opencode" {
+				signature = fmt.Sprintf(`"portable-opencode","--type","%s"`, author)
+			}
 			if !bytes.Contains(data, []byte(signature)) {
 				return fmt.Errorf("%s is missing %s hook", rel, author)
 			}
 		}
+		if agent == "opencode" &&
+			(!bytes.Contains(data, []byte(`"tool.execute.before"`)) ||
+				!bytes.Contains(data, []byte(`"tool.execute.after"`))) {
+			return fmt.Errorf("%s is missing OpenCode tool hooks", rel)
+		}
 	}
 	return nil
+}
+
+func patchOpenCodeArtifacts(root string) error {
+	pluginPath := filepath.Join(root, ".opencode", "plugins", "promptscript.ts")
+	plugin, err := os.ReadFile(pluginPath)
+	if err != nil {
+		return fmt.Errorf("read generated OpenCode plugin: %w", err)
+	}
+	patched, err := patchOpenCodePlugin(plugin)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(pluginPath, patched, 0o644); err != nil {
+		return fmt.Errorf("write generated OpenCode plugin: %w", err)
+	}
+	templatePath := filepath.Join(root, "marketplace", "harness", "opencode", "promptscript.ts")
+	if err := os.WriteFile(templatePath, patched, 0o644); err != nil {
+		return fmt.Errorf("write OpenCode harness template: %w", err)
+	}
+	return nil
+}
+
+func patchOpenCodePlugin(data []byte) ([]byte, error) {
+	text := string(data)
+	if strings.Contains(text, openCodePatchMarker) {
+		for _, expected := range []string{
+			"MAX_PATH_ARGUMENT_BYTES = 2048",
+			"args: safePathArguments(payload.args)",
+			"return safeStringify(minimal);",
+		} {
+			if !strings.Contains(text, expected) {
+				return nil, fmt.Errorf("patched OpenCode plugin is missing %q", expected)
+			}
+		}
+		return data, nil
+	}
+	if strings.Count(text, openCodeTruncatedArgsLine) != 1 ||
+		strings.Count(text, openCodeTruncatedFallback) != 1 {
+		return nil, fmt.Errorf("generated OpenCode plugin does not match the expected payload code")
+	}
+	text = strings.Replace(text, openCodeTruncatedArgsLine,
+		"const withoutArgs = { ...payload, args: safePathArguments(payload.args) };", 1)
+	text = strings.Replace(text, openCodeTruncatedFallback, openCodeSafeFallback, 1)
+	marker := "function boundedPayload(payload: Record<string, unknown>): string {"
+	if strings.Count(text, marker) != 1 {
+		return nil, fmt.Errorf("generated OpenCode plugin does not contain one payload handler")
+	}
+	text = strings.Replace(text, marker, openCodePathArguments+marker, 1)
+	return []byte(text), nil
 }
 
 // requirePromptScriptFiles verifies the source and config exist.
@@ -196,6 +324,24 @@ func checkDrift(bin, root string) error {
 	compiled, err := compiledOutputPaths(tmp)
 	if err != nil {
 		return err
+	}
+	pluginPath := filepath.Join(tmp, ".opencode", "plugins", "promptscript.ts")
+	if _, err := os.Stat(pluginPath); err == nil {
+		plugin, err := os.ReadFile(pluginPath)
+		if err != nil {
+			return fmt.Errorf("read generated OpenCode plugin: %w", err)
+		}
+		if bytes.Contains(plugin, []byte("// promptscript-generated: opencode-plugin")) {
+			patched, err := patchOpenCodePlugin(plugin)
+			if err != nil {
+				return fmt.Errorf("patch generated OpenCode plugin: %w", err)
+			}
+			if err := os.WriteFile(pluginPath, patched, 0o644); err != nil {
+				return fmt.Errorf("write patched OpenCode plugin: %w", err)
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat generated OpenCode plugin: %w", err)
 	}
 	expected := make(map[string]bool, len(promptScriptOutputs))
 	for _, rel := range promptScriptOutputs {

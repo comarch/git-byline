@@ -289,6 +289,17 @@ func TestDetectByCommandConfigDirAndNone(t *testing.T) {
 	}
 }
 
+func TestDetectAbsoluteConfigDir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configDir := filepath.Join(t.TempDir(), "opencode")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !Detect("no-such-command-anywhere", configDir) {
+		t.Fatal("Detect(absolute config dir) = false, want true")
+	}
+}
+
 // TestFetchTimesOut verifies that a download exceeding its deadline
 // fails with the context timeout sentinel, without waiting for the
 // production timeout.

@@ -103,6 +103,13 @@ func TestCheckInstallersInputFailures(t *testing.T) {
 			want: "PowerShell agent requirement failure",
 		},
 		{
+			name: "PowerShell advertises OpenCode plugin installation",
+			setup: func(t *testing.T, root string) {
+				appendInstallerText(t, root, powerShellInstaller, `Command = "opencode"`+"\n")
+			},
+			want: "PowerShell OpenCode support failure",
+		},
+		{
 			name: "shell syntax is invalid",
 			setup: func(t *testing.T, root string) {
 				appendInstallerText(t, root, shellInstaller, "\nif (\n")

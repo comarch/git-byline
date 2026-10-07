@@ -31,6 +31,7 @@ the hook file below. Copying the hook file by hand works too.
 | Codex | [`codex/git-byline-setup.md`](codex/git-byline-setup.md) | `~/.codex/prompts/` | [`codex/hooks.json`](codex/hooks.json) | `.codex/hooks.json` |
 | Windsurf | [`windsurf/git-byline-setup.md`](windsurf/git-byline-setup.md) | `.windsurf/workflows/` | [`windsurf/hooks.json`](windsurf/hooks.json) | `.windsurf/hooks.json` |
 | Grok | [`grok/git-byline-setup.md`](grok/git-byline-setup.md) | the prompt directory your build reads | [`grok/hooks.json`](grok/hooks.json) | `.grok/hooks/promptscript.json` |
+| OpenCode | [`opencode/git-byline-setup.md`](opencode/git-byline-setup.md) | `.opencode/commands/` | [`opencode/promptscript.ts`](opencode/promptscript.ts) | `.opencode/plugins/promptscript.ts` |
 | Gemini CLI, without the extension | none, use the extension above | | [`gemini/settings.json`](gemini/settings.json) | merge into `.gemini/settings.json` |
 
 `.gemini/settings.json` and `.claude/settings.json` hold unrelated settings
@@ -40,14 +41,16 @@ hook file in this table is complete and can be copied as is.
 ## Why these files are safe to copy
 
 Each hook file is byte-identical to the one this repository generates for
-itself, and `go run ./tools/validate` fails when they drift apart. The hook
-bodies contain no absolute path: they resolve the project root with
-`git rev-parse --show-toplevel` and find `git-byline` through `PATH`.
+itself, and `go run ./tools/validate` fails when they drift apart. The shell
+hook bodies contain no absolute path: they resolve the project root with
+`git rev-parse --show-toplevel` and find `git-byline` through `PATH`. The
+OpenCode plugin uses its plugin context to resolve the project root.
 
 Each hook calls `git-byline checkpoint portable-<agent> --hook-input stdin`,
-which records a snapshot before and after an edit. Without the agent hook,
-git-byline still annotates commits, but agent edits arrive as plain `human`
-lines instead of `ai` lines, because nothing observed them.
+which records a snapshot before and after an edit. OpenCode's generated plugin
+also observes Bash calls. Without the agent hook, git-byline still annotates
+commits, but agent edits arrive as plain `human` lines instead of `ai` lines,
+because nothing observed them.
 
 ## Git hooks
 

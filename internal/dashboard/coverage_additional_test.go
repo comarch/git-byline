@@ -116,6 +116,7 @@ func TestDashboardSourceMappingAndTones(t *testing.T) {
 		{agent: "claude", want: "tone-magenta-light"},
 		{agent: "codex", want: "tone-cyan-deep"},
 		{agent: "gemini", want: "tone-violet-light"},
+		{agent: "opencode", want: "tone-violet-light"},
 		{agent: "copilot", want: "tone-blue"},
 		{agent: "vscode", want: "tone-blue-light"},
 		{agent: "windsurf", want: "tone-blue-light"},

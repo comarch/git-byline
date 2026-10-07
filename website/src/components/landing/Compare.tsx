@@ -39,7 +39,7 @@ const groups: {title: string; rows: {label: string; cells: Record<ToolKey, Cell>
       {
         label: 'Agents with native hooks',
         cells: {
-          byline: {text: '9, plus a JSON adapter'},
+          byline: {text: '10, plus a JSON adapter'},
           gitai: {text: '14'},
           entire: {text: '8'},
           cursor: {text: 'Cursor only'},

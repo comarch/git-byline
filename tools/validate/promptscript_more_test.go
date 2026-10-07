@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -44,6 +45,14 @@ func TestCheckPromptScriptFailures(t *testing.T) {
 			writeOutputs:  true,
 			checkPortable: true,
 			want:          "missing hook failure",
+		},
+		{
+			name:          "OpenCode lifecycle hooks are missing",
+			mode:          "success",
+			writeOutputs:  true,
+			complete:      true,
+			checkPortable: true,
+			want:          "missing OpenCode event failure",
 		},
 		{
 			name:         "drift check fails",
@@ -167,6 +176,74 @@ func TestPromptScriptHelpers(t *testing.T) {
 	})
 }
 
+func TestPatchOpenCodeArtifacts(t *testing.T) {
+	root := t.TempDir()
+	pluginPath := filepath.Join(root, ".opencode", "plugins", "promptscript.ts")
+	templatePath := filepath.Join(root, "marketplace", "harness", "opencode", "promptscript.ts")
+	writePromptScriptFile(t, root, filepath.Join(".opencode", "plugins", "promptscript.ts"), testOpenCodePlugin)
+	writePromptScriptFile(t, root, filepath.Join("marketplace", "harness", "opencode", "promptscript.ts"), "stale\n")
+
+	if err := patchOpenCodeArtifacts(root); err != nil {
+		t.Fatal(err)
+	}
+	patched, err := os.ReadFile(pluginPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(patched, template) {
+		t.Fatal("OpenCode harness template differs from generated plugin")
+	}
+	for _, want := range []string{
+		openCodePatchMarker,
+		"safePathArguments(payload.args)",
+		"MAX_PATH_ARGUMENT_BYTES = 2048",
+		"args: {}",
+	} {
+		if !bytes.Contains(patched, []byte(want)) {
+			t.Errorf("patched OpenCode plugin is missing %q", want)
+		}
+	}
+	if err := patchOpenCodeArtifacts(root); err != nil {
+		t.Fatal(err)
+	}
+	patchedAgain, err := os.ReadFile(pluginPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(patched, patchedAgain) {
+		t.Fatal("patching OpenCode plugin twice changed its output")
+	}
+}
+
+func TestPatchOpenCodePluginRejectsUnexpectedOutput(t *testing.T) {
+	if _, err := patchOpenCodePlugin([]byte("changed PromptScript output")); err == nil {
+		t.Fatal("patchOpenCodePlugin() accepted unexpected output")
+	}
+	if _, err := patchOpenCodePlugin([]byte(openCodePatchMarker + "\nMAX_PATH_ARGUMENT_BYTES = 2048")); err == nil {
+		t.Fatal("patchOpenCodePlugin() accepted an incomplete patch")
+	}
+}
+
+const testOpenCodePlugin = `// promptscript-generated: opencode-plugin
+function payloadByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+function boundedPayload(payload: Record<string, unknown>): string {
+  const full = JSON.stringify(payload);
+  if (payloadByteLength(full) <= 32768) return full;
+  const withoutArgs = { ...payload, args: '[truncated]' };
+  const trimmed = JSON.stringify(withoutArgs);
+  if (payloadByteLength(trimmed) <= 32768) return trimmed;
+  const withoutResult = JSON.stringify({ ...withoutArgs, result: '[truncated]' });
+  if (payloadByteLength(withoutResult) <= 32768) return withoutResult;
+  return '{"target":"opencode","args":"[truncated]","result":"[truncated]"}';
+}
+`
+
 func promptScriptFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -190,8 +267,17 @@ func writePortableOutputs(t *testing.T, root string, complete bool) {
 		filepath.Join(".gemini", "settings.json"):                     "gemini",
 		filepath.Join(".windsurf", "hooks.json"):                      "windsurf",
 		filepath.Join(".grok", "hooks", "promptscript.json"):          "grok",
+		filepath.Join(".opencode", "plugins", "promptscript.ts"):      "opencode",
 	}
 	for rel, agent := range outputs {
+		if agent == "opencode" {
+			content := `["git-byline","checkpoint","portable-opencode","--type","human"]` + "\n"
+			if complete {
+				content += `["git-byline","checkpoint","portable-opencode","--type","ai"]` + "\n"
+			}
+			writePromptScriptFile(t, root, rel, content)
+			continue
+		}
 		content := "checkpoint portable-" + agent + " --type human\n"
 		if complete {
 			content += "checkpoint portable-" + agent + " --type ai\n"

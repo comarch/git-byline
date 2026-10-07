@@ -14,6 +14,8 @@ targets:
       agentsFile: AGENTS.md
   - gemini:
       version: full
+  - opencode:
+      version: full
   - windsurf:
       version: full
 builds:

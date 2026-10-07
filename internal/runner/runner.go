@@ -240,11 +240,16 @@ func (w *limitWriter) String() string {
 }
 
 // Detect reports whether an agent is present, by its command on PATH or
-// its configuration directory under the home directory. Detection never
-// writes anything, mirroring install.sh.
+// its configuration directory under the home directory. An absolute
+// configDir is checked directly. Detection never writes anything,
+// mirroring install.sh.
 func Detect(command, configDir string) bool {
 	if _, err := exec.LookPath(command); err == nil {
 		return true
+	}
+	if filepath.IsAbs(configDir) {
+		info, err := os.Stat(configDir)
+		return err == nil && info.IsDir()
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -1,3 +1,5 @@
+# OPENCODE.md
+
 ## Project
 
 <!-- PromptScript generated | source: .promptscript/project.prs | target: factory - do not edit -->

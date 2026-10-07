@@ -17,7 +17,7 @@
     hooks: "internal/preset and internal/hooks own agent integration, annotation, and default Git note sharing"
     validation: "tools/validate is the complete local gate"
     automation: ".github/workflows owns CI, security, and release automation"
-    generated: "Native instructions, agents, workflows, and hooks for nine supported hook surfaces are compiled from .promptscript"
+    generated: "Native instructions, agents, workflows, and hooks for ten supported hook surfaces are compiled from .promptscript"
     installation: "Factory users run /git-byline-setup from the marketplace plugin; other users install a checksum-verified release; Git hooks share attribution notes by default unless --local-notes is set"
   }
 

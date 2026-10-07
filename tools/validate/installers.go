@@ -67,6 +67,7 @@ func checkInstallers(root string) error {
 		"--git-template",
 		"install-hooks --agent",
 		"marketplace/harness",
+		"detected opencode",
 	} {
 		if !strings.Contains(string(shell), required) {
 			return fmt.Errorf("install.sh is missing %q", required)
@@ -81,6 +82,9 @@ func checkInstallers(root string) error {
 		if !strings.Contains(string(powerShell), required) {
 			return fmt.Errorf("install.ps1 is missing %q", required)
 		}
+	}
+	if strings.Contains(string(powerShell), `Command = "opencode"`) {
+		return errors.New("install.ps1 must not advertise OpenCode plugin installation")
 	}
 	if sh, err := exec.LookPath("sh"); err == nil {
 		if _, err := runCapture(sh, root, "-n", shellPath); err != nil {
@@ -166,13 +170,14 @@ func checkPluginManifests(root string) error {
 // mirrors. Users copy the template into their own project, so a template that
 // drifts from the generated hook would install a stale hook body.
 var harnessTemplates = map[string]string{
-	filepath.Join("marketplace", "harness", "copilot", "hooks.json"):   filepath.Join(".github", "hooks", "promptscript.json"),
-	filepath.Join("marketplace", "harness", "vscode", "hooks.json"):    filepath.Join(".github", "hooks", "promptscript-vscode.json"),
-	filepath.Join("marketplace", "harness", "cursor", "hooks.json"):    filepath.Join(".cursor", "hooks.json"),
-	filepath.Join("marketplace", "harness", "codex", "hooks.json"):     filepath.Join(".codex", "hooks.json"),
-	filepath.Join("marketplace", "harness", "windsurf", "hooks.json"):  filepath.Join(".windsurf", "hooks.json"),
-	filepath.Join("marketplace", "harness", "grok", "hooks.json"):      filepath.Join(".grok", "hooks", "promptscript.json"),
-	filepath.Join("marketplace", "harness", "gemini", "settings.json"): filepath.Join(".gemini", "settings.json"),
+	filepath.Join("marketplace", "harness", "copilot", "hooks.json"):       filepath.Join(".github", "hooks", "promptscript.json"),
+	filepath.Join("marketplace", "harness", "vscode", "hooks.json"):        filepath.Join(".github", "hooks", "promptscript-vscode.json"),
+	filepath.Join("marketplace", "harness", "cursor", "hooks.json"):        filepath.Join(".cursor", "hooks.json"),
+	filepath.Join("marketplace", "harness", "codex", "hooks.json"):         filepath.Join(".codex", "hooks.json"),
+	filepath.Join("marketplace", "harness", "windsurf", "hooks.json"):      filepath.Join(".windsurf", "hooks.json"),
+	filepath.Join("marketplace", "harness", "grok", "hooks.json"):          filepath.Join(".grok", "hooks", "promptscript.json"),
+	filepath.Join("marketplace", "harness", "opencode", "promptscript.ts"): filepath.Join(".opencode", "plugins", "promptscript.ts"),
+	filepath.Join("marketplace", "harness", "gemini", "settings.json"):     filepath.Join(".gemini", "settings.json"),
 }
 
 // setupCommands lists every agent-facing setup command shipped by the
@@ -185,6 +190,7 @@ var setupCommands = []string{
 	filepath.Join("marketplace", "harness", "codex", "git-byline-setup.md"),
 	filepath.Join("marketplace", "harness", "windsurf", "git-byline-setup.md"),
 	filepath.Join("marketplace", "harness", "grok", "git-byline-setup.md"),
+	filepath.Join("marketplace", "harness", "opencode", "git-byline-setup.md"),
 	filepath.Join("commands", "git-byline-setup.toml"),
 }
 

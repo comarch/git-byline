@@ -28,7 +28,7 @@ binary already reports the target release, it prints one line and exits.
 The installer detects the coding agents present on this machine. Agents that
 git-byline can configure on its own get a user-level hook, which covers every
 repository. For the remaining agents it prints the one command that adds their
-hook to a project. Pass --no-agent-hooks to skip detection entirely.
+hook or plugin to a project. Pass --no-agent-hooks to skip detection entirely.
 
 Pass --git-template to manage Git hooks in the git-byline Git template
 directory, so every new git init and git clone is attributed. The template
@@ -221,7 +221,12 @@ fi
 # configuration directory. Detection never writes anything.
 detected() {
 	command -v "$1" >/dev/null 2>&1 && return 0
-	[ -n "$2" ] && [ -d "$HOME/$2" ] && return 0
+	if [ -n "$2" ]; then
+		case "$2" in
+		/*) [ -d "$2" ] && return 0 ;;
+		*) [ -d "$HOME/$2" ] && return 0 ;;
+		esac
+	fi
 	return 1
 }
 
@@ -230,7 +235,7 @@ detected() {
 manual_hook() {
 	printf '  %-14s curl -fsSL --proto =https --tlsv1.2 -o %s --create-dirs \\\n' "$1" "$3"
 	printf '                   %s/raw/main/marketplace/harness/%s/%s\n' \
-		"$repository" "$2" "${3##*/}"
+		"$repository" "$2" "$4"
 }
 
 if [ "$install_agent_hooks" != "0" ]; then
@@ -252,24 +257,28 @@ if [ "$install_agent_hooks" != "0" ]; then
 		fi
 	done
 
-	# The remaining agents read a project hook file that git-byline does not
+	# The remaining agents read a project hook or plugin file that git-byline does not
 	# own, so the installer reports the exact copy command instead of
 	# guessing a user-level path.
 	pending=""
-	detected gemini .gemini && pending="$pending gemini:gemini:.gemini/settings.json"
-	detected cursor .cursor && pending="$pending cursor:cursor:.cursor/hooks.json"
-	detected codex .codex && pending="$pending codex:codex:.codex/hooks.json"
-	detected windsurf .codeium && pending="$pending windsurf:windsurf:.windsurf/hooks.json"
-	detected code .vscode && pending="$pending copilot:copilot:.github/hooks/promptscript.json"
-	detected grok .grok && pending="$pending grok:grok:.grok/hooks/promptscript.json"
+	detected gemini .gemini && pending="$pending gemini:gemini:.gemini/settings.json:settings.json"
+	detected cursor .cursor && pending="$pending cursor:cursor:.cursor/hooks.json:hooks.json"
+	detected codex .codex && pending="$pending codex:codex:.codex/hooks.json:hooks.json"
+	detected windsurf .codeium && pending="$pending windsurf:windsurf:.windsurf/hooks.json:hooks.json"
+	detected code .vscode && pending="$pending copilot:copilot:.github/hooks/promptscript.json:hooks.json"
+	detected grok .grok && pending="$pending grok:grok:.grok/hooks/promptscript.json:hooks.json"
+	detected opencode "${XDG_CONFIG_HOME:-$HOME/.config}/opencode" &&
+		pending="$pending opencode:opencode:.opencode/plugins/promptscript.ts:promptscript.ts"
 	if [ -n "$pending" ]; then
-		printf 'Detected agents that need one hook file per project:\n'
+		printf 'Detected agents that need one project integration file:\n'
 		for entry in $pending; do
 			name="${entry%%:*}"
 			rest="${entry#*:}"
 			source_dir="${rest%%:*}"
 			hook_path="${rest#*:}"
-			manual_hook "$name" "$source_dir" "$hook_path"
+			source_file="${hook_path##*:}"
+			hook_path="${hook_path%%:*}"
+			manual_hook "$name" "$source_dir" "$hook_path" "$source_file"
 		done
 		printf 'Merge the block for gemini instead of replacing the file.\n'
 		printf 'Details: %s/blob/main/marketplace/harness/README.md\n' "$repository"

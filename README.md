@@ -34,9 +34,9 @@ irm https://raw.githubusercontent.com/comarch/git-byline/main/install.ps1 | iex
 The installer verifies the release archive checksum and the binary version,
 then detects the coding agents on your machine. Factory and Claude Code get a
 user-level hook that covers every repository. For the other supported agents
-it prints the one command that adds their hook to a project. Run it inside a
-repository and the Git hooks are installed there too, so the next commit is
-already attributed:
+it prints the one command that adds their hook or plugin to a project. Run it
+inside a repository and the Git hooks are installed there too, so the next
+commit is already attributed:
 
 ```sh
 git commit -m "feat: add example"
@@ -243,7 +243,7 @@ Windows. See [compatibility details](docs/COMPATIBILITY.md).
 | Path | For | Installs the binary | Installs hooks |
 | --- | --- | :---: | :---: |
 | [A: agent package](#path-a-agent-package) | Factory, Claude Code, Gemini CLI | yes | yes, automatically |
-| [A: agent templates](#path-a-agent-templates) | Copilot, VS Code, Cursor, Codex, Windsurf, Grok | yes | yes, after two files are copied |
+| [A: agent templates](#path-a-agent-templates) | Copilot, VS Code, Cursor, Codex, Windsurf, Grok, OpenCode | yes | yes, after two files are copied |
 | [B: release installer](#path-b-release-installer) | no agent, or a CI runner | yes | no, do [step 2](#step-2-activate-hooks) |
 | [C: Go or source](#path-c-go-toolchain-or-source) | contributors and air-gapped builds | you build it | no, do [step 2](#step-2-activate-hooks) |
 
@@ -285,10 +285,10 @@ hooks. Ask for `--local-notes` if you want
 
 ### Path A: agent templates
 
-The other six supported agents have no package manager that installs from a
+The other seven supported agents have no package manager that installs from a
 repository. Two checked-in files give them the same result: a setup command,
-so the agent gains `/git-byline-setup`, and a hook file, so the agent reports
-its edits.
+so the agent gains `/git-byline-setup`, and a hook file or plugin, so the
+agent reports its edits.
 
 | Agent | Setup command goes to | Hook file goes to |
 | --- | --- | --- |
@@ -298,6 +298,7 @@ its edits.
 | Codex | `$HOME/.codex/prompts/` | `.codex/hooks.json` |
 | Windsurf | `.windsurf/workflows/` | `.windsurf/hooks.json` |
 | Grok | the prompt directory your build reads | `.grok/hooks/promptscript.json` |
+| OpenCode | `.opencode/commands/` | `.opencode/plugins/promptscript.ts` |
 
 Copy the setup command, for example for Cursor:
 
@@ -312,9 +313,9 @@ the hook file. Every template and its copy target is listed in
 [agent setup templates](marketplace/harness/README.md); the per-agent detail
 is in [installation](docs/INSTALL.md).
 
-Without the agent hook, git-byline still annotates commits, but agent edits
-arrive as plain `human` lines rather than `ai` lines, because nothing
-observed them.
+Without the agent hook or plugin, git-byline still annotates commits, but
+agent edits arrive as plain `human` lines rather than `ai` lines, because
+nothing observed them.
 
 ### Path B: release installer
 
@@ -556,7 +557,8 @@ stash pop to remove it. Hook input accepts only full repository object IDs.
 ### Generic agent adapter
 
 PromptScript 1.19.1 compiles native project hooks for Factory, Claude Code,
-GitHub Copilot, VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, and Grok.
+GitHub Copilot, VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, Grok, and
+OpenCode.
 The generic agent-v1 adapter accepts its standard JSON payload through stdin:
 
 ```sh
@@ -596,16 +598,23 @@ flowchart LR
 
 ## Capabilities
 
-### 9 native integrations
+### 10 native integrations
 
 One attribution format across supported coding agents. PromptScript generates
-native project hooks for all nine surfaces:
+native project hooks for all ten surfaces:
 
-![Nine native git-byline integrations: Factory, Claude Code, GitHub Copilot, VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, and Grok](docs/assets/integrations.png)
+![Ten native git-byline integrations: Factory, Claude Code, GitHub Copilot, VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, Grok, and OpenCode](docs/assets/integrations.png)
 
-| Factory | Claude Code | GitHub Copilot | VS Code Agent | Cursor | Codex | Gemini CLI | Windsurf | Grok |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| `ai:factory` | `ai:claude` | `ai:copilot` | `ai:vscode` | `ai:cursor` | `ai:codex` | `ai:gemini` | `ai:windsurf` | `ai:grok` |
+| Factory | Claude Code | GitHub Copilot | VS Code Agent | Cursor | Codex | Gemini CLI | Windsurf | Grok | OpenCode |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `ai:factory` | `ai:claude` | `ai:copilot` | `ai:vscode` | `ai:cursor` | `ai:codex` | `ai:gemini` | `ai:windsurf` | `ai:grok` | `ai:opencode` |
+
+OpenCode reports edits through a generated project plugin. Its tool events
+include the session and call IDs, but not the active model. PromptScript model
+profiles describe configured models, not the model used by each tool call, so
+OpenCode attribution keeps the model as `unknown`. The generated plugin is
+declared Unix-only by PromptScript 1.19.1. Native Windows execution has not
+been verified; the documented Windows path is to run OpenCode in WSL.
 
 Platforms without a native project-hook API need an external watcher or
 daemon. git-byline deliberately adds neither. See

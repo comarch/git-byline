@@ -27,6 +27,7 @@ Composed for git-byline from these public sources:
 - Claude Code, GitHub Copilot, Cursor, Codex, Gemini, Windsurf, and Grok icons
   from [Lobe Icons](https://github.com/lobehub/lobe-icons), static SVG package
   version 1.94.0, distributed under MIT.
+- OpenCode uses a text mark in the existing integration card.
 
 Brand names and marks remain property of their respective owners. Their
 appearance documents supported integrations and does not imply endorsement.

@@ -71,17 +71,20 @@ environment dumps, or production data.
 
 Native instruction, agent, workflow, and hook files under `AGENTS.md`,
 `CLAUDE.md`, `GEMINI.md`, `.claude/`, `.codex/`, `.cursor/`, `.factory/`,
-`.gemini/`, `.github/agents/`, `.github/hooks/`, `.grok/`,
-`.promptscript/generated/`, and `.windsurf/` are generated from
-`.promptscript/`. Edit PromptScript sources, then:
+`.gemini/`, `.github/agents/`, `.github/hooks/`, `.grok/`, `.opencode/`,
+`.promptscript/generated/`, `.windsurf/`, and `OPENCODE.md` are generated
+from `.promptscript/`. Edit PromptScript sources, then:
 
 ```sh
 promptscript validate --strict .promptscript/project.prs
 promptscript compile --all-builds --force --strict
 promptscript compile --all --force --strict
+go run ./tools/validate -patch-opencode
 ```
 
-Review the generated diff. Never edit generated instruction files directly.
+The final command patches the bounded OpenCode payload handling and syncs its
+copyable harness template. Review the generated diff. Never edit generated
+instruction files directly.
 
 Release Please owns `CHANGELOG.md`, release versions, release pull requests,
 and tags. Do not hand-edit release output except while bootstrapping an empty

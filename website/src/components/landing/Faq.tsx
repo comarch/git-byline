@@ -41,8 +41,8 @@ const questions: {question: string; answer: ReactNode}[] = [
     question: 'Which agents are supported?',
     answer: (
       <>
-        Factory, Claude Code, GitHub Copilot, VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, and Grok, through
-        native project hooks. Other tools can report edits through the generic <code>agent-v1</code> JSON adapter.
+        Factory, Claude Code, GitHub Copilot, VS Code Agent, Cursor, Codex, Gemini CLI, Windsurf, Grok, and OpenCode,
+        through native project hooks. Other tools can report edits through the generic <code>agent-v1</code> JSON adapter.
         Details are in <Link to="/docs/compatibility">compatibility</Link>.
       </>
     ),

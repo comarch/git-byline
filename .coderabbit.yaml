@@ -41,6 +41,8 @@ reviews:
     - "!.github/copilot-instructions.md"
     - "!.github/hooks/**"
     - "!.grok/**"
+    - "!.opencode/**"
+    - "!OPENCODE.md"
     - "!.promptscript/generated/**"
     - "!.windsurf/**"
   path_instructions:

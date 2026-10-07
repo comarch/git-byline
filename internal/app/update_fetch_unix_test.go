@@ -515,7 +515,7 @@ func TestRefreshHooksUserAgentFailure(t *testing.T) {
 // TestRefreshHooksManualAgents verifies the installer-parity copy
 // commands for agents git-byline cannot configure itself.
 func TestRefreshHooksManualAgents(t *testing.T) {
-	isolateHookEnv(t)
+	xdg := isolateHookEnv(t)
 	root := t.TempDir()
 	log := filepath.Join(t.TempDir(), "target.log")
 	target := writeFakeTarget(t, log)
@@ -523,7 +523,15 @@ func TestRefreshHooksManualAgents(t *testing.T) {
 	env := testEnv(&stdout)
 	env.Stderr = &stderr
 	env.Dir = root
-	refreshHooks(env, target, func(command, _ string) bool { return command == "gemini" })
+	refreshHooks(env, target, func(command, configDir string) bool {
+		if command == "opencode" {
+			if want := filepath.Join(xdg, "opencode"); configDir != want {
+				t.Errorf("OpenCode config dir = %q, want %q", configDir, want)
+			}
+			return true
+		}
+		return command == "gemini"
+	})
 	out := stdout.String()
 	if !strings.Contains(out, "Detected agents that need one hook file per project:") {
 		t.Fatalf("stdout = %q, want detected header", out)
@@ -534,11 +542,69 @@ func TestRefreshHooksManualAgents(t *testing.T) {
 	if !strings.Contains(out, "https://github.com/comarch/git-byline/raw/main/marketplace/harness/gemini/settings.json") {
 		t.Fatalf("stdout = %q, want gemini harness URL", out)
 	}
+	if !strings.Contains(out, ".opencode/plugins/promptscript.ts --create-dirs") {
+		t.Fatalf("stdout = %q, want OpenCode plugin destination", out)
+	}
+	if !strings.Contains(out, "https://github.com/comarch/git-byline/raw/main/marketplace/harness/opencode/promptscript.ts") {
+		t.Fatalf("stdout = %q, want OpenCode plugin URL", out)
+	}
 	if !strings.Contains(out, "Merge the block for gemini instead of replacing the file.") {
 		t.Fatalf("stdout = %q, want merge hint", out)
 	}
 	if len(readTargetLog(t, log)) != 0 {
 		t.Fatalf("calls = %v, want none for manual agents", readTargetLog(t, log))
+	}
+}
+
+func TestRefreshHooksManualAgentSourcesExist(t *testing.T) {
+	isolateHookEnv(t)
+	root := t.TempDir()
+	log := filepath.Join(t.TempDir(), "target.log")
+	target := writeFakeTarget(t, log)
+	var stdout bytes.Buffer
+	env := testEnv(&stdout)
+	env.Dir = root
+	refreshHooks(env, target, func(string, string) bool { return true })
+
+	expected := map[string]string{
+		"gemini":   "settings.json",
+		"cursor":   "hooks.json",
+		"codex":    "hooks.json",
+		"windsurf": "hooks.json",
+		"copilot":  "hooks.json",
+		"grok":     "hooks.json",
+		"opencode": "promptscript.ts",
+	}
+	if len(manualAgents) != len(expected) {
+		t.Fatalf("manual agent count = %d, want %d", len(manualAgents), len(expected))
+	}
+	repository, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository = filepath.Clean(filepath.Join(repository, "..", ".."))
+	for _, agent := range manualAgents {
+		sourceFile, ok := expected[agent.name]
+		if !ok {
+			t.Errorf("unexpected manual agent %q", agent.name)
+			continue
+		}
+		if agent.sourceFile != sourceFile {
+			t.Errorf("%s source file = %q, want %q", agent.name, agent.sourceFile, sourceFile)
+		}
+		sourcePath := filepath.Join(repository, "marketplace", "harness", agent.name, sourceFile)
+		if _, err := os.Stat(sourcePath); err != nil {
+			t.Errorf("%s source template %s: %v", agent.name, sourcePath, err)
+		}
+		sourceURL := fmt.Sprintf(
+			"%s/raw/main/marketplace/harness/%s/%s",
+			updateRepository,
+			agent.name,
+			sourceFile,
+		)
+		if !strings.Contains(stdout.String(), sourceURL) {
+			t.Errorf("stdout = %q, want source URL %q", stdout.String(), sourceURL)
+		}
 	}
 }
 

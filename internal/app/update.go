@@ -690,21 +690,23 @@ var userAgents = []userAgent{
 // manualAgent is one agent git-byline cannot configure itself; the
 // update prints the same single copy command the installer prints.
 type manualAgent struct {
-	name      string
-	command   string
-	configDir string
-	hookPath  string
+	name       string
+	command    string
+	configDir  string
+	hookPath   string
+	sourceFile string
 }
 
 // manualAgents mirrors the installer's per-project hook list; keep it in
 // lockstep with install.sh.
 var manualAgents = []manualAgent{
-	{name: "gemini", command: "gemini", configDir: ".gemini", hookPath: ".gemini/settings.json"},
-	{name: "cursor", command: "cursor", configDir: ".cursor", hookPath: ".cursor/hooks.json"},
-	{name: "codex", command: "codex", configDir: ".codex", hookPath: ".codex/hooks.json"},
-	{name: "windsurf", command: "windsurf", configDir: ".codeium", hookPath: ".windsurf/hooks.json"},
-	{name: "copilot", command: "code", configDir: ".vscode", hookPath: ".github/hooks/promptscript.json"},
-	{name: "grok", command: "grok", configDir: ".grok", hookPath: ".grok/hooks/promptscript.json"},
+	{name: "gemini", command: "gemini", configDir: ".gemini", hookPath: ".gemini/settings.json", sourceFile: "settings.json"},
+	{name: "cursor", command: "cursor", configDir: ".cursor", hookPath: ".cursor/hooks.json", sourceFile: "hooks.json"},
+	{name: "codex", command: "codex", configDir: ".codex", hookPath: ".codex/hooks.json", sourceFile: "hooks.json"},
+	{name: "windsurf", command: "windsurf", configDir: ".codeium", hookPath: ".windsurf/hooks.json", sourceFile: "hooks.json"},
+	{name: "copilot", command: "code", configDir: ".vscode", hookPath: ".github/hooks/promptscript.json", sourceFile: "hooks.json"},
+	{name: "grok", command: "grok", configDir: ".grok", hookPath: ".grok/hooks/promptscript.json", sourceFile: "hooks.json"},
+	{name: "opencode", command: "opencode", hookPath: ".opencode/plugins/promptscript.ts", sourceFile: "promptscript.ts"},
 }
 
 // refreshHooks converges managed hooks after a binary swap, mirroring the
@@ -737,7 +739,14 @@ func refreshHooks(env *Env, target string, detect func(command, configDir string
 	}
 	pending := []manualAgent{}
 	for _, agent := range manualAgents {
-		if detect(agent.command, agent.configDir) {
+		if agent.name == "opencode" && runtime.GOOS == "windows" {
+			continue
+		}
+		configDir := agent.configDir
+		if agent.name == "opencode" {
+			configDir = openCodeConfigDir()
+		}
+		if detect(agent.command, configDir) {
 			pending = append(pending, agent)
 		}
 	}
@@ -748,10 +757,22 @@ func refreshHooks(env *Env, target string, detect func(command, configDir string
 	for _, agent := range pending {
 		fmt.Fprintf(env.Stdout, "  %-14s curl -fsSL --proto =https --tlsv1.2 -o %s --create-dirs \\\n", agent.name, agent.hookPath)
 		fmt.Fprintf(env.Stdout, "                   %s/raw/main/marketplace/harness/%s/%s\n",
-			updateRepository, agent.name, filepath.Base(agent.hookPath))
+			updateRepository, agent.name, agent.sourceFile)
 	}
 	fmt.Fprintln(env.Stdout, "Merge the block for gemini instead of replacing the file.")
 	fmt.Fprintf(env.Stdout, "Details: %s/blob/main/marketplace/harness/README.md\n", updateRepository)
+}
+
+func openCodeConfigDir() string {
+	configRoot := os.Getenv("XDG_CONFIG_HOME")
+	if configRoot == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		configRoot = filepath.Join(home, ".config")
+	}
+	return filepath.Join(configRoot, "opencode")
 }
 
 // refreshStep runs one install-hooks pass through the freshly installed

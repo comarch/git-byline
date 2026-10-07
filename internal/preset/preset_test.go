@@ -564,6 +564,93 @@ func TestParsePortableHooks(t *testing.T) {
 	}
 }
 
+func TestParseOpenCodeHooks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		author  model.Author
+		payload string
+		handled bool
+		kind    string
+		path    string
+		eventID string
+		model   string
+		session string
+	}{
+		{
+			name:    "edit",
+			author:  model.AuthorAI,
+			payload: `{"event":"post-tool-use","tool":"edit","args":{"filePath":"src/edit.go"},"sessionID":"session-1","callID":"edit-1"}`,
+			handled: true,
+			kind:    model.CheckpointKindEdit,
+			path:    "src/edit.go",
+			eventID: "edit-1",
+			model:   FallbackModel,
+			session: "session-1",
+		},
+		{
+			name:    "large edit with bounded path arguments",
+			author:  model.AuthorAI,
+			payload: `{"event":"post-tool-use","tool":"edit","args":{"filePath":"src/large.go"},"sessionID":"session-1","callID":"edit-large"}`,
+			handled: true,
+			kind:    model.CheckpointKindEdit,
+			path:    "src/large.go",
+			eventID: "edit-large",
+			model:   FallbackModel,
+			session: "session-1",
+		},
+		{
+			name:    "shell pre",
+			author:  model.AuthorHuman,
+			payload: `{"event":"pre-tool-use","tool":"bash","args":{"command":"go test ./..."},"sessionID":"session-1","callID":"shell-1"}`,
+			handled: true,
+			kind:    model.CheckpointKindShellPre,
+			eventID: "shell-1",
+		},
+		{
+			name:    "shell post",
+			author:  model.AuthorAI,
+			payload: `{"event":"post-tool-use","tool":"bash","args":{"command":"go test ./..."},"sessionID":"session-1","callID":"shell-1"}`,
+			handled: true,
+			kind:    model.CheckpointKindShellPost,
+			eventID: "shell-1",
+			model:   FallbackModel,
+			session: "session-1",
+		},
+		{
+			name:    "read-only tool",
+			author:  model.AuthorAI,
+			payload: `{"event":"pre-tool-use","tool":"read","args":{"filePath":"src/read.go"}}`,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			event, handled, err := Parse("portable-opencode", test.author, strings.NewReader(test.payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if handled != test.handled {
+				t.Fatalf("handled = %t, want %t", handled, test.handled)
+			}
+			if !handled {
+				return
+			}
+			if event.Kind != test.kind || event.EventID != test.eventID {
+				t.Fatalf("event = %+v, want kind %q and ID %q", event, test.kind, test.eventID)
+			}
+			if test.path != "" && (len(event.Paths) != 1 || event.Paths[0] != test.path) {
+				t.Fatalf("paths = %v, want [%s]", event.Paths, test.path)
+			}
+			if test.author == model.AuthorAI &&
+				(event.Agent != "opencode" || event.Model != test.model || event.Session != test.session) {
+				t.Fatalf("attribution = %+v", event)
+			}
+		})
+	}
+}
+
 func TestParsePortableValidationBranches(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

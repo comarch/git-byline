@@ -583,6 +583,48 @@ func TestWindsurfCheckpointFlow(t *testing.T) {
 	}
 }
 
+func TestOpenCodeCheckpointFlow(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "base\n")
+	appCommit(t, root, "base")
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	prePayload := `{"target":"opencode","event":"pre-tool-use","tool":"edit","args":{"filePath":"file.txt"},"sessionID":"session-1","callID":"edit-1"}`
+	postPayload := `{"target":"opencode","event":"post-tool-use","tool":"edit","args":{"filePath":"file.txt"},"sessionID":"session-1","callID":"edit-1"}`
+	stdout := runCheckpointBlameFlow(t, root, now, "portable-opencode", prePayload, postPayload)
+	if !strings.Contains(stdout, "ai:opencode/unknown") {
+		t.Fatalf("blame %q does not contain unknown OpenCode model attribution", stdout)
+	}
+}
+
+func TestOpenCodeShellCheckpointFlow(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "base\n")
+	appCommit(t, root, "base")
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	prePayload := `{"target":"opencode","event":"pre-tool-use","tool":"bash","args":{"command":"printf shell"},"sessionID":"session-1","callID":"shell-1"}`
+	postPayload := `{"target":"opencode","event":"post-tool-use","tool":"bash","args":{"command":"printf shell"},"sessionID":"session-1","callID":"shell-1"}`
+	if code, _, stderr, err := appRun(root, now, strings.NewReader(prePayload),
+		"checkpoint", "portable-opencode", "--type", "human", "--hook-input", "stdin"); code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("shell pre checkpoint = %d, %q, %v", code, stderr, err)
+	}
+	appWrite(t, root, "file.txt", "base\nshell\n")
+	if code, _, stderr, err := appRun(root, now.Add(time.Second), strings.NewReader(postPayload),
+		"checkpoint", "portable-opencode", "--type", "ai", "--hook-input", "stdin"); code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("shell post checkpoint = %d, %q, %v", code, stderr, err)
+	}
+	appCommit(t, root, "shell edit")
+	if code, _, _, err := appRun(root, now, nil, "annotate"); code != ExitSuccess || err != nil {
+		t.Fatalf("annotate = %d, %v", code, err)
+	}
+	if code, stdout, stderr, err := appRun(root, now, nil, "blame", "file.txt"); code != ExitSuccess || err != nil || stderr != "" {
+		t.Fatalf("blame = %d, %q, %v", code, stderr, err)
+	} else if !strings.Contains(stdout, "ai:opencode/unknown") {
+		t.Fatalf("blame %q does not contain unknown OpenCode shell attribution", stdout)
+	}
+}
+
 func appRun(root string, now time.Time, input io.Reader, args ...string) (int, string, string, error) {
 	if input == nil {
 		input = strings.NewReader("")

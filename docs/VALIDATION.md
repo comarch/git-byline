@@ -20,7 +20,8 @@ It runs with `CGO_ENABLED=0` and `GOPROXY=off`.
 7. Forbidden production import policy.
 8. Installer syntax, checksum flow, marketplace JSON, and plugin license
    checks.
-9. PromptScript 1.19.1 strict validation and generated output drift check.
+9. PromptScript 1.19.1 strict validation and generated output drift check,
+   including the bounded OpenCode plugin patch and instructions.
 10. Repository scans for credentials, unfinished markers, private paths, and
    forbidden dash characters.
 

@@ -179,23 +179,23 @@ try {
             }
         }
 
-        # The remaining agents read a project hook file that git-byline does
+        # The remaining agents read a project hook or plugin file that git-byline does
         # not own, so report the exact copy command instead of guessing a
         # user-level path.
         $pending = @(
-            @{ Name = "gemini"; Command = "gemini"; Directory = ".gemini"; Source = "gemini"; Hook = ".gemini/settings.json" },
-            @{ Name = "cursor"; Command = "cursor"; Directory = ".cursor"; Source = "cursor"; Hook = ".cursor/hooks.json" },
-            @{ Name = "codex"; Command = "codex"; Directory = ".codex"; Source = "codex"; Hook = ".codex/hooks.json" },
-            @{ Name = "windsurf"; Command = "windsurf"; Directory = ".codeium"; Source = "windsurf"; Hook = ".windsurf/hooks.json" },
-            @{ Name = "copilot"; Command = "code"; Directory = ".vscode"; Source = "copilot"; Hook = ".github/hooks/promptscript.json" },
-            @{ Name = "grok"; Command = "grok"; Directory = ".grok"; Source = "grok"; Hook = ".grok/hooks/promptscript.json" }
+            @{ Name = "gemini"; Command = "gemini"; Directory = ".gemini"; Source = "gemini"; Hook = ".gemini/settings.json"; SourceFile = "settings.json" },
+            @{ Name = "cursor"; Command = "cursor"; Directory = ".cursor"; Source = "cursor"; Hook = ".cursor/hooks.json"; SourceFile = "hooks.json" },
+            @{ Name = "codex"; Command = "codex"; Directory = ".codex"; Source = "codex"; Hook = ".codex/hooks.json"; SourceFile = "hooks.json" },
+            @{ Name = "windsurf"; Command = "windsurf"; Directory = ".codeium"; Source = "windsurf"; Hook = ".windsurf/hooks.json"; SourceFile = "hooks.json" },
+            @{ Name = "copilot"; Command = "code"; Directory = ".vscode"; Source = "copilot"; Hook = ".github/hooks/promptscript.json"; SourceFile = "hooks.json" },
+            @{ Name = "grok"; Command = "grok"; Directory = ".grok"; Source = "grok"; Hook = ".grok/hooks/promptscript.json"; SourceFile = "hooks.json" }
         ) | Where-Object { Test-Agent -Command $_.Command -ConfigDirectory $_.Directory }
         if ($pending) {
-            Write-Output "Detected agents that need one hook file per project:"
+            Write-Output "Detected agents that need one project integration file:"
             foreach ($agent in $pending) {
-                $file = Split-Path -Leaf $agent.Hook
-                Write-Output ("  {0,-14} irm {1}/raw/main/marketplace/harness/{2}/{3} -OutFile {4}" -f
-                    $agent.Name, $repository, $agent.Source, $file, $agent.Hook)
+                $directory = Split-Path -Parent $agent.Hook
+                Write-Output ("  {0,-14} New-Item -ItemType Directory -Force -Path '{4}' | Out-Null; irm {1}/raw/main/marketplace/harness/{2}/{3} -OutFile '{5}'" -f
+                    $agent.Name, $repository, $agent.Source, $agent.SourceFile, $directory, $agent.Hook)
             }
             Write-Output "Merge the block for gemini instead of replacing the file."
             Write-Output "Details: $repository/blob/main/marketplace/harness/README.md"

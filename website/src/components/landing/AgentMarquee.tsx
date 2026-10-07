@@ -2,7 +2,7 @@ import type {CSSProperties} from 'react';
 import {agentColor} from './data';
 import styles from './AgentMarquee.module.css';
 
-// The nine surfaces with native hooks, and the label each one writes.
+// The ten surfaces with native hooks, and the label each one writes.
 const agents = [
   {name: 'Factory', label: 'factory'},
   {name: 'Claude Code', label: 'claude'},
@@ -13,13 +13,14 @@ const agents = [
   {name: 'Gemini CLI', label: 'gemini'},
   {name: 'Windsurf', label: 'windsurf'},
   {name: 'Grok', label: 'grok'},
+  {name: 'OpenCode', label: 'opencode'},
 ];
 
 export default function AgentMarquee() {
   return (
     <section className={styles.strip} aria-labelledby="agents-title">
       <p id="agents-title" className={styles.caption}>
-        Native hooks for nine coding agents, one attribution format
+        Native hooks for ten coding agents, one attribution format
       </p>
       <div className={styles.viewport}>
         <ul className={styles.track}>

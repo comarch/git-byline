@@ -54,6 +54,7 @@ const agentColors: Record<string, string> = {
   claude: '#FF80CD',
   codex: '#00AAAA',
   gemini: '#D8BFEF',
+  opencode: '#D8BFEF',
   copilot: '#8080FF',
   vscode: '#BFBFFF',
   windsurf: '#BFBFFF',
