@@ -10,8 +10,9 @@
   "enabledManagers": [
     "gomod",
     "github-actions",
-    "npm"
+    "regex"
   ],
+  "platformAutomerge": true,
   "dependencyDashboard": true,
   "labels": [
     "dependencies"
@@ -67,23 +68,28 @@
       "semanticCommitScope": "ci"
     },
     {
-      "description": "Keep documentation site packages out of product releases",
-      "matchManagers": [
-        "npm"
+      "description": "Automerge every passing update",
+      "matchUpdateTypes": [
+        "major",
+        "minor",
+        "patch",
+        "pin",
+        "pinDigest",
+        "digest",
+        "lockFileMaintenance",
+        "bump"
       ],
-      "semanticCommitType": "chore",
-      "semanticCommitScope": "website"
+      "automerge": true
     },
     {
-      "description": "Keep major updates under manual review",
+      "description": "Flag major updates as breaking",
       "matchUpdateTypes": [
         "major"
       ],
       "labels": [
         "dependencies",
         "breaking"
-      ],
-      "automerge": false
+      ]
     }
   ]
 }

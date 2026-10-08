@@ -1,0 +1,22 @@
+# Dependabot owns the documentation website's npm dependencies; renovate.json
+# covers Go modules, GitHub Actions, and the PromptScript pins. Each tool
+# manages a disjoint set, so no dependency update opens two pull requests.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore
+      scope: website
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    # Major updates automerge too when CI passes; the website build is the
+    # gate that matters for a docs dependency.
+    automerge: true
