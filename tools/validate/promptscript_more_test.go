@@ -317,6 +317,12 @@ func TestPatchOpenCodeAgent(t *testing.T) {
 			t.Fatalf("patched agent changed a stamp of another target: %q", got)
 		}
 	})
+}
+
+// TestPatchOpenCodeAgentPermission covers agents that already hold a
+// permission key.
+func TestPatchOpenCodeAgentPermission(t *testing.T) {
+	t.Parallel()
 
 	// A permission text below the frontmatter is free text, not a mapping key.
 	t.Run("permission text in the body is fine", func(t *testing.T) {

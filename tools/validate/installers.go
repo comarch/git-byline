@@ -182,21 +182,24 @@ var harnessTemplates = map[string]string{
 	filepath.Join("marketplace", "harness", "gemini", "settings.json"):     filepath.Join(".gemini", "settings.json"),
 }
 
+// setupCommandFile is the file name of the setup command of most agents.
+const setupCommandFile = "git-byline-setup.md"
+
 // openCodeSetupCommand is the one setup command whose plugin target is
 // Unix-only, so it must keep the WSL path for Windows users.
-var openCodeSetupCommand = filepath.Join("marketplace", "harness", "opencode", "git-byline-setup.md")
+var openCodeSetupCommand = filepath.Join("marketplace", "harness", "opencode", setupCommandFile)
 
 // setupCommands lists every agent-facing setup command shipped by the
 // repository. Each one must describe the same verified installation.
 var setupCommands = []string{
-	filepath.Join("marketplace", "git-byline", "commands", "git-byline-setup.md"),
+	filepath.Join("marketplace", "git-byline", "commands", setupCommandFile),
 	filepath.Join("marketplace", "harness", "copilot", "git-byline-setup.prompt.md"),
 	filepath.Join("marketplace", "harness", "vscode", "git-byline-setup.prompt.md"),
-	filepath.Join("marketplace", "harness", "cursor", "git-byline-setup.md"),
-	filepath.Join("marketplace", "harness", "codex", "git-byline-setup.md"),
-	filepath.Join("marketplace", "harness", "windsurf", "git-byline-setup.md"),
-	filepath.Join("marketplace", "harness", "grok", "git-byline-setup.md"),
-	filepath.Join("marketplace", "harness", "opencode", "git-byline-setup.md"),
+	filepath.Join("marketplace", "harness", "cursor", setupCommandFile),
+	filepath.Join("marketplace", "harness", "codex", setupCommandFile),
+	filepath.Join("marketplace", "harness", "windsurf", setupCommandFile),
+	filepath.Join("marketplace", "harness", "grok", setupCommandFile),
+	openCodeSetupCommand,
 	filepath.Join("commands", "git-byline-setup.toml"),
 }
 
@@ -215,39 +218,47 @@ func checkHarnessTemplates(root string) error {
 		}
 	}
 	for _, rel := range setupCommands {
-		data, err := os.ReadFile(filepath.Join(root, rel))
-		if err != nil {
-			return fmt.Errorf("read setup command %s: %w", rel, err)
+		if err := checkSetupCommand(root, rel); err != nil {
+			return err
 		}
-		text := string(data)
-		for _, required := range []string{
-			"install.sh",
-			"install.ps1",
-			"--no-git-hook",
-			"install-hooks",
-			"status",
-		} {
-			if !strings.Contains(text, required) {
-				return fmt.Errorf("setup command %s is missing %q", rel, required)
-			}
+	}
+	return nil
+}
+
+// checkSetupCommand holds one setup command to the verified installation.
+func checkSetupCommand(root, rel string) error {
+	data, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		return fmt.Errorf("read setup command %s: %w", rel, err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"install.sh",
+		"install.ps1",
+		"--no-git-hook",
+		"install-hooks",
+		"status",
+	} {
+		if !strings.Contains(text, required) {
+			return fmt.Errorf("setup command %s is missing %q", rel, required)
 		}
-		// The commands tell the agent never to use sudo, so match an
-		// invocation rather than the word.
-		if sudoInvocation.MatchString(text) {
-			return fmt.Errorf("setup command %s must not use sudo", rel)
+	}
+	// The commands tell the agent never to use sudo, so match an
+	// invocation rather than the word.
+	if sudoInvocation.MatchString(text) {
+		return fmt.Errorf("setup command %s must not use sudo", rel)
+	}
+	for _, block := range powerShellBlock.FindAllStringSubmatch(text, -1) {
+		if powerShellCurlAlias.MatchString(block[1]) {
+			return fmt.Errorf("setup command %s uses the PowerShell curl alias, use irm or curl.exe", rel)
 		}
-		for _, block := range powerShellBlock.FindAllStringSubmatch(text, -1) {
-			if powerShellCurlAlias.MatchString(block[1]) {
-				return fmt.Errorf("setup command %s uses the PowerShell curl alias, use irm or curl.exe", rel)
-			}
+	}
+	if rel == openCodeSetupCommand {
+		if !strings.Contains(text, "WSL") {
+			return fmt.Errorf("setup command %s must document the WSL path for Windows", rel)
 		}
-		if rel == openCodeSetupCommand {
-			if !strings.Contains(text, "WSL") {
-				return fmt.Errorf("setup command %s must document the WSL path for Windows", rel)
-			}
-			if err := checkOpenCodePluginPin(root, text); err != nil {
-				return fmt.Errorf("setup command %s: %w", rel, err)
-			}
+		if err := checkOpenCodePluginPin(root, text); err != nil {
+			return fmt.Errorf("setup command %s: %w", rel, err)
 		}
 	}
 	return nil
@@ -277,6 +288,18 @@ var (
 // Please rewrites the tag on every release, so it must follow the manifest,
 // like the pin of the CI templates.
 func checkOpenCodePluginPin(root, setup string) error {
+	if err := checkOpenCodeReleasePin(root, setup); err != nil {
+		return err
+	}
+	if err := checkOpenCodePluginURLs(setup); err != nil {
+		return err
+	}
+	return checkOpenCodePluginDigest(root, setup)
+}
+
+// checkOpenCodeReleasePin requires every marked pin line to hold the version
+// of the release manifest.
+func checkOpenCodeReleasePin(root, setup string) error {
 	version, err := releaseManifestVersion(root)
 	if err != nil {
 		return err
@@ -298,7 +321,12 @@ func checkOpenCodePluginPin(root, setup string) error {
 	if pins == 0 {
 		return fmt.Errorf("has no release pin line marked %s", releasePinMarker)
 	}
+	return nil
+}
 
+// checkOpenCodePluginURLs requires every download of the plugin to use the
+// release pin as its ref.
+func checkOpenCodePluginURLs(setup string) error {
 	downloads := openCodePluginURL.FindAllStringSubmatch(setup, -1)
 	if len(downloads) == 0 {
 		return errors.New("does not download the plugin from the release pin")
@@ -308,7 +336,12 @@ func checkOpenCodePluginPin(root, setup string) error {
 			return fmt.Errorf("downloads the plugin from %s, want the release pin $tag", download[1])
 		}
 	}
+	return nil
+}
 
+// checkOpenCodePluginDigest requires the setup command to verify the download
+// with the SHA-256 of the plugin this repository ships.
+func checkOpenCodePluginDigest(root, setup string) error {
 	for _, tool := range []string{"sha256sum", "shasum -a 256", "Get-FileHash"} {
 		if !strings.Contains(setup, tool) {
 			return fmt.Errorf("does not verify the plugin with %s", tool)

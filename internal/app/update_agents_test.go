@@ -118,50 +118,50 @@ func TestOpenCodeConfigDir(t *testing.T) {
 // from either path. install.ps1 leaves OpenCode out on purpose: the plugin is
 // Unix-only.
 func TestManualAgentsMatchInstallers(t *testing.T) {
-	t.Run("install.sh", func(t *testing.T) {
-		script := readRepositoryFile(t, "install.sh")
-		if got := strings.Count(script, `pending="$pending `); got != len(manualAgents) {
-			t.Fatalf("install.sh queues %d agents, want %d", got, len(manualAgents))
-		}
-		matches := installShellAgent.FindAllStringSubmatch(script, -1)
-		if len(matches) != len(manualAgents) {
-			t.Fatalf("install.sh has %d parsable agents, want %d", len(matches), len(manualAgents))
-		}
-		for i, agent := range manualAgents {
-			command, configDir, name, source, hook, sourceFile := matches[i][1], matches[i][2], matches[i][3],
-				matches[i][4], matches[i][5], matches[i][6]
-			wantConfigDir := agent.configDir
-			if agent.name == openCodeAgent {
-				wantConfigDir = openCodeShellConfigDir
-			}
-			if command != agent.command || configDir != wantConfigDir || name != agent.name ||
-				source != agent.name || hook != agent.hookPath || sourceFile != agent.sourceFile {
-				t.Errorf("install.sh agent %d = %v, want %+v", i, matches[i][1:], agent)
-			}
-		}
-	})
+	t.Run("install.sh", requireInstallShellAgents)
+	t.Run("install.ps1", requireInstallPowerShellAgents)
+}
 
-	t.Run("install.ps1", func(t *testing.T) {
-		script := readRepositoryFile(t, "install.ps1")
-		var want []manualAgent
-		for _, agent := range manualAgents {
-			if agent.name != openCodeAgent {
-				want = append(want, agent)
-			}
+func requireInstallShellAgents(t *testing.T) {
+	script := readRepositoryFile(t, "install.sh")
+	if got := strings.Count(script, `pending="$pending `); got != len(manualAgents) {
+		t.Fatalf("install.sh queues %d agents, want %d", got, len(manualAgents))
+	}
+	matches := installShellAgent.FindAllStringSubmatch(script, -1)
+	if len(matches) != len(manualAgents) {
+		t.Fatalf("install.sh has %d parsable agents, want %d", len(matches), len(manualAgents))
+	}
+	for i, agent := range manualAgents {
+		command, configDir, name, source, hook, sourceFile := matches[i][1], matches[i][2], matches[i][3],
+			matches[i][4], matches[i][5], matches[i][6]
+		wantConfigDir := agent.configDir
+		if agent.name == openCodeAgent {
+			wantConfigDir = openCodeShellConfigDir
 		}
-		matches := installPowerShellAgent.FindAllStringSubmatch(script, -1)
-		if len(matches) != len(want) {
-			t.Fatalf("install.ps1 has %d parsable agents, want %d", len(matches), len(want))
+		if command != agent.command || configDir != wantConfigDir || name != agent.name ||
+			source != agent.name || hook != agent.hookPath || sourceFile != agent.sourceFile {
+			t.Errorf("install.sh agent %d = %v, want %+v", i, matches[i][1:], agent)
 		}
-		for i, agent := range want {
-			name, command, directory, source, hook, sourceFile := matches[i][1], matches[i][2], matches[i][3],
-				matches[i][4], matches[i][5], matches[i][6]
-			if name != agent.name || command != agent.command || directory != agent.configDir ||
-				source != agent.name || hook != agent.hookPath || sourceFile != agent.sourceFile {
-				t.Errorf("install.ps1 agent %d = %v, want %+v", i, matches[i][1:], agent)
-			}
-		}
+	}
+}
+
+func requireInstallPowerShellAgents(t *testing.T) {
+	script := readRepositoryFile(t, "install.ps1")
+	want := slices.DeleteFunc(slices.Clone(manualAgents), func(agent manualAgent) bool {
+		return agent.name == openCodeAgent
 	})
+	matches := installPowerShellAgent.FindAllStringSubmatch(script, -1)
+	if len(matches) != len(want) {
+		t.Fatalf("install.ps1 has %d parsable agents, want %d", len(matches), len(want))
+	}
+	for i, agent := range want {
+		name, command, directory, source, hook, sourceFile := matches[i][1], matches[i][2], matches[i][3],
+			matches[i][4], matches[i][5], matches[i][6]
+		if name != agent.name || command != agent.command || directory != agent.configDir ||
+			source != agent.name || hook != agent.hookPath || sourceFile != agent.sourceFile {
+			t.Errorf("install.ps1 agent %d = %v, want %+v", i, matches[i][1:], agent)
+		}
+	}
 }
 
 // readRepositoryFile reads a file of the repository, which is two levels
