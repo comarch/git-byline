@@ -39,7 +39,7 @@ jobs:
           node-version: 24
 
       - name: Install pinned PromptScript
-        run: npm install --global --ignore-scripts --no-audit --no-fund @promptscript/cli@1.19.1
+        run: npm install --global --ignore-scripts --no-audit --no-fund @promptscript/cli@1.21.0
 
       - name: Validate repository
         run: go run ./tools/validate

@@ -18,7 +18,7 @@ import (
 // repository is validated against. Upgrade it deliberately: regenerate
 // all generated files, review the output diff, and update the pin in the
 // same change.
-const pinnedPromptScriptVersion = "1.19.1"
+const pinnedPromptScriptVersion = "1.21.0"
 
 // semverPattern matches a semantic version inside tool version output.
 var semverPattern = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+`)
