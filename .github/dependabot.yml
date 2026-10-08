@@ -17,6 +17,3 @@ updates:
         update-types:
           - minor
           - patch
-    # Major updates automerge too when CI passes; the website build is the
-    # gate that matters for a docs dependency.
-    automerge: true
