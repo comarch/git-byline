@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/comarch/git-byline/compare/v1.6.0...v1.7.0) (2026-10-08)
+
+
+### Features
+
+* **opencode:** add edit and shell attribution ([#72](https://github.com/comarch/git-byline/issues/72)) ([c8e2fbf](https://github.com/comarch/git-byline/commit/c8e2fbf9a18871f08b9449a32374bab6dc2da3a6))
+
 ## [1.6.0](https://github.com/comarch/git-byline/compare/v1.5.0...v1.6.0) (2026-09-29)
 
 

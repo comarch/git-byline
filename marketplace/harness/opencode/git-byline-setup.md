@@ -70,7 +70,7 @@ Linux, macOS, or WSL:
 ```sh
 (
   set -eu
-  tag=v1.6.0 # x-release-please-version
+  tag=v1.7.0 # x-release-please-version
   sha256=6e2c94e589439ad4d927a356820d4b68279ecce2c079d87aa04aa27c2ca54ef6
   plugin="$(mktemp)"
   trap 'rm -f "$plugin"' EXIT
@@ -96,7 +96,7 @@ Native Windows PowerShell, where `curl` is an alias for `Invoke-WebRequest`
 and rejects the flags above:
 
 ```powershell
-$tag = "v1.6.0" # x-release-please-version
+$tag = "v1.7.0" # x-release-please-version
 $sha256 = "6e2c94e589439ad4d927a356820d4b68279ecce2c079d87aa04aa27c2ca54ef6"
 $plugin = Join-Path ([IO.Path]::GetTempPath()) ("git-byline-" + [guid]::NewGuid() + ".ts")
 try {
