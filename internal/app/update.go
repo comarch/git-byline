@@ -673,6 +673,15 @@ const (
 	agentFlag           = "--agent"
 )
 
+// hooksSourceFile is the harness file of every agent that reads a hooks.json
+// style project hook file.
+const hooksSourceFile = "hooks.json"
+
+// openCodeAgent names the manual agent that loads a plugin instead of a hook
+// file. The plugin is unverified on Windows, and install.sh looks for the
+// agent in the XDG config directory.
+const openCodeAgent = "opencode"
+
 // userAgent is one agent git-byline configures itself at user level, so
 // the update refresh matches the installer's detection.
 type userAgent struct {
@@ -701,12 +710,12 @@ type manualAgent struct {
 // lockstep with install.sh.
 var manualAgents = []manualAgent{
 	{name: "gemini", command: "gemini", configDir: ".gemini", hookPath: ".gemini/settings.json", sourceFile: "settings.json"},
-	{name: "cursor", command: "cursor", configDir: ".cursor", hookPath: ".cursor/hooks.json", sourceFile: "hooks.json"},
-	{name: "codex", command: "codex", configDir: ".codex", hookPath: ".codex/hooks.json", sourceFile: "hooks.json"},
-	{name: "windsurf", command: "windsurf", configDir: ".codeium", hookPath: ".windsurf/hooks.json", sourceFile: "hooks.json"},
-	{name: "copilot", command: "code", configDir: ".vscode", hookPath: ".github/hooks/promptscript.json", sourceFile: "hooks.json"},
-	{name: "grok", command: "grok", configDir: ".grok", hookPath: ".grok/hooks/promptscript.json", sourceFile: "hooks.json"},
-	{name: "opencode", command: "opencode", hookPath: ".opencode/plugins/promptscript.ts", sourceFile: "promptscript.ts"},
+	{name: "cursor", command: "cursor", configDir: ".cursor", hookPath: ".cursor/hooks.json", sourceFile: hooksSourceFile},
+	{name: "codex", command: "codex", configDir: ".codex", hookPath: ".codex/hooks.json", sourceFile: hooksSourceFile},
+	{name: "windsurf", command: "windsurf", configDir: ".codeium", hookPath: ".windsurf/hooks.json", sourceFile: hooksSourceFile},
+	{name: "copilot", command: "code", configDir: ".vscode", hookPath: ".github/hooks/promptscript.json", sourceFile: hooksSourceFile},
+	{name: "grok", command: "grok", configDir: ".grok", hookPath: ".grok/hooks/promptscript.json", sourceFile: hooksSourceFile},
+	{name: openCodeAgent, command: openCodeAgent, hookPath: ".opencode/plugins/promptscript.ts", sourceFile: "promptscript.ts"},
 }
 
 // refreshHooks converges managed hooks after a binary swap, mirroring the
@@ -737,19 +746,7 @@ func refreshHooks(env *Env, target string, detect func(command, configDir string
 		}
 		fmt.Fprintf(env.Stdout, "Installed the %s hook for every repository.\n", agent.name)
 	}
-	pending := []manualAgent{}
-	for _, agent := range manualAgents {
-		if agent.name == "opencode" && runtime.GOOS == "windows" {
-			continue
-		}
-		configDir := agent.configDir
-		if agent.name == "opencode" {
-			configDir = openCodeConfigDir()
-		}
-		if detect(agent.command, configDir) {
-			pending = append(pending, agent)
-		}
-	}
+	pending := detectManualAgents(runtime.GOOS, detect)
 	if len(pending) == 0 {
 		return
 	}
@@ -763,6 +760,28 @@ func refreshHooks(env *Env, target string, detect func(command, configDir string
 	fmt.Fprintf(env.Stdout, "Details: %s/blob/main/marketplace/harness/README.md\n", updateRepository)
 }
 
+// detectManualAgents returns the manual agents found on this machine, in list
+// order. goos is a parameter so tests reach the Windows skip on any platform.
+func detectManualAgents(goos string, detect func(command, configDir string) bool) []manualAgent {
+	found := []manualAgent{}
+	for _, agent := range manualAgents {
+		configDir := agent.configDir
+		if agent.name == openCodeAgent {
+			if goos == "windows" {
+				continue
+			}
+			configDir = openCodeConfigDir()
+		}
+		if detect(agent.command, configDir) {
+			found = append(found, agent)
+		}
+	}
+	return found
+}
+
+// openCodeConfigDir returns the OpenCode configuration directory the way
+// install.sh does: below XDG_CONFIG_HOME, or below ~/.config when it is
+// unset. It is empty when the home directory is unknown.
 func openCodeConfigDir() string {
 	configRoot := os.Getenv("XDG_CONFIG_HOME")
 	if configRoot == "" {

@@ -220,11 +220,13 @@ fi
 # detected reports whether an agent is present, by its command or by its
 # configuration directory. Detection never writes anything.
 detected() {
-	command -v "$1" >/dev/null 2>&1 && return 0
-	if [ -n "$2" ]; then
-		case "$2" in
-		/*) [ -d "$2" ] && return 0 ;;
-		*) [ -d "$HOME/$2" ] && return 0 ;;
+	agent_command="$1"
+	agent_config="$2"
+	command -v "$agent_command" >/dev/null 2>&1 && return 0
+	if [ -n "$agent_config" ]; then
+		case "$agent_config" in
+		/*) [ -d "$agent_config" ] && return 0 ;;
+		*) [ -d "$HOME/$agent_config" ] && return 0 ;;
 		esac
 	fi
 	return 1
