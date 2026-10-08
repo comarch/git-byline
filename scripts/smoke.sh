@@ -201,6 +201,9 @@ fi
 
 step "notes follow an ordinary push"
 git init -q --bare "$WORK/remote.git" || fail "bare remote"
+# Receiving a push can start a detached gc that repacks and deletes loose
+# objects while a later step reads them. Keep the remote's objects stable.
+git --git-dir="$WORK/remote.git" config receive.autogc false || fail "remote receive.autogc"
 git remote add origin "$WORK/remote.git" || fail "remote add"
 git push -q origin main || fail "push main"
 git --git-dir="$WORK/remote.git" notes --ref=byline list >/dev/null || fail "notes list"
@@ -209,9 +212,11 @@ NOTES_COUNT="$(git --git-dir="$WORK/remote.git" notes --ref=byline list | wc -l 
 
 step "pre-push merges notes another clone pushed"
 # The other clone plays a teammate or the forge job. An empty template keeps
-# hooks from a user-level Git template out of it.
+# hooks from a user-level Git template out of it. --no-local fetches through
+# the file transport instead of copying loose objects, so a background gc in
+# the remote cannot make the clone read a vanished object.
 OTHER="$WORK/other"
-git clone -q --template= "$WORK/remote.git" "$OTHER" || fail "clone other"
+git clone -q --no-local --template= "$WORK/remote.git" "$OTHER" || fail "clone other"
 git -C "$OTHER" config user.name "Other Clone"
 git -C "$OTHER" config user.email "other.clone@example.invalid"
 git -C "$OTHER" config core.autocrlf false
