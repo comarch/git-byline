@@ -87,8 +87,9 @@ plugin (bounded file paths, `apply_patch` paths, and awaited hooks) and syncs
 its copyable harness template. It also adds a read-only `permission` block to
 the generated OpenCode subagents, because PromptScript does not carry their
 `tools` list into OpenCode. The block keeps OpenCode's default prompt before
-`.env` files. Review the generated diff. Never edit generated instruction
-files directly.
+`.env` files. The patch also pins the generation time in the subagent stamps,
+because every compile would otherwise move it and leave a diff. Review the
+generated diff. Never edit generated instruction files directly.
 
 Release Please owns `CHANGELOG.md`, release versions, release pull requests,
 and tags. Do not hand-edit release output except while bootstrapping an empty

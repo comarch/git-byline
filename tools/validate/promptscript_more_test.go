@@ -268,6 +268,56 @@ func TestPatchOpenCodeAgent(t *testing.T) {
 		t.Fatal("patching an OpenCode agent twice changed its output")
 	}
 
+	// A recompile writes a new generation time. The patched output must not
+	// depend on it, or every compile leaves a diff in the committed agents.
+	const recompiled = "2030-01-02T03:04:05.678Z"
+	t.Run("recompile time is pinned", func(t *testing.T) {
+		t.Parallel()
+		fresh := strings.Replace(testOpenCodeAgent, "2026-10-07T14:51:15.613Z", recompiled, 1)
+		if fresh == testOpenCodeAgent {
+			t.Fatal("fixture has no generation time to replace")
+		}
+		got, err := patchOpenCodeAgent([]byte(fresh))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != testPatchedOpenCodeAgent {
+			t.Fatalf("patched agent = %q, want %q", got, testPatchedOpenCodeAgent)
+		}
+	})
+	t.Run("stamp of a patched agent is pinned", func(t *testing.T) {
+		t.Parallel()
+		moved := strings.Replace(testPatchedOpenCodeAgent, openCodeAgentStampTime, recompiled, 1)
+		got, err := patchOpenCodeAgent([]byte(moved))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != testPatchedOpenCodeAgent {
+			t.Fatalf("patched agent = %q, want %q", got, testPatchedOpenCodeAgent)
+		}
+	})
+	t.Run("agent without a stamp is patched", func(t *testing.T) {
+		t.Parallel()
+		got, err := patchOpenCodeAgent([]byte("---\ndescription: x\nmode: subagent\n---\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "---\ndescription: x\n" + openCodeAgentReadOnly; string(got) != want {
+			t.Fatalf("patched agent = %q, want %q", got, want)
+		}
+	})
+	t.Run("stamp of another target is untouched", func(t *testing.T) {
+		t.Parallel()
+		other := strings.Replace(testOpenCodeAgent, "target: opencode", "target: copilot", 1)
+		got, err := patchOpenCodeAgent([]byte(other))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(got), "2026-10-07T14:51:15.613Z | source: .promptscript/project.prs | target: copilot") {
+			t.Fatalf("patched agent changed a stamp of another target: %q", got)
+		}
+	})
+
 	rejected := map[string]string{
 		"no frontmatter end":  "changed PromptScript output\n",
 		"permission by hand":  "---\ndescription: x\nmode: subagent\npermission:\n  edit: allow\n---\n",
@@ -548,7 +598,7 @@ Review only requested changes. Do not modify files.
 // testPatchedOpenCodeAgent is testOpenCodeAgent after the patch, written out
 // so the tests do not depend on the code that produces it.
 const testPatchedOpenCodeAgent = `---
-# promptscript-generated: 2026-10-07T14:51:15.613Z | source: .promptscript/project.prs | target: opencode
+# promptscript-generated: 1970-01-01T00:00:00.000Z | source: .promptscript/project.prs | target: opencode
 description: Review a diff for correctness
 mode: subagent
 permission:

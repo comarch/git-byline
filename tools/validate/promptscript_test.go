@@ -230,8 +230,20 @@ func TestOpenCodeAgentsMatchTheirPromptScriptSource(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Windows checkouts may convert line endings.
-		if !strings.Contains(strings.ReplaceAll(string(agent), "\r\n", "\n"), openCodeAgentReadOnly) {
+		text := strings.ReplaceAll(string(agent), "\r\n", "\n")
+		if !strings.Contains(text, openCodeAgentReadOnly) {
 			t.Errorf("%s lacks the read-only permission block", openCodeAgentRel(name))
+		}
+		// CI compiles, patches, and then runs git diff. The drift check ignores
+		// stamps, so only an agent that the patch leaves unchanged survives
+		// that diff.
+		again, err := patchOpenCodeAgent([]byte(text))
+		if err != nil {
+			t.Errorf("patch %s: %v", openCodeAgentRel(name), err)
+			continue
+		}
+		if string(again) != text {
+			t.Errorf("%s is not patch output, run go run ./tools/validate -patch-opencode after compiling", openCodeAgentRel(name))
 		}
 	}
 }

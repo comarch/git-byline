@@ -60,6 +60,18 @@ var openCodeAgentNames = []string{"code-reviewer", "release-keeper", "security-r
 // OpenCode applies the last matching rule, and an agent block lands after the
 // built-in defaults. A bare "read: allow" would therefore override the default
 // prompt before .env files, so the block repeats those rules after the allow.
+//
+// PromptScript also stamps each agent with its generation time and refreshes
+// the stamp whenever the file differs from fresh output. The committed agents
+// always differ by the permission block, so every compile moves the stamp and
+// leaves a diff behind. The patch pins the time, which makes patched output
+// the same after every compile.
+const openCodeAgentStampTime = "1970-01-01T00:00:00.000Z"
+
+var openCodeAgentStamp = regexp.MustCompile(
+	`(?m)^(# promptscript-generated: )[^|\r\n]+( \| source: [^|\r\n]+ \| target: opencode)$`,
+)
+
 const (
 	openCodeAgentFrontmatterEnd = "mode: subagent\n---\n"
 	openCodeAgentReadOnly       = "mode: subagent\n" +
@@ -429,18 +441,22 @@ func patchOpenCodeAgents(root string) error {
 }
 
 // patchOpenCodeAgent adds the read-only permission block to one generated
-// subagent. An agent that already carries the block is returned unchanged, so
-// patching twice is safe. Any other frontmatter shape fails instead of
-// guessing, which points a PromptScript upgrade at this patch.
+// subagent and pins the generation time of its stamp. An agent that already
+// carries the block keeps it, so patching twice is safe. Any other frontmatter
+// shape fails instead of guessing, which points a PromptScript upgrade at this
+// patch. A missing stamp is fine: only the timestamp is pinned.
 func patchOpenCodeAgent(data []byte) ([]byte, error) {
 	text := string(data)
-	if strings.Contains(text, openCodeAgentReadOnly) {
-		return data, nil
+	if !strings.Contains(text, openCodeAgentReadOnly) {
+		if got := strings.Count(text, openCodeAgentFrontmatterEnd); got != 1 {
+			return nil, fmt.Errorf("generated OpenCode agent has %d matches for the frontmatter end, want 1", got)
+		}
+		text = strings.Replace(text, openCodeAgentFrontmatterEnd, openCodeAgentReadOnly, 1)
 	}
-	if got := strings.Count(text, openCodeAgentFrontmatterEnd); got != 1 {
-		return nil, fmt.Errorf("generated OpenCode agent has %d matches for the frontmatter end, want 1", got)
-	}
-	return []byte(strings.Replace(text, openCodeAgentFrontmatterEnd, openCodeAgentReadOnly, 1)), nil
+	return openCodeAgentStamp.ReplaceAll(
+		[]byte(text),
+		[]byte("${1}"+openCodeAgentStampTime+"${2}"),
+	), nil
 }
 
 // patchOpenCodeFile applies the repository patch to the generated plugin at

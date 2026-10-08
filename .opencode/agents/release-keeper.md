@@ -1,5 +1,5 @@
 ---
-# promptscript-generated: 2026-10-07T14:51:15.613Z | source: .promptscript/project.prs | target: opencode
+# promptscript-generated: 1970-01-01T00:00:00.000Z | source: .promptscript/project.prs | target: opencode
 description: Verify release metadata and artifacts
 mode: subagent
 permission:
