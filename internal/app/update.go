@@ -750,7 +750,7 @@ func refreshHooks(env *Env, target string, detect func(command, configDir string
 	if len(pending) == 0 {
 		return
 	}
-	fmt.Fprintln(env.Stdout, "Detected agents that need one hook file per project:")
+	fmt.Fprintln(env.Stdout, "Detected agents that need one project integration file:")
 	for _, agent := range pending {
 		fmt.Fprintf(env.Stdout, "  %-14s curl -fsSL --proto =https --tlsv1.2 -o %s --create-dirs \\\n", agent.name, agent.hookPath)
 		fmt.Fprintf(env.Stdout, "                   %s/raw/main/marketplace/harness/%s/%s\n",

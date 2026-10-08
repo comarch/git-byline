@@ -533,7 +533,7 @@ func TestRefreshHooksManualAgents(t *testing.T) {
 		return command == "gemini"
 	})
 	out := stdout.String()
-	if !strings.Contains(out, "Detected agents that need one hook file per project:") {
+	if !strings.Contains(out, "Detected agents that need one project integration file:") {
 		t.Fatalf("stdout = %q, want detected header", out)
 	}
 	if !strings.Contains(out, "gemini         curl -fsSL --proto =https --tlsv1.2 -o .gemini/settings.json --create-dirs \\") {
