@@ -383,6 +383,12 @@ func openCodePinFixture(t *testing.T) (string, string) {
 	return root, string(setup)
 }
 
+// withCRLF gives every line a CRLF ending. A Windows checkout can already hold
+// CRLF, so the lines are made LF first, or each CR would be doubled.
+func withCRLF(text string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\n", "\r\n")
+}
+
 // TestCheckOpenCodePluginPin pins what makes the plugin install safe to run.
 // OpenCode loads the plugin as code, so the setup command downloads it from
 // the release tag of the manifest and compares the download with the SHA-256
@@ -411,8 +417,7 @@ func TestCheckOpenCodePluginPin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		crlf := strings.ReplaceAll(string(plugin), "\n", "\r\n")
-		if err := os.WriteFile(path, []byte(crlf), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(withCRLF(string(plugin))), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if err := checkOpenCodePluginPin(root, setup); err != nil {
@@ -423,8 +428,7 @@ func TestCheckOpenCodePluginPin(t *testing.T) {
 	t.Run("CRLF checkout of the setup command", func(t *testing.T) {
 		t.Parallel()
 		root, setup := openCodePinFixture(t)
-		crlf := strings.ReplaceAll(setup, "\n", "\r\n")
-		if err := checkOpenCodePluginPin(root, crlf); err != nil {
+		if err := checkOpenCodePluginPin(root, withCRLF(setup)); err != nil {
 			t.Fatalf("checkOpenCodePluginPin(CRLF setup command) = %v, want nil", err)
 		}
 	})
