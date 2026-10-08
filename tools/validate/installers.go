@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -239,8 +241,95 @@ func checkHarnessTemplates(root string) error {
 				return fmt.Errorf("setup command %s uses the PowerShell curl alias, use irm or curl.exe", rel)
 			}
 		}
-		if rel == openCodeSetupCommand && !strings.Contains(text, "WSL") {
-			return fmt.Errorf("setup command %s must document the WSL path for Windows", rel)
+		if rel == openCodeSetupCommand {
+			if !strings.Contains(text, "WSL") {
+				return fmt.Errorf("setup command %s must document the WSL path for Windows", rel)
+			}
+			if err := checkOpenCodePluginPin(root, text); err != nil {
+				return fmt.Errorf("setup command %s: %w", rel, err)
+			}
+		}
+	}
+	return nil
+}
+
+// releasePinMarker tags a line whose release tag Release Please rewrites on
+// every release.
+const releasePinMarker = "x-release-please-version"
+
+var (
+	releaseTagPattern   = regexp.MustCompile(`v[0-9]+\.[0-9]+\.[0-9]+`)
+	sha256DigestPattern = regexp.MustCompile(`\b[0-9a-f]{64}\b`)
+
+	// openCodePluginURL captures the ref of a URL of the plugin, in both the
+	// raw.githubusercontent.com and the github.com/raw forms. The ref can span
+	// segments, as in refs/heads/main, so any ref but the pin fails.
+	openCodePluginURL = regexp.MustCompile(
+		`/comarch/git-byline/(?:raw/)?([^\s"']+?)/marketplace/harness/opencode/promptscript\.ts`,
+	)
+)
+
+// checkOpenCodePluginPin keeps the plugin install of the OpenCode setup
+// command safe to run. OpenCode loads every file of .opencode/plugins as
+// code, so the command must download the plugin from a release tag, never
+// from a branch, and must compare the download with the SHA-256 of the plugin
+// this repository ships before the file reaches that directory. Release
+// Please rewrites the tag on every release, so it must follow the manifest,
+// like the pin of the CI templates.
+func checkOpenCodePluginPin(root, setup string) error {
+	version, err := releaseManifestVersion(root)
+	if err != nil {
+		return err
+	}
+	pins := 0
+	for _, line := range strings.Split(setup, "\n") {
+		if !strings.Contains(line, releasePinMarker) {
+			continue
+		}
+		tags := releaseTagPattern.FindAllString(line, -1)
+		if len(tags) != 1 {
+			return fmt.Errorf("release pin line must hold one release tag, found %d", len(tags))
+		}
+		if tags[0] != "v"+version {
+			return fmt.Errorf("release pin is %s, release manifest is v%s", tags[0], version)
+		}
+		pins++
+	}
+	if pins == 0 {
+		return fmt.Errorf("has no release pin line marked %s", releasePinMarker)
+	}
+
+	downloads := openCodePluginURL.FindAllStringSubmatch(setup, -1)
+	if len(downloads) == 0 {
+		return errors.New("does not download the plugin from the release pin")
+	}
+	for _, download := range downloads {
+		if download[1] != "$tag" {
+			return fmt.Errorf("downloads the plugin from %s, want the release pin $tag", download[1])
+		}
+	}
+
+	for _, tool := range []string{"sha256sum", "shasum -a 256", "Get-FileHash"} {
+		if !strings.Contains(setup, tool) {
+			return fmt.Errorf("does not verify the plugin with %s", tool)
+		}
+	}
+	plugin, err := os.ReadFile(filepath.Join(root, openCodeTemplateRel))
+	if err != nil {
+		return fmt.Errorf("read OpenCode plugin: %w", err)
+	}
+	// Git serves the committed bytes, which hold no CR, while a Windows
+	// checkout may convert line endings.
+	sum := sha256.Sum256(bytes.ReplaceAll(plugin, []byte("\r\n"), []byte("\n")))
+	want := hex.EncodeToString(sum[:])
+	// The sh block compares the digest as text, and sha256sum prints lowercase.
+	digests := sha256DigestPattern.FindAllString(setup, -1)
+	if len(digests) == 0 {
+		return errors.New("lists no lowercase SHA-256 of the plugin")
+	}
+	for _, digest := range digests {
+		if digest != want {
+			return fmt.Errorf("lists SHA-256 %s, but %s hashes to %s", digest, filepath.ToSlash(openCodeTemplateRel), want)
 		}
 	}
 	return nil

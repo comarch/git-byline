@@ -18,8 +18,8 @@ It runs with `CGO_ENABLED=0` and `GOPROXY=off`.
 5. CGO-free builds for Linux, macOS, and Windows on amd64 and arm64.
 6. Standard-library-only dependency policy.
 7. Forbidden production import policy.
-8. Installer syntax, checksum flow, marketplace JSON, and plugin license
-   checks.
+8. Installer syntax, checksum flow, marketplace JSON, plugin license, and
+   OpenCode plugin pin checks.
 9. PromptScript 1.19.1 strict validation and generated output drift check,
    including the bounded OpenCode plugin patch and instructions.
 10. Repository scans for credentials, unfinished markers, private paths, and

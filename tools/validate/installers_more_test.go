@@ -345,6 +345,168 @@ func TestCheckHarnessTemplatesFailures(t *testing.T) {
 			t.Fatalf("checkHarnessTemplates() = %v, want missing WSL guidance failure", err)
 		}
 	})
+
+	t.Run("OpenCode setup command without a release pin rejected", func(t *testing.T) {
+		root := installerFixture(t)
+		replaceInstallerText(t, root, openCodeSetupCommand, releasePinMarker, "pinned")
+		err := checkHarnessTemplates(root)
+		requireErrorContaining(t, err, "setup command "+openCodeSetupCommand+": has no release pin line")
+	})
+
+	t.Run("OpenCode plugin changed without its setup command rejected", func(t *testing.T) {
+		root := installerFixture(t)
+		// The template and the generated plugin stay identical, so only the
+		// digest in the setup command is stale.
+		generated := harnessTemplates[openCodeTemplateRel]
+		appendInstallerText(t, root, openCodeTemplateRel, "// changed\n")
+		appendInstallerText(t, root, generated, "// changed\n")
+		err := checkHarnessTemplates(root)
+		requireErrorContaining(t, err, "setup command "+openCodeSetupCommand+": lists SHA-256")
+	})
+}
+
+// openCodePinFixture returns a root that holds the release manifest and the
+// plugin of this repository, and the text of the OpenCode setup command.
+func openCodePinFixture(t *testing.T) (string, string) {
+	t.Helper()
+	source, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+	root := t.TempDir()
+	copyInstallerFile(t, source, root, ".release-please-manifest.json")
+	copyInstallerFile(t, source, root, openCodeTemplateRel)
+	setup, err := os.ReadFile(filepath.Join(source, openCodeSetupCommand))
+	if err != nil {
+		t.Fatalf("read OpenCode setup command: %v", err)
+	}
+	return root, string(setup)
+}
+
+// TestCheckOpenCodePluginPin pins what makes the plugin install safe to run.
+// OpenCode loads the plugin as code, so the setup command downloads it from
+// the release tag of the manifest and compares the download with the SHA-256
+// of the plugin that this repository ships.
+func TestCheckOpenCodePluginPin(t *testing.T) {
+	t.Parallel()
+	root, setup := openCodePinFixture(t)
+	if err := checkOpenCodePluginPin(root, setup); err != nil {
+		t.Fatalf("checkOpenCodePluginPin(repository) = %v, want nil", err)
+	}
+	version, err := releaseManifestVersion(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := "v" + version
+	digest := sha256DigestPattern.FindString(setup)
+	if digest == "" {
+		t.Fatal("the OpenCode setup command lists no SHA-256")
+	}
+
+	t.Run("CRLF checkout of the plugin", func(t *testing.T) {
+		t.Parallel()
+		root, setup := openCodePinFixture(t)
+		path := filepath.Join(root, openCodeTemplateRel)
+		plugin, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		crlf := strings.ReplaceAll(string(plugin), "\n", "\r\n")
+		if err := os.WriteFile(path, []byte(crlf), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := checkOpenCodePluginPin(root, setup); err != nil {
+			t.Fatalf("checkOpenCodePluginPin(CRLF plugin) = %v, want nil", err)
+		}
+	})
+
+	t.Run("CRLF checkout of the setup command", func(t *testing.T) {
+		t.Parallel()
+		root, setup := openCodePinFixture(t)
+		crlf := strings.ReplaceAll(setup, "\n", "\r\n")
+		if err := checkOpenCodePluginPin(root, crlf); err != nil {
+			t.Fatalf("checkOpenCodePluginPin(CRLF setup command) = %v, want nil", err)
+		}
+	})
+
+	rejected := []struct {
+		name   string
+		change func(t *testing.T, root, setup string) string
+		want   string
+	}{
+		{"manifest is missing", func(t *testing.T, root, setup string) string {
+			removeInstallerFile(t, root, ".release-please-manifest.json")
+			return setup
+		}, "read release manifest"},
+		{"pin is behind the manifest", func(t *testing.T, root, setup string) string {
+			writeInstallerFile(t, root, ".release-please-manifest.json", `{".": "99.0.0"}`+"\n")
+			return setup
+		}, "release pin is " + pin + ", release manifest is v99.0.0"},
+		{"pin of the PowerShell block is behind", func(t *testing.T, root, setup string) string {
+			return strings.Replace(setup, `$tag = "`+pin+`"`, `$tag = "v0.0.1"`, 1)
+		}, "release pin is v0.0.1"},
+		{"no pin line", func(t *testing.T, root, setup string) string {
+			return strings.ReplaceAll(setup, releasePinMarker, "pinned")
+		}, "has no release pin line"},
+		{"pin line without a tag", func(t *testing.T, root, setup string) string {
+			return strings.ReplaceAll(setup, "tag="+pin+" #", "tag=latest #")
+		}, "must hold one release tag, found 0"},
+		{"pin line with two tags", func(t *testing.T, root, setup string) string {
+			return strings.ReplaceAll(setup, "tag="+pin+" #", "tag="+pin+" "+pin+" #")
+		}, "must hold one release tag, found 2"},
+		{"plugin from main", func(t *testing.T, root, setup string) string {
+			return strings.ReplaceAll(setup, "/git-byline/$tag/marketplace", "/git-byline/main/marketplace")
+		}, "downloads the plugin from main"},
+		{"plugin from main through github.com", func(t *testing.T, root, setup string) string {
+			return setup + "\nhttps://github.com/comarch/git-byline/raw/main/marketplace/harness/opencode/promptscript.ts\n"
+		}, "downloads the plugin from main"},
+		{"plugin from a branch ref", func(t *testing.T, root, setup string) string {
+			return setup + "\nhttps://raw.githubusercontent.com/comarch/git-byline/refs/heads/main/marketplace/harness/opencode/promptscript.ts\n"
+		}, "downloads the plugin from refs/heads/main"},
+		{"plugin from a blob page", func(t *testing.T, root, setup string) string {
+			return setup + "\nhttps://github.com/comarch/git-byline/blob/main/marketplace/harness/opencode/promptscript.ts\n"
+		}, "downloads the plugin from blob/main"},
+		{"plugin is not downloaded", func(t *testing.T, root, setup string) string {
+			return strings.ReplaceAll(setup, "harness/opencode/promptscript.ts", "harness/opencode/plugin.ts")
+		}, "does not download the plugin from the release pin"},
+		{"no sha256sum", func(t *testing.T, root, setup string) string {
+			return strings.ReplaceAll(setup, "sha256sum", "sha-256-sum")
+		}, "does not verify the plugin with sha256sum"},
+		{"no shasum", func(t *testing.T, root, setup string) string {
+			return strings.ReplaceAll(setup, "shasum -a 256", "shasum -a 512")
+		}, "does not verify the plugin with shasum -a 256"},
+		{"no Get-FileHash", func(t *testing.T, root, setup string) string {
+			return strings.ReplaceAll(setup, "Get-FileHash", "Get-Item")
+		}, "does not verify the plugin with Get-FileHash"},
+		{"plugin is missing", func(t *testing.T, root, setup string) string {
+			removeInstallerFile(t, root, openCodeTemplateRel)
+			return setup
+		}, "read OpenCode plugin"},
+		{"plugin changed", func(t *testing.T, root, setup string) string {
+			appendInstallerText(t, root, openCodeTemplateRel, "// changed\n")
+			return setup
+		}, "lists SHA-256 " + digest},
+		{"no digest", func(t *testing.T, root, setup string) string {
+			return strings.ReplaceAll(setup, digest, "")
+		}, "lists no lowercase SHA-256"},
+		// The sh block compares the digest as text, and sha256sum prints
+		// lowercase.
+		{"uppercase digest", func(t *testing.T, root, setup string) string {
+			return strings.ReplaceAll(setup, digest, strings.ToUpper(digest))
+		}, "lists no lowercase SHA-256"},
+		{"digest of the PowerShell block is stale", func(t *testing.T, root, setup string) string {
+			at := strings.LastIndex(setup, digest)
+			return setup[:at] + strings.Repeat("0", len(digest)) + setup[at+len(digest):]
+		}, "lists SHA-256 " + strings.Repeat("0", 64)},
+	}
+	for _, tt := range rejected {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root, setup := openCodePinFixture(t)
+			err := checkOpenCodePluginPin(root, tt.change(t, root, setup))
+			requireErrorContaining(t, err, tt.want)
+		})
+	}
 }
 
 func TestJSONObjectReadFailures(t *testing.T) {
@@ -399,6 +561,7 @@ func installerFixture(t *testing.T) string {
 	files := []string{
 		shellInstaller,
 		powerShellInstaller,
+		".release-please-manifest.json",
 		"LICENSE",
 		"marketplace/git-byline/LICENSE",
 		".factory-plugin/marketplace.json",

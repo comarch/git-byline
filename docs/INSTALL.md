@@ -111,6 +111,11 @@ plugin loading has not been verified; the documented Windows path is to run
 OpenCode in WSL and install with `install.sh` there. `install.ps1` does not
 detect OpenCode.
 
+OpenCode loads everything in `.opencode/plugins` as code. The OpenCode setup
+command therefore downloads the plugin from one release tag instead of `main`,
+and moves it into place only when its SHA-256 matches the digest in the
+command. Release Please rewrites the tag on every release.
+
 `.gemini/settings.json` and `.claude/settings.json` can already hold
 unrelated settings, so merge their `hooks` block instead of replacing the
 file.

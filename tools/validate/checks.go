@@ -524,21 +524,31 @@ func ciTemplateSourcePath(root string, provider ci.Provider) (string, error) {
 	return filepath.Join(root, "internal", "ci", "templates", name), nil
 }
 
+// releaseManifestVersion returns the version recorded in the release-please
+// manifest, without the tag prefix.
+func releaseManifestVersion(root string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(root, ".release-please-manifest.json"))
+	if err != nil {
+		return "", fmt.Errorf("read release manifest: %w", err)
+	}
+	var manifest map[string]string
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", fmt.Errorf("parse release manifest: %w", err)
+	}
+	version := manifest["."]
+	if version == "" {
+		return "", errors.New("release manifest has no root package version")
+	}
+	return version, nil
+}
+
 // checkCITemplateVersions proves that every CI template installs the
 // release recorded in the release-please manifest, so a release never
 // ships templates that download an older binary.
 func checkCITemplateVersions(root string) error {
-	data, err := os.ReadFile(filepath.Join(root, ".release-please-manifest.json"))
+	version, err := releaseManifestVersion(root)
 	if err != nil {
-		return fmt.Errorf("read release manifest: %w", err)
-	}
-	var manifest map[string]string
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("parse release manifest: %w", err)
-	}
-	version := manifest["."]
-	if version == "" {
-		return errors.New("release manifest has no root package version")
+		return err
 	}
 	for _, name := range []string{"github.yml", "gitlab.yml"} {
 		source, err := os.ReadFile(filepath.Join(root, "internal", "ci", "templates", name))

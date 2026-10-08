@@ -27,6 +27,12 @@
   release over HTTPS and verify the archive against its `checksums.txt` and
   the binary's reported version before running it. The validate gate fails
   when a template pins a release other than the manifest version.
+- The OpenCode setup command installs a plugin that OpenCode loads as code. It
+  downloads the plugin from one release tag, which Release Please rewrites on
+  every release, and moves it into `.opencode/plugins` only when its SHA-256
+  matches the digest in the command. The validate gate fails when the tag
+  differs from the manifest version, when the command names any other ref for
+  the plugin, or when the digest is not the one of the shipped plugin.
 
 ## CI
 

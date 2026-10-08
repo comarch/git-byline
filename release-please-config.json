@@ -29,6 +29,10 @@
         {
           "type": "generic",
           "path": "internal/ci/templates/gitlab.yml"
+        },
+        {
+          "type": "generic",
+          "path": "marketplace/harness/opencode/git-byline-setup.md"
         }
       ]
     }

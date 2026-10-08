@@ -91,6 +91,12 @@ the generated OpenCode subagents, because PromptScript does not carry their
 because every compile would otherwise move it and leave a diff. Review the
 generated diff. Never edit generated instruction files directly.
 
+The OpenCode setup command, `marketplace/harness/opencode/git-byline-setup.md`,
+installs the plugin from a release tag and checks its SHA-256. When the plugin
+changes, `go run ./tools/validate` fails and prints the new digest. Copy it
+into both code blocks of the setup command. Leave the release tag alone,
+because Release Please rewrites it.
+
 Release Please owns `CHANGELOG.md`, release versions, release pull requests,
 and tags. Do not hand-edit release output except while bootstrapping an empty
 changelog.

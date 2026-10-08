@@ -57,23 +57,56 @@ attribution without automatic note sharing.
 
 **3. Install the OpenCode plugin.**
 
-Copy `marketplace/harness/opencode/promptscript.ts` from the git-byline
-repository into `.opencode/plugins/promptscript.ts` of the user's project.
+Install `marketplace/harness/opencode/promptscript.ts` from the git-byline
+release tag below into `.opencode/plugins/promptscript.ts` of the user's
+project. OpenCode loads everything in that directory as code. The commands
+therefore download the plugin to a temporary file, compare its SHA-256 with
+the value below, and move it into place only when the two match. Do not change
+the tag or the SHA-256. On a mismatch, stop and report both values.
 
 Linux, macOS, or WSL:
 
 ```sh
-curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
-  -o .opencode/plugins/promptscript.ts --create-dirs \
-  https://raw.githubusercontent.com/comarch/git-byline/main/marketplace/harness/opencode/promptscript.ts
+tag=v1.6.0 # x-release-please-version
+sha256=6e2c94e589439ad4d927a356820d4b68279ecce2c079d87aa04aa27c2ca54ef6
+plugin="$(mktemp)"
+curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 -o "$plugin" \
+  "https://raw.githubusercontent.com/comarch/git-byline/$tag/marketplace/harness/opencode/promptscript.ts"
+if command -v sha256sum >/dev/null 2>&1; then
+  actual="$(sha256sum "$plugin" | awk '{ print $1 }')"
+else
+  actual="$(shasum -a 256 "$plugin" | awk '{ print $1 }')"
+fi
+if [ "$actual" = "$sha256" ]; then
+  mkdir -p .opencode/plugins
+  chmod 644 "$plugin"
+  mv "$plugin" .opencode/plugins/promptscript.ts
+else
+  rm -f "$plugin"
+  echo "plugin checksum mismatch: want $sha256, got $actual" >&2
+  false
+fi
 ```
 
 Native Windows PowerShell, where `curl` is an alias for `Invoke-WebRequest`
 and rejects the flags above:
 
 ```powershell
-New-Item -ItemType Directory -Force -Path .opencode/plugins | Out-Null
-irm https://raw.githubusercontent.com/comarch/git-byline/main/marketplace/harness/opencode/promptscript.ts -OutFile .opencode/plugins/promptscript.ts
+$tag = "v1.6.0" # x-release-please-version
+$sha256 = "6e2c94e589439ad4d927a356820d4b68279ecce2c079d87aa04aa27c2ca54ef6"
+$plugin = Join-Path ([IO.Path]::GetTempPath()) ("git-byline-" + [guid]::NewGuid() + ".ts")
+try {
+    irm "https://raw.githubusercontent.com/comarch/git-byline/$tag/marketplace/harness/opencode/promptscript.ts" -OutFile $plugin
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $plugin).Hash
+    if ($actual -ne $sha256) {
+        throw "plugin checksum mismatch: want $sha256, got $actual"
+    }
+    New-Item -ItemType Directory -Force -Path .opencode/plugins | Out-Null
+    Move-Item -Force -LiteralPath $plugin .opencode/plugins/promptscript.ts
+}
+finally {
+    Remove-Item $plugin -Force -ErrorAction SilentlyContinue
+}
 ```
 
 This generated PromptScript plugin captures OpenCode edit, write,

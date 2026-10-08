@@ -40,7 +40,9 @@ hook file in this table is complete and can be copied as is.
 
 OpenCode's plugin is documented for Linux, macOS, and WSL. Its setup command
 lists the native Windows PowerShell steps as unverified, and `install.ps1`
-does not detect OpenCode.
+does not detect OpenCode. Because OpenCode loads the plugin as code, that
+setup command downloads it from a release tag and checks its SHA-256 before it
+moves the file into `.opencode/plugins`.
 
 ## Why these files are safe to copy
 
