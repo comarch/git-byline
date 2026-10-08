@@ -128,6 +128,11 @@ that checkpoint. MCP calls, some subagent paths, and failed tool calls do not
 have dedicated plugin events. Attribution is best-effort on those paths, not
 guaranteed.
 
+OpenCode 1.18.33 skips project plugins when it runs with `--pure`, including
+this one. Such a session records no checkpoint, so its edits arrive as `human`
+lines. The plugin does load when a client attaches to `opencode serve`: the
+server process runs the hooks.
+
 ## Git behavior
 
 - First-parent history is authoritative.

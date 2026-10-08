@@ -38,6 +38,10 @@ the hook file below. Copying the hook file by hand works too.
 too, so merge the `hooks` block instead of replacing the file. Every other
 hook file in this table is complete and can be copied as is.
 
+OpenCode's plugin is documented for Linux, macOS, and WSL. Its setup command
+lists the native Windows PowerShell steps as unverified, and `install.ps1`
+does not detect OpenCode.
+
 ## Why these files are safe to copy
 
 Each hook file is byte-identical to the one this repository generates for

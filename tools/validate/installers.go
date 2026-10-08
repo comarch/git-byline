@@ -180,6 +180,10 @@ var harnessTemplates = map[string]string{
 	filepath.Join("marketplace", "harness", "gemini", "settings.json"):     filepath.Join(".gemini", "settings.json"),
 }
 
+// openCodeSetupCommand is the one setup command whose plugin target is
+// Unix-only, so it must keep the WSL path for Windows users.
+var openCodeSetupCommand = filepath.Join("marketplace", "harness", "opencode", "git-byline-setup.md")
+
 // setupCommands lists every agent-facing setup command shipped by the
 // repository. Each one must describe the same verified installation.
 var setupCommands = []string{
@@ -230,11 +234,27 @@ func checkHarnessTemplates(root string) error {
 		if sudoInvocation.MatchString(text) {
 			return fmt.Errorf("setup command %s must not use sudo", rel)
 		}
+		for _, block := range powerShellBlock.FindAllStringSubmatch(text, -1) {
+			if powerShellCurlAlias.MatchString(block[1]) {
+				return fmt.Errorf("setup command %s uses the PowerShell curl alias, use irm or curl.exe", rel)
+			}
+		}
+		if rel == openCodeSetupCommand && !strings.Contains(text, "WSL") {
+			return fmt.Errorf("setup command %s must document the WSL path for Windows", rel)
+		}
 	}
 	return nil
 }
 
 var sudoInvocation = regexp.MustCompile(`(?m)(^|[\s;&|(])sudo\s`)
+
+// powerShellBlock captures the body of a fenced PowerShell example.
+var powerShellBlock = regexp.MustCompile("(?s)```powershell\n(.*?)```")
+
+// powerShellCurlAlias matches bare curl with flags. Windows PowerShell binds
+// that name to Invoke-WebRequest, which rejects the flags the sh examples use.
+// curl.exe is the real tool and does not match.
+var powerShellCurlAlias = regexp.MustCompile(`(?m)(^|[\s;&|(])curl\s+-`)
 
 func readJSONObject(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)

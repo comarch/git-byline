@@ -308,6 +308,43 @@ func TestCheckHarnessTemplatesFailures(t *testing.T) {
 			t.Fatal("checkHarnessTemplates() = nil error, want sudo invocation failure")
 		}
 	})
+
+	t.Run("PowerShell curl alias rejected", func(t *testing.T) {
+		root := installerFixture(t)
+		appendInstallerText(t, root, setupCommands[0],
+			"\n```powershell\ncurl -fsSL https://example.test -o file\n```\n")
+		err := checkHarnessTemplates(root)
+		if err == nil || !strings.Contains(err.Error(), "PowerShell curl alias") {
+			t.Fatalf("checkHarnessTemplates() = %v, want PowerShell curl alias failure", err)
+		}
+	})
+
+	t.Run("PowerShell curl.exe accepted", func(t *testing.T) {
+		root := installerFixture(t)
+		appendInstallerText(t, root, setupCommands[0],
+			"\n```powershell\ncurl.exe -fsSL https://example.test -o file\n```\n")
+		if err := checkHarnessTemplates(root); err != nil {
+			t.Fatalf("checkHarnessTemplates() = %v, want nil", err)
+		}
+	})
+
+	t.Run("sh curl outside PowerShell accepted", func(t *testing.T) {
+		root := installerFixture(t)
+		appendInstallerText(t, root, setupCommands[0],
+			"\n```sh\ncurl -fsSL https://example.test -o file\n```\n")
+		if err := checkHarnessTemplates(root); err != nil {
+			t.Fatalf("checkHarnessTemplates() = %v, want nil", err)
+		}
+	})
+
+	t.Run("OpenCode setup command without WSL guidance rejected", func(t *testing.T) {
+		root := installerFixture(t)
+		replaceInstallerText(t, root, openCodeSetupCommand, "WSL", "a VM")
+		err := checkHarnessTemplates(root)
+		if err == nil || !strings.Contains(err.Error(), "WSL") {
+			t.Fatalf("checkHarnessTemplates() = %v, want missing WSL guidance failure", err)
+		}
+	})
 }
 
 func TestJSONObjectReadFailures(t *testing.T) {

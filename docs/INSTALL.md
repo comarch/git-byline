@@ -108,7 +108,8 @@ model used by an individual event. See
 [compatibility](COMPATIBILITY.md#agent-adapters) for the hook limitations.
 PromptScript 1.19.1 declares the generated plugin Unix-only. Native Windows
 plugin loading has not been verified; the documented Windows path is to run
-OpenCode in WSL.
+OpenCode in WSL and install with `install.sh` there. `install.ps1` does not
+detect OpenCode.
 
 `.gemini/settings.json` and `.claude/settings.json` can already hold
 unrelated settings, so merge their `hooks` block instead of replacing the
@@ -221,8 +222,10 @@ irm https://raw.githubusercontent.com/comarch/git-byline/main/install.ps1 | iex
 
 The script supports Windows on amd64 and arm64. It performs the same checksum
 and binary-version checks, installs to `$HOME\bin`, and runs the same agent
-detection. Pass `-NoAgentHooks` to skip it and `-GitTemplate` to also manage
-the Git template directory.
+detection, except for OpenCode. Its plugin is documented for Linux, macOS, and
+WSL only, so the PowerShell installer never prints the OpenCode copy command.
+Pass `-NoAgentHooks` to skip detection and `-GitTemplate` to also manage the
+Git template directory.
 
 Run a reviewed local script with custom options:
 

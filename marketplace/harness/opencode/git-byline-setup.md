@@ -3,13 +3,16 @@
 Install git-byline for the current operating system and activate
 attribution hooks. Never use `sudo`.
 
-PromptScript 1.19.1 declares the generated plugin Unix-only. Native Windows
-plugin loading has not been verified; the documented Windows path is to run
-OpenCode in WSL.
+On Windows, run OpenCode inside WSL and follow the Linux or macOS commands in
+the WSL shell. PromptScript 1.19.1 declares the generated plugin Unix-only,
+and native Windows plugin loading has not been verified. `install.ps1` does
+not detect OpenCode or install its plugin. If the user runs OpenCode natively
+on Windows, use the PowerShell commands below and tell the user that this
+setup is unverified.
 
 **1. Install the verified binary.**
 
-Linux or macOS:
+Linux, macOS, or WSL:
 
 ```sh
 curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
@@ -18,7 +21,7 @@ curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
 binary="$HOME/.local/bin/git-byline"
 ```
 
-Windows PowerShell:
+Native Windows PowerShell:
 
 ```powershell
 $installer = Join-Path ([IO.Path]::GetTempPath()) ("git-byline-" + [guid]::NewGuid() + ".ps1")
@@ -34,13 +37,16 @@ $binary = Join-Path $HOME "bin/git-byline.exe"
 
 The installer verifies the release archive checksum and the binary version.
 Run the remaining commands through the absolute `$binary` path, so setup does
-not depend on this process reloading `PATH`. Verify `$binary version`.
+not depend on this process reloading `PATH`. PowerShell needs the call
+operator for that, as in `& $binary version`. Verify `$binary version`.
 
 **2. Install the Git hooks.**
 
 ```sh
 "$binary" install-hooks --agent none --git --project
 ```
+
+In PowerShell, run `& $binary install-hooks --agent none --git --project`.
 
 This installs `post-commit` attribution and `pre-push` note sharing for the
 current repository. Attribution notes contain repository paths, line ranges,
@@ -52,12 +58,22 @@ attribution without automatic note sharing.
 **3. Install the OpenCode plugin.**
 
 Copy `marketplace/harness/opencode/promptscript.ts` from the git-byline
-repository into `.opencode/plugins/promptscript.ts` of the user's project:
+repository into `.opencode/plugins/promptscript.ts` of the user's project.
+
+Linux, macOS, or WSL:
 
 ```sh
 curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
   -o .opencode/plugins/promptscript.ts --create-dirs \
   https://raw.githubusercontent.com/comarch/git-byline/main/marketplace/harness/opencode/promptscript.ts
+```
+
+Native Windows PowerShell, where `curl` is an alias for `Invoke-WebRequest`
+and rejects the flags above:
+
+```powershell
+New-Item -ItemType Directory -Force -Path .opencode/plugins | Out-Null
+irm https://raw.githubusercontent.com/comarch/git-byline/main/marketplace/harness/opencode/promptscript.ts -OutFile .opencode/plugins/promptscript.ts
 ```
 
 This generated PromptScript plugin captures OpenCode edit, write,
@@ -69,7 +85,7 @@ generated plugin.
 
 **4. Verify and report.**
 
-Run `"$binary" status`. Tell the user to add the reported install directory
-to `PATH` and restart OpenCode so it loads the plugin. Stop and report the
-exact error when download, checksum, version, hook installation, or status
-verification fails.
+Run `"$binary" status`, or `& $binary status` in PowerShell. Tell the user to
+add the reported install directory to `PATH` and restart OpenCode so it loads
+the plugin. Stop and report the exact error when download, checksum, version,
+hook installation, or status verification fails.

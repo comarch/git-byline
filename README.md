@@ -34,9 +34,10 @@ irm https://raw.githubusercontent.com/comarch/git-byline/main/install.ps1 | iex
 The installer verifies the release archive checksum and the binary version,
 then detects the coding agents on your machine. Factory and Claude Code get a
 user-level hook that covers every repository. For the other supported agents
-it prints the one command that adds their hook or plugin to a project. Run it
-inside a repository and the Git hooks are installed there too, so the next
-commit is already attributed:
+it prints the one command that adds their hook or plugin to a project. The
+PowerShell installer leaves out OpenCode, whose plugin is documented for
+Linux, macOS, and WSL. Run it inside a repository and the Git hooks are
+installed there too, so the next commit is already attributed:
 
 ```sh
 git commit -m "feat: add example"
