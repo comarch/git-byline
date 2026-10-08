@@ -419,6 +419,7 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 			File                 string   `json:"file"`
 			Path                 string   `json:"path"`
 			Patch                string   `json:"patch"`
+			PatchText            string   `json:"patchText"`
 			Input                string   `json:"input"`
 			FilePaths            []string `json:"file_paths"`
 			FilePathsCamel       []string `json:"filePaths"`
@@ -435,12 +436,13 @@ func parsePortableHook(agent string, explicit model.Author, data []byte) (Event,
 		paths = append(paths, input.EditedFilepaths...)
 		paths = append(paths, input.EditedFilepathsCamel...)
 		paths = append(paths, input.Files...)
-		// Factory puts the ApplyPatch body in input; patch covers other surfaces.
-		// Only ApplyPatch tools may use input as the patch body: ordinary tools
-		// can carry unrelated text in input that is not a patch.
+		// Factory puts the ApplyPatch body in input and OpenCode puts it in
+		// patchText; patch covers other surfaces. Only ApplyPatch tools may use
+		// those fields as the patch body: ordinary tools can carry unrelated
+		// text in them that is not a patch.
 		patch := input.Patch
 		if applyPatch {
-			patch = firstValue(input.Patch, input.Input)
+			patch = firstValue(input.Patch, input.PatchText, input.Input)
 		}
 		if patch != "" {
 			patchBodyFound = true

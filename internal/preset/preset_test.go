@@ -3,6 +3,8 @@ package preset
 import (
 	"bytes"
 	"io"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -564,29 +566,38 @@ func TestParsePortableHooks(t *testing.T) {
 	}
 }
 
-func TestParseOpenCodeHooks(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		author  model.Author
-		payload string
-		handled bool
-		kind    string
-		path    string
-		eventID string
-		model   string
-		session string
-	}{
+// openCodeSession is the session every OpenCode payload below reports.
+const openCodeSession = "session-1"
+
+type openCodeCase struct {
+	name    string
+	author  model.Author
+	payload string
+	handled bool
+	kind    string
+	paths   []string
+	eventID string
+}
+
+func openCodeEditCases() []openCodeCase {
+	return []openCodeCase{
 		{
 			name:    "edit",
 			author:  model.AuthorAI,
 			payload: `{"event":"post-tool-use","tool":"edit","args":{"filePath":"src/edit.go"},"sessionID":"session-1","callID":"edit-1"}`,
 			handled: true,
 			kind:    model.CheckpointKindEdit,
-			path:    "src/edit.go",
+			paths:   []string{"src/edit.go"},
 			eventID: "edit-1",
-			model:   FallbackModel,
-			session: "session-1",
+		},
+		{
+			name:    "write before the tool runs",
+			author:  model.AuthorHuman,
+			payload: `{"event":"pre-tool-use","tool":"write","args":{"filePath":"src/write.go","content":"package src\n"},"sessionID":"session-1","callID":"write-1"}`,
+			handled: true,
+			kind:    model.CheckpointKindEdit,
+			paths:   []string{"src/write.go"},
+			eventID: "write-1",
 		},
 		{
 			name:    "large edit with bounded path arguments",
@@ -594,11 +605,55 @@ func TestParseOpenCodeHooks(t *testing.T) {
 			payload: `{"event":"post-tool-use","tool":"edit","args":{"filePath":"src/large.go"},"sessionID":"session-1","callID":"edit-large"}`,
 			handled: true,
 			kind:    model.CheckpointKindEdit,
-			path:    "src/large.go",
+			paths:   []string{"src/large.go"},
 			eventID: "edit-large",
-			model:   FallbackModel,
-			session: "session-1",
 		},
+		{
+			name:    "write ignores patch text",
+			author:  model.AuthorAI,
+			payload: `{"event":"post-tool-use","tool":"write","args":{"filePath":"src/write.go","patchText":"*** Begin Patch\n*** Update File: src/other.go\n*** End Patch"},"sessionID":"session-1","callID":"write-2"}`,
+			handled: true,
+			kind:    model.CheckpointKindEdit,
+			paths:   []string{"src/write.go"},
+			eventID: "write-2",
+		},
+	}
+}
+
+func openCodePatchCases() []openCodeCase {
+	return []openCodeCase{
+		{
+			name:    "apply patch text after the tool runs",
+			author:  model.AuthorAI,
+			payload: `{"event":"post-tool-use","tool":"apply_patch","args":{"patchText":"*** Begin Patch\n*** Update File: src/update.go\n*** Move to: src/moved.go\n@@\n-old\n+new\n*** Add File: src/add.go\n+text\n*** Delete File: src/delete.go\n*** End Patch"},"sessionID":"session-1","callID":"patch-1"}`,
+			handled: true,
+			kind:    model.CheckpointKindEdit,
+			paths:   []string{"src/update.go", "src/moved.go", "src/add.go", "src/delete.go"},
+			eventID: "patch-1",
+		},
+		{
+			name:    "apply patch text before the tool runs",
+			author:  model.AuthorHuman,
+			payload: `{"event":"pre-tool-use","tool":"apply_patch","args":{"patchText":"*** Begin Patch\n*** Update File: src/update.go\n*** End Patch"},"sessionID":"session-1","callID":"patch-2"}`,
+			handled: true,
+			kind:    model.CheckpointKindEdit,
+			paths:   []string{"src/update.go"},
+			eventID: "patch-2",
+		},
+		{
+			name:    "apply patch with bounded file list",
+			author:  model.AuthorAI,
+			payload: `{"event":"post-tool-use","tool":"apply_patch","args":{"files":["src/a.go","src/b.go"]},"sessionID":"session-1","callID":"patch-3"}`,
+			handled: true,
+			kind:    model.CheckpointKindEdit,
+			paths:   []string{"src/a.go", "src/b.go"},
+			eventID: "patch-3",
+		},
+	}
+}
+
+func openCodeShellCases() []openCodeCase {
+	return []openCodeCase{
 		{
 			name:    "shell pre",
 			author:  model.AuthorHuman,
@@ -614,8 +669,6 @@ func TestParseOpenCodeHooks(t *testing.T) {
 			handled: true,
 			kind:    model.CheckpointKindShellPost,
 			eventID: "shell-1",
-			model:   FallbackModel,
-			session: "session-1",
 		},
 		{
 			name:    "read-only tool",
@@ -623,29 +676,89 @@ func TestParseOpenCodeHooks(t *testing.T) {
 			payload: `{"event":"pre-tool-use","tool":"read","args":{"filePath":"src/read.go"}}`,
 		},
 	}
+}
+
+func TestParseOpenCodeHooks(t *testing.T) {
+	t.Parallel()
+	tests := slices.Concat(openCodeEditCases(), openCodePatchCases(), openCodeShellCases())
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			event, handled, err := Parse("portable-opencode", test.author, strings.NewReader(test.payload))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if handled != test.handled {
-				t.Fatalf("handled = %t, want %t", handled, test.handled)
-			}
-			if !handled {
-				return
-			}
-			if event.Kind != test.kind || event.EventID != test.eventID {
-				t.Fatalf("event = %+v, want kind %q and ID %q", event, test.kind, test.eventID)
-			}
-			if test.path != "" && (len(event.Paths) != 1 || event.Paths[0] != test.path) {
-				t.Fatalf("paths = %v, want [%s]", event.Paths, test.path)
-			}
-			if test.author == model.AuthorAI &&
-				(event.Agent != "opencode" || event.Model != test.model || event.Session != test.session) {
-				t.Fatalf("attribution = %+v", event)
+			runOpenCodeCase(t, test)
+		})
+	}
+}
+
+func runOpenCodeCase(t *testing.T, test openCodeCase) {
+	t.Helper()
+	event, handled, err := Parse("portable-opencode", test.author, strings.NewReader(test.payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled != test.handled {
+		t.Fatalf("handled = %t, want %t", handled, test.handled)
+	}
+	if !handled {
+		return
+	}
+	if event.Kind != test.kind || event.EventID != test.eventID {
+		t.Fatalf("event = %+v, want kind %q and ID %q", event, test.kind, test.eventID)
+	}
+	if want := nativePaths(test.paths); !slices.Equal(event.Paths, want) {
+		t.Fatalf("paths = %v, want %v", event.Paths, want)
+	}
+	if test.author == model.AuthorAI {
+		checkOpenCodeAttribution(t, event)
+	}
+}
+
+// checkOpenCodeAttribution expects the fixed identity the OpenCode payloads
+// carry: no model, so the fallback applies, and one session.
+func checkOpenCodeAttribution(t *testing.T, event Event) {
+	t.Helper()
+	if event.Agent != "opencode" || event.Model != FallbackModel || event.Session != openCodeSession {
+		t.Fatalf("attribution = %+v", event)
+	}
+}
+
+// nativePaths converts slash-separated paths to the form Parse returns on this
+// operating system.
+func nativePaths(paths []string) []string {
+	native := make([]string, 0, len(paths))
+	for _, path := range paths {
+		native = append(native, filepath.FromSlash(path))
+	}
+	return native
+}
+
+func TestParseOpenCodePatchErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "apply patch without a patch body",
+			payload: `{"event":"post-tool-use","tool":"apply_patch","args":{},"callID":"patch-1"}`,
+		},
+		{
+			name:    "apply patch text without a file operation",
+			payload: `{"event":"post-tool-use","tool":"apply_patch","args":{"patchText":"*** Begin Patch\n*** End Patch"},"callID":"patch-2"}`,
+		},
+		{
+			name:    "apply patch text with an empty file path",
+			payload: `{"event":"pre-tool-use","tool":"apply_patch","args":{"patchText":"*** Begin Patch\n*** Update File:   \n*** End Patch"},"callID":"patch-3"}`,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			for _, author := range []model.Author{model.AuthorHuman, model.AuthorAI} {
+				if _, _, err := Parse("portable-opencode", author, strings.NewReader(test.payload)); err == nil {
+					t.Fatalf("Parse accepted %s payload as %s", test.name, author)
+				}
 			}
 		})
 	}
@@ -832,6 +945,7 @@ func FuzzParseDroid(f *testing.F) {
 
 func FuzzParsePortable(f *testing.F) {
 	f.Add([]byte(`{"toolName":"apply_patch","toolArgs":{"filePath":"a.go"}}`))
+	f.Add([]byte(`{"tool":"apply_patch","args":{"patchText":"*** Begin Patch\n*** Update File: a.go\n*** End Patch"}}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		_, _, _ = Parse("portable-copilot", model.AuthorAI, bytes.NewReader(data))
 	})

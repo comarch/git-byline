@@ -597,6 +597,21 @@ func TestOpenCodeCheckpointFlow(t *testing.T) {
 	}
 }
 
+func TestOpenCodeApplyPatchCheckpointFlow(t *testing.T) {
+	t.Parallel()
+	root := appRepo(t)
+	appWrite(t, root, "file.txt", "base\n")
+	appCommit(t, root, "base")
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	patchText := `*** Begin Patch\n*** Update File: file.txt\n@@\n base\n+ai\n*** End Patch`
+	prePayload := `{"target":"opencode","event":"pre-tool-use","tool":"apply_patch","args":{"patchText":"` + patchText + `"},"sessionID":"session-1","callID":"patch-1"}`
+	postPayload := `{"target":"opencode","event":"post-tool-use","tool":"apply_patch","args":{"patchText":"` + patchText + `"},"sessionID":"session-1","callID":"patch-1"}`
+	stdout := runCheckpointBlameFlow(t, root, now, "portable-opencode", prePayload, postPayload)
+	if !strings.Contains(stdout, "ai:opencode/unknown") {
+		t.Fatalf("blame %q does not contain unknown OpenCode patch attribution", stdout)
+	}
+}
+
 func TestOpenCodeShellCheckpointFlow(t *testing.T) {
 	t.Parallel()
 	root := appRepo(t)
