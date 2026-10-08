@@ -172,8 +172,10 @@ type openCodeReplacement struct {
 // openCodeReplacements turns the generated plugin into the plugin git-byline
 // ships. The hooks must wait for their checkpoint: a hook that returns early
 // lets OpenCode run the tool before the pre-edit snapshot is taken, which
-// records the edit as human work. The plugin factory is a plain function
-// returning a promise because it has nothing to await.
+// records the edit as human work. Each hook starts its rules in order and
+// awaits them together after the loop, because an await inside the loop is a
+// SonarCloud finding. The plugin factory is a plain function returning a
+// promise because it has nothing to await.
 var openCodeReplacements = []openCodeReplacement{
 	{
 		name:   "path-only arguments",
@@ -200,10 +202,28 @@ var openCodeReplacements = []openCodeReplacement{
 		count:  1,
 	},
 	{
-		name:   "hook awaits",
-		before: "void runRule(",
-		after:  "await runRule(",
+		name:   "hook run lists",
+		before: "      for (const entry of compiled) {\n        if (entry.rule.event",
+		after:  "      const running: Promise<void>[] = [];\n      for (const entry of compiled) {\n        if (entry.rule.event",
 		count:  2,
+	},
+	{
+		name:   "hook starts",
+		before: "void runRule(",
+		after:  "running.push(runRule(",
+		count:  2,
+	},
+	{
+		name:   "before hook wait",
+		before: "input, output.args))\n        );\n      }\n",
+		after:  "input, output.args))\n        ));\n      }\n      await Promise.all(running);\n",
+		count:  1,
+	},
+	{
+		name:   "after hook wait",
+		before: "input, input.args, result))\n        );\n      }\n",
+		after:  "input, input.args, result))\n        ));\n      }\n      await Promise.all(running);\n",
+		count:  1,
 	},
 	{
 		name:   "plugin factory",

@@ -217,7 +217,8 @@ func TestPatchOpenCodeArtifacts(t *testing.T) {
 		"MAX_PATH_ARGUMENT_BYTES = 2048",
 		"PATCH_PATH_PATTERN",
 		"args: {}",
-		"await runRule(",
+		"running.push(runRule(",
+		"await Promise.all(running);",
 		"export const PromptScriptHooks = (context: OpenCodePluginContext) => {",
 		"return Promise.resolve({",
 	} {
@@ -227,6 +228,7 @@ func TestPatchOpenCodeArtifacts(t *testing.T) {
 	}
 	for _, unwanted := range []string{
 		"void runRule(",
+		"await runRule(",
 		"PromptScriptHooks = async",
 		"args: '[truncated]' }",
 	} {
@@ -261,15 +263,19 @@ func TestPatchOpenCodePluginRejectsUnexpectedOutput(t *testing.T) {
 func TestPatchOpenCodePluginNamesTheBrokenEdit(t *testing.T) {
 	oneHook := strings.Replace(testOpenCodePlugin, "void runRule(", "runRule(", 1)
 	_, err := patchOpenCodePlugin([]byte(oneHook))
-	requireErrorContaining(t, err, "hook awaits")
+	requireErrorContaining(t, err, "hook starts")
 
 	patched, err := patchOpenCodePlugin([]byte(testOpenCodePlugin))
 	if err != nil {
 		t.Fatal(err)
 	}
-	oneAwait := strings.Replace(string(patched), "await runRule(", "runRule(", 1)
-	_, err = patchOpenCodePlugin([]byte(oneAwait))
-	requireErrorContaining(t, err, "hook awaits")
+	oneStart := strings.Replace(string(patched), "running.push(runRule(", "runRule(", 1)
+	_, err = patchOpenCodePlugin([]byte(oneStart))
+	requireErrorContaining(t, err, "hook starts")
+
+	oneWait := strings.Replace(string(patched), "await Promise.all(running);\n", "", 1)
+	_, err = patchOpenCodePlugin([]byte(oneWait))
+	requireErrorContaining(t, err, "before hook wait")
 }
 
 func TestPatchOpenCodeArtifactsFailures(t *testing.T) {
@@ -404,6 +410,8 @@ export const PromptScriptHooks = async (context: OpenCodePluginContext) => {
   return {
     'tool.execute.before': async (input: OpenCodeToolInput, output: OpenCodeToolOutput) => {
       for (const entry of compiled) {
+        if (entry.rule.event !== 'tool.execute.before') continue;
+        if (entry.matcher !== null && !entry.matcher.test(String(input.tool))) continue;
         void runRule(
           entry.rule,
           projectRoot,
@@ -413,6 +421,13 @@ export const PromptScriptHooks = async (context: OpenCodePluginContext) => {
     },
     'tool.execute.after': async (input: OpenCodeToolInput, output: OpenCodeToolResult) => {
       for (const entry of compiled) {
+        if (entry.rule.event !== 'tool.execute.after') continue;
+        if (entry.matcher !== null && !entry.matcher.test(String(input.tool))) continue;
+        const result = {
+          title: output.title,
+          output: output.output,
+          metadata: output.metadata
+        };
         void runRule(
           entry.rule,
           projectRoot,

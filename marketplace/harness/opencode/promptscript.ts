@@ -240,17 +240,20 @@ export const PromptScriptHooks = (context: OpenCodePluginContext) => {
 
   return Promise.resolve({
     'tool.execute.before': async (input: OpenCodeToolInput, output: OpenCodeToolOutput) => {
+      const running: Promise<void>[] = [];
       for (const entry of compiled) {
         if (entry.rule.event !== 'tool.execute.before') continue;
         if (entry.matcher !== null && !entry.matcher.test(String(input.tool))) continue;
-        await runRule(
+        running.push(runRule(
           entry.rule,
           projectRoot,
           boundedPayload(buildPayload(entry.rule, input, output.args))
-        );
+        ));
       }
+      await Promise.all(running);
     },
     'tool.execute.after': async (input: OpenCodeToolInput, output: OpenCodeToolResult) => {
+      const running: Promise<void>[] = [];
       for (const entry of compiled) {
         if (entry.rule.event !== 'tool.execute.after') continue;
         if (entry.matcher !== null && !entry.matcher.test(String(input.tool))) continue;
@@ -259,12 +262,13 @@ export const PromptScriptHooks = (context: OpenCodePluginContext) => {
           output: output.output,
           metadata: output.metadata
         };
-        await runRule(
+        running.push(runRule(
           entry.rule,
           projectRoot,
           boundedPayload(buildPayload(entry.rule, input, input.args, result))
-        );
+        ));
       }
+      await Promise.all(running);
     }
   });
 };
