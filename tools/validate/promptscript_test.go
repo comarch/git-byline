@@ -183,6 +183,34 @@ func TestCheckDriftMissingGeneratedFile(t *testing.T) {
 	}
 }
 
+// TestCommittedOpenCodePluginIsPatchOutput pins that the plugin and its
+// harness template are what the patch produces. CI compiles, patches, and
+// then runs git diff, and the patch rejects a file that still holds code it
+// replaces, so a leftover in either committed file fails here first.
+func TestCommittedOpenCodePluginIsPatchOutput(t *testing.T) {
+	t.Parallel()
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+	for _, rel := range []string{openCodePluginRel, openCodeTemplateRel} {
+		plugin, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Windows checkouts may convert line endings.
+		text := strings.ReplaceAll(string(plugin), "\r\n", "\n")
+		again, err := patchOpenCodePlugin([]byte(text))
+		if err != nil {
+			t.Errorf("patch %s: %v", rel, err)
+			continue
+		}
+		if string(again) != text {
+			t.Errorf("%s is not patch output, run go run ./tools/validate -patch-opencode after compiling", rel)
+		}
+	}
+}
+
 // TestOpenCodeAgentsMatchTheirPromptScriptSource pins what the read-only
 // permission block assumes. PromptScript drops the tools list of an agent
 // when it writes an OpenCode subagent, so the patch grants Read, Grep, and

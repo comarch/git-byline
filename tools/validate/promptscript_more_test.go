@@ -318,17 +318,56 @@ func TestPatchOpenCodeAgent(t *testing.T) {
 		}
 	})
 
-	rejected := map[string]string{
-		"no frontmatter end":  "changed PromptScript output\n",
-		"permission by hand":  "---\ndescription: x\nmode: subagent\npermission:\n  edit: allow\n---\n",
-		"two frontmatter end": testOpenCodeAgent + testOpenCodeAgent,
+	// A permission text below the frontmatter is free text, not a mapping key.
+	t.Run("permission text in the body is fine", func(t *testing.T) {
+		t.Parallel()
+		const body = "permission: shown as an example\n"
+		got, err := patchOpenCodeAgent([]byte(testOpenCodeAgent + body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != testPatchedOpenCodeAgent+body {
+			t.Fatalf("patched agent = %q, want %q", got, testPatchedOpenCodeAgent+body)
+		}
+		again, err := patchOpenCodeAgent(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, again) {
+			t.Fatal("patching an OpenCode agent with permission text in its body twice changed its output")
+		}
+	})
+
+	// OpenCode rejects a frontmatter that repeats the permission key, which
+	// leaves an agent that does not load.
+	const secondPermission = "permission:\n  bash: allow\n"
+	rejected := []struct {
+		name  string
+		agent string
+		want  string
+	}{
+		{"no frontmatter end", "changed PromptScript output\n", "0 matches for the frontmatter end"},
+		{"permission by hand", "---\ndescription: x\nmode: subagent\npermission:\n  edit: allow\n---\n", "0 matches for the frontmatter end"},
+		{"two frontmatter end", testOpenCodeAgent + testOpenCodeAgent, "2 matches for the frontmatter end"},
+		{
+			"permission before the mode",
+			"---\ndescription: x\n" + secondPermission + "mode: subagent\n---\n",
+			"permission mapping besides the read-only block",
+		},
+		{
+			"second permission before a patched block",
+			strings.Replace(testPatchedOpenCodeAgent, "mode: subagent\n", secondPermission+"mode: subagent\n", 1),
+			"permission mapping besides the read-only block",
+		},
 	}
-	for name, agent := range rejected {
-		t.Run(name, func(t *testing.T) {
+	for _, tt := range rejected {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := patchOpenCodeAgent([]byte(agent)); err == nil {
-				t.Fatal("patchOpenCodeAgent() accepted an unexpected agent")
+			got, err := patchOpenCodeAgent([]byte(tt.agent))
+			if err == nil {
+				t.Fatalf("patchOpenCodeAgent() accepted an unexpected agent: %q", got)
 			}
+			requireErrorContaining(t, err, tt.want)
 		})
 	}
 }
@@ -377,6 +416,43 @@ func TestPatchOpenCodePluginRejectsUnexpectedOutput(t *testing.T) {
 	if _, err := patchOpenCodePlugin([]byte(openCodePatchMarker + "\nMAX_PATH_ARGUMENT_BYTES = 2048")); err == nil {
 		t.Fatal("patchOpenCodePlugin() accepted an incomplete patch")
 	}
+}
+
+// TestPatchOpenCodePluginRejectsUnpatchedLeftovers pins that a plugin which
+// carries the patch marker is still checked edit by edit. A regenerated or
+// hand-edited plugin can hold every patched fragment and also some code the
+// patch replaces, and it must not pass as patched.
+func TestPatchOpenCodePluginRejectsUnpatchedLeftovers(t *testing.T) {
+	t.Parallel()
+	patched, err := patchOpenCodePlugin([]byte(testOpenCodePlugin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := patchOpenCodePlugin(patched); err != nil {
+		t.Fatalf("patchOpenCodePlugin(patched) = %v, want nil", err)
+	}
+	for _, edit := range openCodeReplacements {
+		t.Run(edit.name, func(t *testing.T) {
+			t.Parallel()
+			leftover := string(patched) + "\n" + edit.before
+			_, err := patchOpenCodePlugin([]byte(leftover))
+			requireErrorContaining(t, err, "still has unpatched "+edit.name+" code")
+		})
+	}
+	t.Run("one hook start is not patched", func(t *testing.T) {
+		t.Parallel()
+		// Both patched starts stay in place, so the missing-patch count still
+		// passes and only the leftover check sees the third start.
+		leftover := string(patched) + "\nvoid runRule(\n"
+		_, err := patchOpenCodePlugin([]byte(leftover))
+		requireErrorContaining(t, err, "still has unpatched hook starts code")
+	})
+	t.Run("plugin factory is still async", func(t *testing.T) {
+		t.Parallel()
+		const factory = "export const PromptScriptHooks = async (context: OpenCodePluginContext) => {"
+		_, err := patchOpenCodePlugin([]byte(string(patched) + "\n" + factory + "\n"))
+		requireErrorContaining(t, err, "still has unpatched plugin factory code")
+	})
 }
 
 // TestPatchOpenCodePluginNamesTheBrokenEdit pins that a generated plugin the

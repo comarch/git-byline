@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -86,6 +87,12 @@ const (
 		"  glob: allow\n" +
 		"---\n"
 )
+
+// openCodeAgentPermissionKey matches a top-level permission key. OpenCode
+// parses the frontmatter as YAML, which rejects a repeated mapping key, so a
+// second permission mapping next to the patch block leaves an agent that does
+// not load.
+var openCodeAgentPermissionKey = regexp.MustCompile(`(?m)^permission:`)
 
 // openCodePathArguments keeps the file paths of oversized tool arguments.
 // OpenCode apply_patch carries its whole patch in patchText, so the paths
@@ -444,7 +451,9 @@ func patchOpenCodeAgents(root string) error {
 // subagent and pins the generation time of its stamp. An agent that already
 // carries the block keeps it, so patching twice is safe. Any other frontmatter
 // shape fails instead of guessing, which points a PromptScript upgrade at this
-// patch. A missing stamp is fine: only the timestamp is pinned.
+// patch. That includes a permission mapping of its own, whether PromptScript
+// writes one in a later version or someone adds one by hand. A missing stamp
+// is fine: only the timestamp is pinned.
 func patchOpenCodeAgent(data []byte) ([]byte, error) {
 	text := string(data)
 	if !strings.Contains(text, openCodeAgentReadOnly) {
@@ -452,6 +461,11 @@ func patchOpenCodeAgent(data []byte) ([]byte, error) {
 			return nil, fmt.Errorf("generated OpenCode agent has %d matches for the frontmatter end, want 1", got)
 		}
 		text = strings.Replace(text, openCodeAgentFrontmatterEnd, openCodeAgentReadOnly, 1)
+	}
+	// The block closes the frontmatter, so the text before it is the rest of
+	// the frontmatter. The body below the block is free text.
+	if openCodeAgentPermissionKey.MatchString(text[:strings.Index(text, openCodeAgentReadOnly)]) {
+		return nil, errors.New("generated OpenCode agent has a permission mapping besides the read-only block")
 	}
 	return openCodeAgentStamp.ReplaceAll(
 		[]byte(text),
@@ -476,15 +490,28 @@ func patchOpenCodeFile(path string) ([]byte, error) {
 	return patched, nil
 }
 
+// hasUnpatchedCode reports whether the code that an edit replaces is still in
+// text outside the edit's result. The result of "hook run lists" contains the
+// code it replaces, so every result is masked before the search. Without the
+// mask, a correctly patched plugin would count as unpatched.
+func hasUnpatchedCode(text string, edit openCodeReplacement) bool {
+	return strings.Contains(strings.ReplaceAll(text, edit.after, "\x00"), edit.before)
+}
+
 // patchOpenCodePlugin applies openCodeReplacements to freshly generated
 // plugin code. A plugin that already carries the patch is verified and
-// returned unchanged, so patching twice is safe.
+// returned unchanged, so patching twice is safe. Verifying means every edit
+// is present and none of the replaced code is left, which rejects a plugin
+// that was regenerated or edited only in part.
 func patchOpenCodePlugin(data []byte) ([]byte, error) {
 	text := string(data)
 	if strings.Contains(text, openCodePatchMarker) {
 		for _, edit := range openCodeReplacements {
 			if strings.Count(text, edit.after) < edit.count {
 				return nil, fmt.Errorf("patched OpenCode plugin is missing the %s patch", edit.name)
+			}
+			if hasUnpatchedCode(text, edit) {
+				return nil, fmt.Errorf("patched OpenCode plugin still has unpatched %s code", edit.name)
 			}
 		}
 		return data, nil
