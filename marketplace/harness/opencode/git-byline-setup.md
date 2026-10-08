@@ -61,31 +61,35 @@ Install `marketplace/harness/opencode/promptscript.ts` from the git-byline
 release tag below into `.opencode/plugins/promptscript.ts` of the user's
 project. OpenCode loads everything in that directory as code. The commands
 therefore download the plugin to a temporary file, compare its SHA-256 with
-the value below, and move it into place only when the two match. Do not change
+the value below, and move it into place only when the two match. Each command
+stops at its first failed step and deletes the temporary file. Do not change
 the tag or the SHA-256. On a mismatch, stop and report both values.
 
 Linux, macOS, or WSL:
 
 ```sh
-tag=v1.6.0 # x-release-please-version
-sha256=6e2c94e589439ad4d927a356820d4b68279ecce2c079d87aa04aa27c2ca54ef6
-plugin="$(mktemp)"
-curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 -o "$plugin" \
-  "https://raw.githubusercontent.com/comarch/git-byline/$tag/marketplace/harness/opencode/promptscript.ts"
-if command -v sha256sum >/dev/null 2>&1; then
-  actual="$(sha256sum "$plugin" | awk '{ print $1 }')"
-else
-  actual="$(shasum -a 256 "$plugin" | awk '{ print $1 }')"
-fi
-if [ "$actual" = "$sha256" ]; then
+(
+  set -eu
+  tag=v1.6.0 # x-release-please-version
+  sha256=6e2c94e589439ad4d927a356820d4b68279ecce2c079d87aa04aa27c2ca54ef6
+  plugin="$(mktemp)"
+  trap 'rm -f "$plugin"' EXIT
+  curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 -o "$plugin" \
+    "https://raw.githubusercontent.com/comarch/git-byline/$tag/marketplace/harness/opencode/promptscript.ts"
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest_line="$(sha256sum "$plugin")"
+  else
+    digest_line="$(shasum -a 256 "$plugin")"
+  fi
+  actual="${digest_line%% *}"
+  if [ "$actual" != "$sha256" ]; then
+    echo "plugin checksum mismatch: want $sha256, got $actual" >&2
+    exit 1
+  fi
   mkdir -p .opencode/plugins
   chmod 644 "$plugin"
   mv "$plugin" .opencode/plugins/promptscript.ts
-else
-  rm -f "$plugin"
-  echo "plugin checksum mismatch: want $sha256, got $actual" >&2
-  false
-fi
+)
 ```
 
 Native Windows PowerShell, where `curl` is an alias for `Invoke-WebRequest`
@@ -96,16 +100,21 @@ $tag = "v1.6.0" # x-release-please-version
 $sha256 = "6e2c94e589439ad4d927a356820d4b68279ecce2c079d87aa04aa27c2ca54ef6"
 $plugin = Join-Path ([IO.Path]::GetTempPath()) ("git-byline-" + [guid]::NewGuid() + ".ts")
 try {
-    irm "https://raw.githubusercontent.com/comarch/git-byline/$tag/marketplace/harness/opencode/promptscript.ts" -OutFile $plugin
-    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $plugin).Hash
+    irm "https://raw.githubusercontent.com/comarch/git-byline/$tag/marketplace/harness/opencode/promptscript.ts" -OutFile $plugin -ErrorAction Stop
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $plugin -ErrorAction Stop).Hash
     if ($actual -ne $sha256) {
         throw "plugin checksum mismatch: want $sha256, got $actual"
     }
-    New-Item -ItemType Directory -Force -Path .opencode/plugins | Out-Null
-    Move-Item -Force -LiteralPath $plugin .opencode/plugins/promptscript.ts
+    New-Item -ItemType Directory -Force -Path .opencode/plugins -ErrorAction Stop | Out-Null
+    Move-Item -Force -LiteralPath $plugin .opencode/plugins/promptscript.ts -ErrorAction Stop
+}
+catch {
+    # Rethrow, so powershell -File exits non-zero when the download fails.
+    throw
 }
 finally {
-    Remove-Item $plugin -Force -ErrorAction SilentlyContinue
+    # After a good move a failed Remove-Item would make the block exit non-zero.
+    if (Test-Path -LiteralPath $plugin) { Remove-Item -LiteralPath $plugin -Force -ErrorAction SilentlyContinue }
 }
 ```
 
