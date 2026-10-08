@@ -5,8 +5,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
+)
+
+// agentToolsPattern captures every agent of agents.prs with its tools list.
+var agentToolsPattern = regexp.MustCompile(
+	`(?m)^  ([a-z-]+): \{\r?\n    description: [^\r\n]*\r?\n    tools: (\[[^\]\r\n]*\])\r?$`,
 )
 
 func TestParseSemver(t *testing.T) {
@@ -173,5 +180,58 @@ func TestCheckDriftMissingGeneratedFile(t *testing.T) {
 	err = checkDrift(bin, dir)
 	if err == nil {
 		t.Fatal("checkDrift(empty dir) = nil, want error")
+	}
+}
+
+// TestOpenCodeAgentsMatchTheirPromptScriptSource pins what the read-only
+// permission block assumes. PromptScript drops the tools list of an agent
+// when it writes an OpenCode subagent, so the patch grants Read, Grep, and
+// Glob to every subagent. A source agent with other tools, or a subagent the
+// patch does not know, would silently get the wrong permissions.
+func TestOpenCodeAgentsMatchTheirPromptScriptSource(t *testing.T) {
+	t.Parallel()
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("repoRoot: %v", err)
+	}
+	source, err := os.ReadFile(filepath.Join(root, ".promptscript", "agents.prs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sourceNames []string
+	for _, agent := range agentToolsPattern.FindAllStringSubmatch(string(source), -1) {
+		sourceNames = append(sourceNames, agent[1])
+		if want := `["Read", "Grep", "Glob"]`; agent[2] != want {
+			t.Errorf("agent %s lists tools %s, but the OpenCode permission block grants %s", agent[1], agent[2], want)
+		}
+	}
+	patched := slices.Clone(openCodeAgentNames)
+	slices.Sort(sourceNames)
+	slices.Sort(patched)
+	if !slices.Equal(sourceNames, patched) {
+		t.Fatalf("agents.prs defines %v, but the OpenCode patch covers %v", sourceNames, patched)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(root, openCodeDir, "agents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var committed []string
+	for _, entry := range entries {
+		committed = append(committed, strings.TrimSuffix(entry.Name(), ".md"))
+	}
+	slices.Sort(committed)
+	if !slices.Equal(committed, patched) {
+		t.Fatalf("%s holds %v, want %v", filepath.Join(openCodeDir, "agents"), committed, patched)
+	}
+	for _, name := range patched {
+		agent, err := os.ReadFile(filepath.Join(root, openCodeAgentRel(name)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Windows checkouts may convert line endings.
+		if !strings.Contains(strings.ReplaceAll(string(agent), "\r\n", "\n"), openCodeAgentReadOnly) {
+			t.Errorf("%s lacks the read-only permission block", openCodeAgentRel(name))
+		}
 	}
 }

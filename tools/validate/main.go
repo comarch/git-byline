@@ -14,9 +14,9 @@
 // as a spawned binary without re-entering the pipeline.
 //
 // The -patch-opencode flag swaps the pipeline for one step that applies
-// the repository patch to the freshly generated OpenCode plugin and syncs
-// its copyable harness template. It is the last step after compiling
-// PromptScript sources.
+// the repository patch to the freshly generated OpenCode plugin and
+// subagents, and syncs the plugin's copyable harness template. It is the
+// last step after compiling PromptScript sources.
 package main
 
 import (
@@ -39,7 +39,7 @@ type stage struct {
 
 func main() {
 	stageSpec := flag.String("stages", "", "comma-separated subset of stages to run (default: all)")
-	patchOpenCode := flag.Bool("patch-opencode", false, "patch and sync the generated OpenCode plugin instead of validating")
+	patchOpenCode := flag.Bool("patch-opencode", false, "patch the generated OpenCode plugin and agents instead of validating")
 	flag.Parse()
 	root, err := repoRoot()
 	if err != nil {
@@ -87,7 +87,7 @@ func selectStages(stages []stage, spec string) ([]stage, error) {
 }
 
 // activeStages returns the stages one invocation runs: only the OpenCode
-// plugin patch when patchOpenCode is set, the validation pipeline otherwise.
+// patch when patchOpenCode is set, the validation pipeline otherwise.
 // Running the patch as a stage reuses the pipeline reporting and exit codes.
 func activeStages(patchOpenCode bool) []stage {
 	if patchOpenCode {

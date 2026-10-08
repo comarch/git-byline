@@ -196,10 +196,12 @@ func TestPatchOpenCodeArtifacts(t *testing.T) {
 	templatePath := filepath.Join(root, openCodeTemplateRel)
 	writePromptScriptFile(t, root, openCodePluginRel, testOpenCodePlugin)
 	writePromptScriptFile(t, root, openCodeTemplateRel, "stale\n")
+	writeOpenCodeAgents(t, root, testOpenCodeAgent)
 
 	if err := patchOpenCodeArtifacts(root); err != nil {
 		t.Fatal(err)
 	}
+	requireOpenCodeAgentsReadOnly(t, root)
 	patched, err := os.ReadFile(pluginPath)
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +247,76 @@ func TestPatchOpenCodeArtifacts(t *testing.T) {
 	}
 	if !bytes.Equal(patched, patchedAgain) {
 		t.Fatal("patching OpenCode plugin twice changed its output")
+	}
+	requireOpenCodeAgentsReadOnly(t, root)
+}
+
+func TestPatchOpenCodeAgent(t *testing.T) {
+	t.Parallel()
+	patched, err := patchOpenCodeAgent([]byte(testOpenCodeAgent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(patched) != testPatchedOpenCodeAgent {
+		t.Fatalf("patched agent = %q, want %q", patched, testPatchedOpenCodeAgent)
+	}
+	patchedAgain, err := patchOpenCodeAgent(patched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(patched, patchedAgain) {
+		t.Fatal("patching an OpenCode agent twice changed its output")
+	}
+
+	rejected := map[string]string{
+		"no frontmatter end":  "changed PromptScript output\n",
+		"permission by hand":  "---\ndescription: x\nmode: subagent\npermission:\n  edit: allow\n---\n",
+		"two frontmatter end": testOpenCodeAgent + testOpenCodeAgent,
+	}
+	for name, agent := range rejected {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := patchOpenCodeAgent([]byte(agent)); err == nil {
+				t.Fatal("patchOpenCodeAgent() accepted an unexpected agent")
+			}
+		})
+	}
+}
+
+// TestOpenCodeAgentPermissionOrder pins the order OpenCode needs. It applies
+// the last matching rule, so the allowlist must start with the catch-all deny
+// and the .env prompts must follow the read allow. Verified against OpenCode
+// 1.18.33: without the .env rules a reviewer reads .env files with no prompt.
+func TestOpenCodeAgentPermissionOrder(t *testing.T) {
+	t.Parallel()
+	block := openCodeAgentReadOnly
+	positions := make(map[string]int)
+	for _, rule := range []string{
+		`"*": deny`,
+		"read:",
+		`"*": allow`,
+		`"*.env": ask`,
+		`"*.env.*": ask`,
+		`"*.env.example": allow`,
+		"grep: allow",
+		"glob: allow",
+	} {
+		at := strings.Index(block, rule)
+		if at < 0 {
+			t.Fatalf("permission block lacks %q", rule)
+		}
+		positions[rule] = at
+	}
+	ordered := []string{`"*": deny`, "read:", `"*": allow`, `"*.env": ask`, `"*.env.*": ask`, `"*.env.example": allow`}
+	for i := 1; i < len(ordered); i++ {
+		if positions[ordered[i-1]] >= positions[ordered[i]] {
+			t.Errorf("rule %s must come before %s", ordered[i-1], ordered[i])
+		}
+	}
+	for _, tool := range []string{"edit", "write", "bash", "apply_patch", "task", "webfetch"} {
+		if strings.Contains(block, tool) {
+			t.Errorf("permission block mentions %q, but only the read tools are allowed", tool)
+		}
 	}
 }
 
@@ -313,6 +385,66 @@ func TestPatchOpenCodeArtifactsFailures(t *testing.T) {
 		err := patchOpenCodeArtifacts(root)
 		requireErrorContaining(t, err, "write generated OpenCode plugin")
 	})
+
+	t.Run("agent is missing", func(t *testing.T) {
+		root := openCodePluginFixture(t)
+		err := patchOpenCodeArtifacts(root)
+		requireErrorContaining(t, err, "read generated OpenCode agent code-reviewer")
+	})
+
+	t.Run("agent is not PromptScript output", func(t *testing.T) {
+		root := openCodePluginFixture(t)
+		writeOpenCodeAgents(t, root, "changed PromptScript output\n")
+		err := patchOpenCodeArtifacts(root)
+		requireErrorContaining(t, err, "patch generated OpenCode agent code-reviewer")
+	})
+
+	t.Run("agent cannot be rewritten", func(t *testing.T) {
+		if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+			t.Skip("root ignores file permissions")
+		}
+		root := openCodePluginFixture(t)
+		writeOpenCodeAgents(t, root, testOpenCodeAgent)
+		path := filepath.Join(root, openCodeAgentRel("code-reviewer"))
+		if err := os.Chmod(path, 0o444); err != nil {
+			t.Fatalf("make agent read-only: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+		err := patchOpenCodeArtifacts(root)
+		requireErrorContaining(t, err, "write generated OpenCode agent code-reviewer")
+	})
+}
+
+// openCodePluginFixture holds a generated plugin and its harness template,
+// so a patch run reaches the subagents.
+func openCodePluginFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writePromptScriptFile(t, root, openCodePluginRel, testOpenCodePlugin)
+	writePromptScriptFile(t, root, openCodeTemplateRel, "stale\n")
+	return root
+}
+
+func writeOpenCodeAgents(t *testing.T, root, content string) {
+	t.Helper()
+	for _, name := range openCodeAgentNames {
+		writePromptScriptFile(t, root, openCodeAgentRel(name), content)
+	}
+}
+
+// requireOpenCodeAgentsReadOnly pins the exact patched subagent, so a second
+// patch run that stacked another permission block would fail too.
+func requireOpenCodeAgentsReadOnly(t *testing.T, root string) {
+	t.Helper()
+	for _, name := range openCodeAgentNames {
+		agent, err := os.ReadFile(filepath.Join(root, openCodeAgentRel(name)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(agent) != testPatchedOpenCodeAgent {
+			t.Errorf("OpenCode agent %s = %q, want %q", name, agent, testPatchedOpenCodeAgent)
+		}
+	}
 }
 
 func requireErrorContaining(t *testing.T, err error, want string) {
@@ -327,13 +459,20 @@ func requireErrorContaining(t *testing.T, err error, want string) {
 
 // writeDriftOutputs commits generated output for every PromptScript file. The
 // fake PromptScript writes the text "generated" for all of them, except the
-// OpenCode plugin, which holds the given content.
-func writeDriftOutputs(t *testing.T, root, plugin string) {
+// OpenCode plugin and subagents, which hold the given content.
+func writeDriftOutputs(t *testing.T, root, plugin, agent string) {
 	t.Helper()
+	agents := map[string]bool{}
+	for _, name := range openCodeAgentNames {
+		agents[openCodeAgentRel(name)] = true
+	}
 	for _, rel := range promptScriptOutputs {
 		content := "generated"
-		if rel == openCodePluginRel {
+		switch {
+		case rel == openCodePluginRel:
 			content = plugin
+		case agents[rel]:
+			content = agent
 		}
 		writePromptScriptFile(t, root, rel, content)
 	}
@@ -347,7 +486,7 @@ func TestCheckDriftComparesThePatchedOpenCodePlugin(t *testing.T) {
 	t.Run("patched plugin is in sync", func(t *testing.T) {
 		root := promptScriptFixture(t)
 		usePromptScript(t, "all-outputs")
-		writeDriftOutputs(t, root, string(patched))
+		writeDriftOutputs(t, root, string(patched), testPatchedOpenCodeAgent)
 		if err := checkDrift("promptscript", root); err != nil {
 			t.Fatalf("checkDrift() = %v, want nil", err)
 		}
@@ -355,14 +494,14 @@ func TestCheckDriftComparesThePatchedOpenCodePlugin(t *testing.T) {
 	t.Run("unpatched plugin is out of sync", func(t *testing.T) {
 		root := promptScriptFixture(t)
 		usePromptScript(t, "all-outputs")
-		writeDriftOutputs(t, root, testOpenCodePlugin)
+		writeDriftOutputs(t, root, testOpenCodePlugin, testPatchedOpenCodeAgent)
 		err := checkDrift("promptscript", root)
 		requireErrorContaining(t, err, openCodePluginRel+" is out of sync")
 	})
 	t.Run("generated plugin does not fit the patch", func(t *testing.T) {
 		root := promptScriptFixture(t)
 		usePromptScript(t, "plugin-unexpected")
-		writeDriftOutputs(t, root, string(patched))
+		writeDriftOutputs(t, root, string(patched), testPatchedOpenCodeAgent)
 		err := checkDrift("promptscript", root)
 		requireErrorContaining(t, err, "patch generated OpenCode plugin")
 	})
@@ -373,6 +512,58 @@ func TestCheckDriftComparesThePatchedOpenCodePlugin(t *testing.T) {
 		requireErrorContaining(t, err, "read committed")
 	})
 }
+
+func TestCheckDriftComparesThePatchedOpenCodeAgents(t *testing.T) {
+	patched, err := patchOpenCodePlugin([]byte(testOpenCodePlugin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("unpatched agent is out of sync", func(t *testing.T) {
+		root := promptScriptFixture(t)
+		usePromptScript(t, "all-outputs")
+		writeDriftOutputs(t, root, string(patched), testOpenCodeAgent)
+		err := checkDrift("promptscript", root)
+		requireErrorContaining(t, err, openCodeAgentRel("code-reviewer")+" is out of sync")
+	})
+	t.Run("generated agent does not fit the patch", func(t *testing.T) {
+		root := promptScriptFixture(t)
+		usePromptScript(t, "agent-unexpected")
+		writeDriftOutputs(t, root, string(patched), testPatchedOpenCodeAgent)
+		err := checkDrift("promptscript", root)
+		requireErrorContaining(t, err, "patch generated OpenCode agent code-reviewer")
+	})
+}
+
+// testOpenCodeAgent is the PromptScript 1.19.1 OpenCode subagent layout: a
+// stamp comment, a description, and the mode.
+const testOpenCodeAgent = `---
+# promptscript-generated: 2026-10-07T14:51:15.613Z | source: .promptscript/project.prs | target: opencode
+description: Review a diff for correctness
+mode: subagent
+---
+
+Review only requested changes. Do not modify files.
+`
+
+// testPatchedOpenCodeAgent is testOpenCodeAgent after the patch, written out
+// so the tests do not depend on the code that produces it.
+const testPatchedOpenCodeAgent = `---
+# promptscript-generated: 2026-10-07T14:51:15.613Z | source: .promptscript/project.prs | target: opencode
+description: Review a diff for correctness
+mode: subagent
+permission:
+  "*": deny
+  read:
+    "*": allow
+    "*.env": ask
+    "*.env.*": ask
+    "*.env.example": allow
+  grep: allow
+  glob: allow
+---
+
+Review only requested changes. Do not modify files.
+`
 
 // testOpenCodePlugin keeps the regions of the PromptScript 1.19.1 OpenCode
 // plugin that the patch rewrites, verbatim, and drops the rest.
@@ -502,11 +693,13 @@ func usePromptScript(t *testing.T, mode string) {
 		"  if [ \"$2\" = \"--all\" ] && [ \"$mode\" = \"target-error\" ]; then exit 1; fi\n" +
 		"  if [ \"$mode\" = \"walk-error\" ]; then mkdir blocked; chmod 000 blocked; exit 0; fi\n" +
 		"  if [ \"$mode\" = \"extra-output\" ]; then printf '%s' extra > extra.txt; exit 0; fi\n" +
-		"  case \"$mode\" in all-outputs|plugin-unexpected)\n" +
+		"  case \"$mode\" in all-outputs|plugin-unexpected|agent-unexpected)\n" +
 		"    for rel in $PROMPTSCRIPT_TEST_OUTPUTS; do\n" +
 		"      mkdir -p \"$(dirname \"$rel\")\"\n" +
-		"      if [ \"$rel\" = \"$PROMPTSCRIPT_TEST_PLUGIN_REL\" ] && [ \"$mode\" = \"all-outputs\" ]; then\n" +
+		"      if [ \"$rel\" = \"$PROMPTSCRIPT_TEST_PLUGIN_REL\" ] && [ \"$mode\" != \"plugin-unexpected\" ]; then\n" +
 		"        cp \"$PROMPTSCRIPT_TEST_PLUGIN\" \"$rel\"\n" +
+		"      elif [ \"$(dirname \"$rel\")\" = \"$PROMPTSCRIPT_TEST_AGENT_DIR\" ] && [ \"$mode\" = \"all-outputs\" ]; then\n" +
+		"        cp \"$PROMPTSCRIPT_TEST_AGENT\" \"$rel\"\n" +
 		"      else\n" +
 		"        printf '%s' generated > \"$rel\"\n" +
 		"      fi\n" +
@@ -520,10 +713,16 @@ func usePromptScript(t *testing.T, mode string) {
 	if err := os.WriteFile(pluginSource, []byte(testOpenCodePlugin), 0o644); err != nil {
 		t.Fatalf("write generated plugin source: %v", err)
 	}
+	agentSource := filepath.Join(t.TempDir(), "agent.md")
+	if err := os.WriteFile(agentSource, []byte(testOpenCodeAgent), 0o644); err != nil {
+		t.Fatalf("write generated agent source: %v", err)
+	}
 	t.Setenv("PROMPTSCRIPT_TEST_MODE", mode)
 	t.Setenv("PROMPTSCRIPT_TEST_OUTPUTS", strings.Join(promptScriptOutputs, " "))
 	t.Setenv("PROMPTSCRIPT_TEST_PLUGIN", pluginSource)
 	t.Setenv("PROMPTSCRIPT_TEST_PLUGIN_REL", openCodePluginRel)
+	t.Setenv("PROMPTSCRIPT_TEST_AGENT", agentSource)
+	t.Setenv("PROMPTSCRIPT_TEST_AGENT_DIR", filepath.Dir(openCodeAgentRel(openCodeAgentNames[0])))
 }
 
 func writePromptScriptFile(t *testing.T, root, rel, content string) {

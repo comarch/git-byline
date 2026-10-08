@@ -2,6 +2,15 @@
 # promptscript-generated: 2026-10-07T14:51:15.613Z | source: .promptscript/project.prs | target: opencode
 description: Review a diff for correctness, privacy, and security risks
 mode: subagent
+permission:
+  "*": deny
+  read:
+    "*": allow
+    "*.env": ask
+    "*.env.*": ask
+    "*.env.example": allow
+  grep: allow
+  glob: allow
 ---
 
 Review only requested changes. Prioritize attribution correctness, state

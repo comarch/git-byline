@@ -47,6 +47,34 @@ var (
 
 const openCodePatchMarker = "// git-byline: preserve bounded file paths"
 
+// openCodeAgentNames lists the generated OpenCode subagents. Their
+// PromptScript sources grant only Read, Grep, and Glob.
+var openCodeAgentNames = []string{"code-reviewer", "release-keeper", "security-reviewer"}
+
+// PromptScript 1.19.1 writes only a description and a mode into an OpenCode
+// subagent. The tools list of the source never reaches OpenCode, which would
+// let a reviewer edit files and run shell commands. The patch adds a
+// permission block that allows the read tools of the source and denies the
+// rest.
+//
+// OpenCode applies the last matching rule, and an agent block lands after the
+// built-in defaults. A bare "read: allow" would therefore override the default
+// prompt before .env files, so the block repeats those rules after the allow.
+const (
+	openCodeAgentFrontmatterEnd = "mode: subagent\n---\n"
+	openCodeAgentReadOnly       = "mode: subagent\n" +
+		"permission:\n" +
+		"  \"*\": deny\n" +
+		"  read:\n" +
+		"    \"*\": allow\n" +
+		"    \"*.env\": ask\n" +
+		"    \"*.env.*\": ask\n" +
+		"    \"*.env.example\": allow\n" +
+		"  grep: allow\n" +
+		"  glob: allow\n" +
+		"---\n"
+)
+
 // openCodePathArguments keeps the file paths of oversized tool arguments.
 // OpenCode apply_patch carries its whole patch in patchText, so the paths
 // are read from the patch headers before the text is dropped.
@@ -285,9 +313,9 @@ var promptScriptOutputs = []string{
 	filepath.Join(".windsurf", "hooks.json"),
 	filepath.Join(".windsurf", "rules", "project.md"),
 	"OPENCODE.md",
-	filepath.Join(openCodeDir, "agents", "code-reviewer.md"),
-	filepath.Join(openCodeDir, "agents", "release-keeper.md"),
-	filepath.Join(openCodeDir, "agents", "security-reviewer.md"),
+	openCodeAgentRel("code-reviewer"),
+	openCodeAgentRel("release-keeper"),
+	openCodeAgentRel("security-reviewer"),
 	openCodePluginRel,
 }
 
@@ -361,8 +389,9 @@ func checkPortableHookOutputs(root string) error {
 	return nil
 }
 
-// patchOpenCodeArtifacts patches the generated OpenCode plugin in place and
-// refreshes the copyable harness template from it.
+// patchOpenCodeArtifacts patches the generated OpenCode plugin in place,
+// refreshes the copyable harness template from it, and restricts the
+// generated subagents to reading.
 func patchOpenCodeArtifacts(root string) error {
 	patched, err := patchOpenCodeFile(filepath.Join(root, openCodePluginRel))
 	if err != nil {
@@ -371,7 +400,47 @@ func patchOpenCodeArtifacts(root string) error {
 	if err := os.WriteFile(filepath.Join(root, openCodeTemplateRel), patched, 0o644); err != nil {
 		return fmt.Errorf("write OpenCode harness template: %w", err)
 	}
+	return patchOpenCodeAgents(root)
+}
+
+// openCodeAgentRel is the repository path of one generated OpenCode subagent.
+func openCodeAgentRel(name string) string {
+	return filepath.Join(openCodeDir, "agents", name+".md")
+}
+
+// patchOpenCodeAgents restricts every generated OpenCode subagent below root
+// to the read tools.
+func patchOpenCodeAgents(root string) error {
+	for _, name := range openCodeAgentNames {
+		path := filepath.Join(root, openCodeAgentRel(name))
+		agent, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read generated OpenCode agent %s: %w", name, err)
+		}
+		patched, err := patchOpenCodeAgent(agent)
+		if err != nil {
+			return fmt.Errorf("patch generated OpenCode agent %s: %w", name, err)
+		}
+		if err := os.WriteFile(path, patched, 0o644); err != nil {
+			return fmt.Errorf("write generated OpenCode agent %s: %w", name, err)
+		}
+	}
 	return nil
+}
+
+// patchOpenCodeAgent adds the read-only permission block to one generated
+// subagent. An agent that already carries the block is returned unchanged, so
+// patching twice is safe. Any other frontmatter shape fails instead of
+// guessing, which points a PromptScript upgrade at this patch.
+func patchOpenCodeAgent(data []byte) ([]byte, error) {
+	text := string(data)
+	if strings.Contains(text, openCodeAgentReadOnly) {
+		return data, nil
+	}
+	if got := strings.Count(text, openCodeAgentFrontmatterEnd); got != 1 {
+		return nil, fmt.Errorf("generated OpenCode agent has %d matches for the frontmatter end, want 1", got)
+	}
+	return []byte(strings.Replace(text, openCodeAgentFrontmatterEnd, openCodeAgentReadOnly, 1)), nil
 }
 
 // patchOpenCodeFile applies the repository patch to the generated plugin at
@@ -487,8 +556,12 @@ func checkDrift(bin, root string) error {
 			return fmt.Errorf("untracked PromptScript output %s; add it to promptScriptOutputs", rel)
 		}
 	}
-	// Committed files hold the patched plugin, so compare against the same.
+	// Committed files hold the patched plugin and agents, so compare against
+	// the same.
 	if _, err := patchOpenCodeFile(filepath.Join(tmp, openCodePluginRel)); err != nil {
+		return err
+	}
+	if err := patchOpenCodeAgents(tmp); err != nil {
 		return err
 	}
 	for _, rel := range promptScriptOutputs {

@@ -60,8 +60,9 @@ GoReleaser snapshot. The snapshot must contain six archives, six SPDX JSON
 SBOM files, and a non-empty SHA256 checksum file.
 
 `Validate PromptScript` compiles every build profile and target, applies the
-OpenCode plugin patch with `go run ./tools/validate -patch-opencode`, and fails
-on any difference from the committed files.
+OpenCode plugin and subagent patch with
+`go run ./tools/validate -patch-opencode`, and fails on any difference from
+the committed files.
 
 Nightly robustness repeats randomized attribution scenarios and fuzzes line
 splitting and hook payload parsing. Nightly checks are not branch requirements

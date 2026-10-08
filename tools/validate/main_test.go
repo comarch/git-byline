@@ -67,7 +67,7 @@ func TestPipelineStages(t *testing.T) {
 }
 
 // TestActiveStages pins the two modes of the command: the whole validation
-// pipeline, and only the OpenCode plugin patch behind -patch-opencode.
+// pipeline, and only the OpenCode patch behind -patch-opencode.
 func TestActiveStages(t *testing.T) {
 	t.Parallel()
 	if got, want := len(activeStages(false)), len(pipelineStages()); got != want {
@@ -81,11 +81,12 @@ func TestActiveStages(t *testing.T) {
 
 func TestPatchOpenCodeStage(t *testing.T) {
 	t.Parallel()
-	t.Run("patches the plugin and syncs the template", func(t *testing.T) {
+	t.Run("patches the plugin and agents and syncs the template", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		writePromptScriptFile(t, root, openCodePluginRel, testOpenCodePlugin)
 		writePromptScriptFile(t, root, openCodeTemplateRel, "stale\n")
+		writeOpenCodeAgents(t, root, testOpenCodeAgent)
 		var stdout, stderr bytes.Buffer
 		if code := runPipeline(&stdout, &stderr, activeStages(true), root); code != 0 {
 			t.Fatalf("code = %d, want 0 (stderr: %q)", code, stderr.String())
@@ -104,6 +105,7 @@ func TestPatchOpenCodeStage(t *testing.T) {
 		if !bytes.Contains(plugin, []byte(openCodePatchMarker)) || !bytes.Equal(plugin, template) {
 			t.Error("plugin is not patched, or the harness template differs from it")
 		}
+		requireOpenCodeAgentsReadOnly(t, root)
 	})
 	t.Run("fails without a generated plugin", func(t *testing.T) {
 		t.Parallel()
