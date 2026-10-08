@@ -60,11 +60,12 @@ curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
   https://raw.githubusercontent.com/comarch/git-byline/main/marketplace/harness/opencode/promptscript.ts
 ```
 
-This generated PromptScript plugin captures OpenCode edit and Bash tool
-events. OpenCode does not include the active model in these events, so the
-checkpoint model stays `unknown`. MCP calls, some subagent paths, and failed
-tool calls do not have a dedicated plugin event. Do not edit the generated
-plugin.
+This generated PromptScript plugin captures OpenCode edit, write,
+apply_patch, and Bash tool events, and waits for each checkpoint before
+OpenCode continues. OpenCode does not include the active model in these events, so
+the checkpoint model stays `unknown`. MCP calls, some subagent paths, and
+failed tool calls do not have a dedicated plugin event. Do not edit the
+generated plugin.
 
 **4. Verify and report.**
 

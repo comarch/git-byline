@@ -100,10 +100,11 @@ carry no absolute path: they resolve the project root with
 OpenCode plugin uses its plugin context to resolve the project root.
 
 OpenCode's plugin uses PromptScript-generated `tool.execute.before` and
-`tool.execute.after` hooks for local edit, write, and Bash tools. The payload
-includes session and call IDs, but no active model. Attribution therefore
-keeps the model as `unknown`; configured PromptScript model profiles do not
-identify the model used by an individual event. See
+`tool.execute.after` hooks for local edit, write, apply_patch, and Bash tools.
+It waits for each checkpoint before OpenCode continues. The payload includes
+session and call IDs, but no active model. Attribution therefore keeps the
+model as `unknown`; configured PromptScript model profiles do not identify the
+model used by an individual event. See
 [compatibility](COMPATIBILITY.md#agent-adapters) for the hook limitations.
 PromptScript 1.19.1 declares the generated plugin Unix-only. Native Windows
 plugin loading has not been verified; the documented Windows path is to run

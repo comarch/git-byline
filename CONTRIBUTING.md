@@ -82,8 +82,9 @@ promptscript compile --all --force --strict
 go run ./tools/validate -patch-opencode
 ```
 
-The final command patches the bounded OpenCode payload handling and syncs its
-copyable harness template. Review the generated diff. Never edit generated
+The final command applies the git-byline patch to the generated OpenCode
+plugin (bounded file paths, `apply_patch` paths, and awaited hooks) and syncs
+its copyable harness template. Review the generated diff. Never edit generated
 instruction files directly.
 
 Release Please owns `CHANGELOG.md`, release versions, release pull requests,

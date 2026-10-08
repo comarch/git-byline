@@ -188,7 +188,7 @@
 
   opencode-pre-edit: {
     event: "pre-tool-use"
-    matcher: "^(edit|write)$"
+    matcher: "^(edit|write|apply_patch)$"
     command: ["git-byline", "checkpoint", "portable-opencode", "--type", "human", "--hook-input", "stdin"]
     cwd: "project"
     timeoutMs: 30000
@@ -197,7 +197,7 @@
   }
   opencode-post-edit: {
     event: "post-tool-use"
-    matcher: "^(edit|write)$"
+    matcher: "^(edit|write|apply_patch)$"
     command: ["git-byline", "checkpoint", "portable-opencode", "--type", "ai", "--hook-input", "stdin"]
     cwd: "project"
     timeoutMs: 30000

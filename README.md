@@ -609,12 +609,16 @@ native project hooks for all ten surfaces:
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | `ai:factory` | `ai:claude` | `ai:copilot` | `ai:vscode` | `ai:cursor` | `ai:codex` | `ai:gemini` | `ai:windsurf` | `ai:grok` | `ai:opencode` |
 
-OpenCode reports edits through a generated project plugin. Its tool events
-include the session and call IDs, but not the active model. PromptScript model
-profiles describe configured models, not the model used by each tool call, so
-OpenCode attribution keeps the model as `unknown`. The generated plugin is
-declared Unix-only by PromptScript 1.19.1. Native Windows execution has not
-been verified; the documented Windows path is to run OpenCode in WSL.
+OpenCode reports edits through a generated project plugin for local `edit`,
+`write`, `apply_patch`, and `bash` tool calls. The plugin waits for each
+checkpoint, so the pre-edit snapshot exists before the tool writes. A hook that
+fails or times out is logged, and the tool call continues without that
+checkpoint. Its tool events include the session and call IDs, but not the
+active model. PromptScript model profiles describe configured models, not the
+model used by each tool call, so OpenCode attribution keeps the model as
+`unknown`. The generated plugin is declared Unix-only by PromptScript 1.19.1.
+Native Windows execution has not been verified; the documented Windows path is
+to run OpenCode in WSL.
 
 Platforms without a native project-hook API need an external watcher or
 daemon. git-byline deliberately adds neither. See

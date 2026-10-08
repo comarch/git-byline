@@ -48,7 +48,8 @@ OpenCode plugin uses its plugin context to resolve the project root.
 
 Each hook calls `git-byline checkpoint portable-<agent> --hook-input stdin`,
 which records a snapshot before and after an edit. OpenCode's generated plugin
-also observes Bash calls. Without the agent hook, git-byline still annotates
+also observes `apply_patch` and Bash calls, and waits for each checkpoint
+before OpenCode continues. Without the agent hook, git-byline still annotates
 commits, but agent edits arrive as plain `human` lines instead of `ai` lines,
 because nothing observed them.
 

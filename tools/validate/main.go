@@ -12,6 +12,11 @@
 // The optional -stages flag narrows the run to a comma-separated stage
 // subset, mainly so coverage collection can exercise validate itself
 // as a spawned binary without re-entering the pipeline.
+//
+// The -patch-opencode flag swaps the pipeline for one step that applies
+// the repository patch to the freshly generated OpenCode plugin and syncs
+// its copyable harness template. It is the last step after compiling
+// PromptScript sources.
 package main
 
 import (
@@ -34,22 +39,14 @@ type stage struct {
 
 func main() {
 	stageSpec := flag.String("stages", "", "comma-separated subset of stages to run (default: all)")
-	patchOpenCode := flag.Bool("patch-opencode", false, "patch and sync the generated OpenCode plugin")
+	patchOpenCode := flag.Bool("patch-opencode", false, "patch and sync the generated OpenCode plugin instead of validating")
 	flag.Parse()
 	root, err := repoRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "validate: %v\n", err)
 		os.Exit(1)
 	}
-	if *patchOpenCode {
-		if err := patchOpenCodeArtifacts(root); err != nil {
-			fmt.Fprintf(os.Stderr, "validate: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("patched OpenCode plugin and harness template")
-		return
-	}
-	stages, err := selectStages(pipelineStages(), *stageSpec)
+	stages, err := selectStages(activeStages(*patchOpenCode), *stageSpec)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "validate: %v\n", err)
 		os.Exit(2)
@@ -87,6 +84,16 @@ func selectStages(stages []stage, spec string) ([]stage, error) {
 		return nil, fmt.Errorf("unknown stages: %s", strings.Join(names, ", "))
 	}
 	return selected, nil
+}
+
+// activeStages returns the stages one invocation runs: only the OpenCode
+// plugin patch when patchOpenCode is set, the validation pipeline otherwise.
+// Running the patch as a stage reuses the pipeline reporting and exit codes.
+func activeStages(patchOpenCode bool) []stage {
+	if patchOpenCode {
+		return []stage{{name: "patch-opencode", run: patchOpenCodeArtifacts}}
+	}
+	return pipelineStages()
 }
 
 // pipelineStages returns the validation stages in execution order.

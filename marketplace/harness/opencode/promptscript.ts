@@ -15,8 +15,8 @@ interface OpenCodeHookRule {
 }
 
 const HOOK_RULES: readonly OpenCodeHookRule[] = [
-  {"id":"opencode-pre-edit","event":"tool.execute.before","matcher":"^(edit|write)$","command":["git-byline","checkpoint","portable-opencode","--type","human","--hook-input","stdin"],"timeoutMs":30000},
-  {"id":"opencode-post-edit","event":"tool.execute.after","matcher":"^(edit|write)$","command":["git-byline","checkpoint","portable-opencode","--type","ai","--hook-input","stdin"],"timeoutMs":30000},
+  {"id":"opencode-pre-edit","event":"tool.execute.before","matcher":"^(edit|write|apply_patch)$","command":["git-byline","checkpoint","portable-opencode","--type","human","--hook-input","stdin"],"timeoutMs":30000},
+  {"id":"opencode-post-edit","event":"tool.execute.after","matcher":"^(edit|write|apply_patch)$","command":["git-byline","checkpoint","portable-opencode","--type","ai","--hook-input","stdin"],"timeoutMs":30000},
   {"id":"opencode-shell-pre","event":"tool.execute.before","matcher":"^bash$","command":["git-byline","checkpoint","portable-opencode","--type","human","--hook-input","stdin"],"timeoutMs":30000},
   {"id":"opencode-shell-post","event":"tool.execute.after","matcher":"^bash$","command":["git-byline","checkpoint","portable-opencode","--type","ai","--hook-input","stdin"],"timeoutMs":30000}
 ];
@@ -64,12 +64,20 @@ function payloadByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
-// Keep the payload bounded: drop oversized tool arguments first, then the
-// result object, so the command always receives parseable JSON.
 // git-byline: preserve bounded file paths
 const MAX_PATH_ARGUMENT_BYTES = 2048;
+const MAX_PATH_LIST_ENTRIES = 100;
+const PATH_KEYS = ['filePath', 'file_path', 'file', 'path'];
+const PATH_LIST_KEYS = [
+  'filePaths', 'file_paths', 'editedFilepaths', 'edited_filepaths', 'files'
+];
+const PATCH_PATH_PATTERN = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm;
 
-function safePathArguments(value: unknown): Record<string, unknown> {
+interface PathBudget {
+  remaining: number;
+}
+
+function parseArguments(value: unknown): Record<string, unknown> {
   let args = value;
   if (typeof args === 'string') {
     try {
@@ -79,34 +87,52 @@ function safePathArguments(value: unknown): Record<string, unknown> {
     }
   }
   if (args === null || typeof args !== 'object' || Array.isArray(args)) return {};
-  const input = args as Record<string, unknown>;
-  const safe: Record<string, unknown> = {};
-  let remaining = MAX_PATH_ARGUMENT_BYTES;
-  const keepPath = (path: unknown): path is string => {
-    if (typeof path !== 'string') return false;
-    const size = payloadByteLength(path);
-    if (size > remaining) return false;
-    remaining -= size;
-    return true;
-  };
-  for (const key of ['filePath', 'file_path', 'file', 'path']) {
-    const path = input[key];
-    if (keepPath(path)) safe[key] = path;
+  return args as Record<string, unknown>;
+}
+
+function takePath(path: unknown, budget: PathBudget): path is string {
+  if (typeof path !== 'string') return false;
+  const size = payloadByteLength(path);
+  if (size > budget.remaining) return false;
+  budget.remaining -= size;
+  return true;
+}
+
+function takePaths(paths: unknown, budget: PathBudget): string[] {
+  if (!Array.isArray(paths)) return [];
+  const kept: string[] = [];
+  for (const path of paths.slice(0, MAX_PATH_LIST_ENTRIES)) {
+    if (takePath(path, budget)) kept.push(path);
   }
-  for (const key of [
-    'filePaths', 'file_paths', 'editedFilepaths', 'edited_filepaths', 'files'
-  ]) {
-    const paths = input[key];
-    if (!Array.isArray(paths)) continue;
-    const kept: string[] = [];
-    for (const path of paths.slice(0, 100)) {
-      if (keepPath(path)) kept.push(path);
-    }
+  return kept;
+}
+
+function patchTextPaths(patchText: unknown): string[] {
+  if (typeof patchText !== 'string') return [];
+  return Array.from(patchText.matchAll(PATCH_PATH_PATTERN), (match) => match[1].trim());
+}
+
+function safePathArguments(value: unknown): Record<string, unknown> {
+  const input = parseArguments(value);
+  const budget: PathBudget = { remaining: MAX_PATH_ARGUMENT_BYTES };
+  const safe: Record<string, unknown> = {};
+  for (const key of PATH_KEYS) {
+    if (takePath(input[key], budget)) safe[key] = input[key];
+  }
+  for (const key of PATH_LIST_KEYS) {
+    const kept = takePaths(input[key], budget);
     if (kept.length > 0) safe[key] = kept;
+  }
+  const patched = takePaths(patchTextPaths(input.patchText), budget);
+  if (patched.length > 0) {
+    safe.files = [...(Array.isArray(safe.files) ? safe.files : []), ...patched];
   }
   return safe;
 }
 
+// Keep the payload bounded: reduce oversized tool arguments to their file
+// paths first, then drop the result object, so the command always receives
+// parseable JSON.
 function boundedPayload(payload: Record<string, unknown>): string {
   const full = safeStringify(payload);
   if (payloadByteLength(full) <= PAYLOAD_LIMIT_BYTES) return full;
@@ -152,8 +178,10 @@ function buildPayload(
   return payload;
 }
 
-// Hooks observe tool execution asynchronously. Failures are logged, and every
-// process gets a bounded lifetime so a broken hook cannot disrupt the session.
+// Hooks finish before OpenCode continues, so the pre-edit snapshot exists before
+// the tool writes and the post-edit snapshot exists before the next tool starts.
+// Failures are logged, and every process gets a bounded lifetime so a broken
+// hook cannot disrupt the session.
 async function runRule(
   rule: OpenCodeHookRule,
   projectRoot: string,
@@ -192,7 +220,7 @@ async function runRule(
   }
 }
 
-export const PromptScriptHooks = async (context: OpenCodePluginContext) => {
+export const PromptScriptHooks = (context: OpenCodePluginContext) => {
   const projectRoot = context.worktree || context.directory;
   const compiled: OpenCodeCompiledRule[] = [];
   for (const rule of HOOK_RULES) {
@@ -210,12 +238,12 @@ export const PromptScriptHooks = async (context: OpenCodePluginContext) => {
     }
   }
 
-  return {
+  return Promise.resolve({
     'tool.execute.before': async (input: OpenCodeToolInput, output: OpenCodeToolOutput) => {
       for (const entry of compiled) {
         if (entry.rule.event !== 'tool.execute.before') continue;
         if (entry.matcher !== null && !entry.matcher.test(String(input.tool))) continue;
-        void runRule(
+        await runRule(
           entry.rule,
           projectRoot,
           boundedPayload(buildPayload(entry.rule, input, output.args))
@@ -231,12 +259,12 @@ export const PromptScriptHooks = async (context: OpenCodePluginContext) => {
           output: output.output,
           metadata: output.metadata
         };
-        void runRule(
+        await runRule(
           entry.rule,
           projectRoot,
           boundedPayload(buildPayload(entry.rule, input, input.args, result))
         );
       }
     }
-  };
+  });
 };

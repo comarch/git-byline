@@ -37,7 +37,7 @@ file, but interactive file switching requires JavaScript.
 | Gemini CLI | `portable-gemini` | Generated pre/post tool hooks | Common file and patch fields |
 | Windsurf | `portable-windsurf` | Generated write-event hooks | `tool_info` file and command fields |
 | Grok | `portable-grok` | Generated pre/post tool hooks | Common file and patch fields |
-| OpenCode | `portable-opencode` | Generated plugin for local `edit`, `write`, and `bash` tool calls | `tool`, `args`, `sessionID`, and `callID` |
+| OpenCode | `portable-opencode` | Generated plugin for local `edit`, `write`, `apply_patch`, and `bash` tool calls | `tool`, `args`, `sessionID`, and `callID`; `apply_patch` body in `args.patchText` |
 | agent-v1 | `agent-v1` | Standard edit payload, `agent_name` required | `edited_filepaths` |
 
 Unknown tool events are ignored. Malformed supported events fail or are
@@ -105,22 +105,28 @@ but cannot provide edit-event attribution without an external watcher or
 daemon. git-byline does not add either.
 
 OpenCode uses the generated `.opencode/plugins/promptscript.ts` plugin. It
-captures local `edit`, `write`, and `bash` tool calls through OpenCode's
-`tool.execute.before` and `tool.execute.after` events. The plugin payload
-provides `sessionID` and `callID`; git-byline uses the call ID to pair shell
-events. OpenCode tool events do not provide the active model, so the model is
-recorded as `unknown`. PromptScript model profiles describe configured model
-names, not the model used by an individual tool call.
+captures local `edit`, `write`, `apply_patch`, and `bash` tool calls through
+OpenCode's `tool.execute.before` and `tool.execute.after` events. The plugin
+payload provides `sessionID` and `callID`; git-byline uses the call ID to pair
+shell events. `apply_patch` carries its whole patch in `patchText`, and
+git-byline reads the touched file paths from the patch headers. When the
+payload is too large, the plugin keeps only those paths. OpenCode tool events
+do not provide the active model, so the model is recorded as `unknown`.
+PromptScript model profiles describe configured model names, not the model
+used by an individual tool call.
 
 PromptScript 1.19.1 declares this plugin target Unix-only. The generated code
 does not explicitly reject Windows, but git-byline has not verified native
 Windows plugin loading or process execution. Native Windows is unverified; the
 documented Windows path is to run OpenCode in WSL.
 
-OpenCode plugin hooks run asynchronously. A fast tool call or overlapping
-tool calls can race with the checkpoint process. MCP calls, some subagent
-paths, and failed tool calls do not have dedicated plugin events. Attribution
-is best-effort on those paths, not guaranteed.
+OpenCode plugin hooks wait for their checkpoint process before OpenCode
+continues. The pre-edit snapshot exists before the tool writes, and the
+post-edit snapshot exists before the next tool starts. A hook that fails or
+runs past its 30 second limit is logged, and the tool call continues without
+that checkpoint. MCP calls, some subagent paths, and failed tool calls do not
+have dedicated plugin events. Attribution is best-effort on those paths, not
+guaranteed.
 
 ## Git behavior
 

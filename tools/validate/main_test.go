@@ -66,6 +66,57 @@ func TestPipelineStages(t *testing.T) {
 	}
 }
 
+// TestActiveStages pins the two modes of the command: the whole validation
+// pipeline, and only the OpenCode plugin patch behind -patch-opencode.
+func TestActiveStages(t *testing.T) {
+	t.Parallel()
+	if got, want := len(activeStages(false)), len(pipelineStages()); got != want {
+		t.Fatalf("activeStages(false) has %d stages, want %d", got, want)
+	}
+	patch := activeStages(true)
+	if len(patch) != 1 || patch[0].name != "patch-opencode" {
+		t.Fatalf("activeStages(true) = %v, want only the patch-opencode stage", patch)
+	}
+}
+
+func TestPatchOpenCodeStage(t *testing.T) {
+	t.Parallel()
+	t.Run("patches the plugin and syncs the template", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writePromptScriptFile(t, root, openCodePluginRel, testOpenCodePlugin)
+		writePromptScriptFile(t, root, openCodeTemplateRel, "stale\n")
+		var stdout, stderr bytes.Buffer
+		if code := runPipeline(&stdout, &stderr, activeStages(true), root); code != 0 {
+			t.Fatalf("code = %d, want 0 (stderr: %q)", code, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "ok   patch-opencode") {
+			t.Errorf("stdout = %q, want the patch stage reported", stdout.String())
+		}
+		plugin, err := os.ReadFile(filepath.Join(root, openCodePluginRel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		template, err := os.ReadFile(filepath.Join(root, openCodeTemplateRel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(plugin, []byte(openCodePatchMarker)) || !bytes.Equal(plugin, template) {
+			t.Error("plugin is not patched, or the harness template differs from it")
+		}
+	})
+	t.Run("fails without a generated plugin", func(t *testing.T) {
+		t.Parallel()
+		var stdout, stderr bytes.Buffer
+		if code := runPipeline(&stdout, &stderr, activeStages(true), t.TempDir()); code != 1 {
+			t.Fatalf("code = %d, want 1", code)
+		}
+		if !strings.Contains(stderr.String(), "FAIL patch-opencode") {
+			t.Errorf("stderr = %q, want the failing patch stage", stderr.String())
+		}
+	})
+}
+
 func TestRepoRoot(t *testing.T) {
 	t.Parallel()
 	root, err := repoRoot()
