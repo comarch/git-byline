@@ -7,7 +7,7 @@ protect local repository data.
 
 - Go 1.24 or newer.
 - Git 2.31 or newer.
-- PromptScript CLI 1.21.0.
+- PromptScript CLI 1.22.0.
 - GoReleaser 2.18.1 when release configuration changes.
 - Syft on `PATH` when building release snapshots.
 
