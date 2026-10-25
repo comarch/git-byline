@@ -1684,10 +1684,13 @@ func saveStashNote(
 	}
 	blobCache := newRewriteBlobCache()
 	matcherBudget := engine.NewMatcherBudget(maxRewriteMatcherCells)
+	// The stash note ref is written after the loop, and the finder reads
+	// only the commit notes, so one finder serves every stashed path.
+	finder := notes.NewFinder(repo)
 	var result RewriteResult
 	saved := 0
 	for _, path := range paths {
-		file, exists, err := stashedFile(repo, stash, oldTip, path, base, records, identity, blobCache, matcherBudget)
+		file, exists, err := stashedFile(repo, stash, oldTip, path, base, records, identity, blobCache, matcherBudget, finder)
 		if err != nil {
 			result.Warnings = append(result.Warnings,
 				fmt.Sprintf("skipped saving consumed checkpoints for stash path %s: %v", path, err))
@@ -1743,6 +1746,7 @@ func stashedFile(
 	identity string,
 	blobCache *rewriteBlobCache,
 	matcherBudget *engine.MatcherBudget,
+	finder *notes.Finder,
 ) (model.NoteFile, bool, error) {
 	blob, exists, err := repo.BlobID(stash, path)
 	if err != nil || !exists {
@@ -1752,7 +1756,7 @@ func stashedFile(
 	if err != nil {
 		return model.NoteFile{}, false, err
 	}
-	initial, _, err := initialSnapshot(repo, base, oldTip, path)
+	initial, _, err := initialSnapshotWith(repo, finder, base, oldTip, path)
 	if err != nil {
 		return model.NoteFile{}, false, err
 	}

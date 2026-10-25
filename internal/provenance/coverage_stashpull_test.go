@@ -282,13 +282,13 @@ func coverageStashedFileErrors(t *testing.T) {
 	root, repo, base, stash, records := stashSaveFixture(t)
 	state := model.NewState()
 	cache, budget := stashSaveBudgets()
-	if file, exists, err := stashedFile(repo, stash, base, "missing.txt", state, records, "", cache, budget); err != nil || exists {
+	if file, exists, err := stashedFile(repo, stash, base, "missing.txt", state, records, "", cache, budget, notes.NewFinder(repo)); err != nil || exists {
 		t.Fatalf("path the stash lacks = %+v, %t, %v", file, exists, err)
 	}
 	for _, mode := range []string{"ls-tree-error", "read-blob-error"} {
 		t.Run(mode, func(t *testing.T) {
 			fake := fakeRewriteRepo(t, root, mode, "")
-			if _, _, err := stashedFile(fake, stash, base, coverageFile, state, records, "", cache, budget); err == nil {
+			if _, _, err := stashedFile(fake, stash, base, coverageFile, state, records, "", cache, budget, notes.NewFinder(fake)); err == nil {
 				t.Fatalf("stashedFile accepted %s", mode)
 			}
 		})
@@ -322,13 +322,13 @@ func coverageStashedFileErrors(t *testing.T) {
 		{"unsupported checkpoint author", state, checkpoint(model.AuthorUntracked, short)},
 		{"binary checkpoint", state, checkpoint(model.AuthorHuman, binary)},
 	} {
-		if _, _, err := stashedFile(repo, stash, base, coverageFile, tc.state, tc.records, "", cache, budget); err == nil {
+		if _, _, err := stashedFile(repo, stash, base, coverageFile, tc.state, tc.records, "", cache, budget, notes.NewFinder(repo)); err == nil {
 			t.Fatalf("stashedFile accepted %s", tc.name)
 		}
 	}
 	write(t, root, coverageFile, "bin\x00\n")
 	binaryStash := strings.TrimSpace(git(t, root, "stash", "create", "binary"))
-	if _, _, err := stashedFile(repo, binaryStash, base, coverageFile, state, nil, "", cache, budget); err == nil {
+	if _, _, err := stashedFile(repo, binaryStash, base, coverageFile, state, nil, "", cache, budget, notes.NewFinder(repo)); err == nil {
 		t.Fatal("stashedFile accepted binary stash content")
 	}
 }
