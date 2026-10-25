@@ -3,6 +3,9 @@ package gitcmd
 import (
 	"bufio"
 	"context"
+	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -312,4 +315,21 @@ func (repo *Repo) PrefetchIgnored(paths []string) {
 		ignored[path] = true
 	}
 	repo.batch.ignored = ignored
+}
+
+// HashContent returns the blob object ID that hash-object --stdin assigns to
+// content, without writing it. Standard input skips attribute filters, so
+// the ID is the hash of the object header and the bytes.
+func (repo *Repo) HashContent(content []byte) (string, error) {
+	length, err := repo.ObjectIDLength()
+	if err != nil {
+		return "", err
+	}
+	hasher := sha1.New()
+	if length == 64 {
+		hasher = sha256.New()
+	}
+	fmt.Fprintf(hasher, "blob %d\x00", len(content))
+	hasher.Write(content)
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }

@@ -49,6 +49,7 @@ type Repo struct {
 	gitBin    string
 	batch     *batchScope
 	trees     map[string]map[string]treeEntry
+	idLength  int
 }
 
 // Change describes one path changed by a commit.
@@ -156,19 +157,24 @@ func (repo *Repo) Head() (string, error) {
 }
 
 // ObjectIDLength returns the repository storage object ID length.
+// The format of a repository never changes, so the answer is cached.
 func (repo *Repo) ObjectIDLength() (int, error) {
+	if repo.idLength != 0 {
+		return repo.idLength, nil
+	}
 	out, err := repo.run("read object format", nil, "rev-parse", "--show-object-format=storage")
 	if err != nil {
 		return 0, err
 	}
 	switch strings.TrimSpace(string(out)) {
 	case "sha1":
-		return 40, nil
+		repo.idLength = 40
 	case "sha256":
-		return 64, nil
+		repo.idLength = 64
 	default:
 		return 0, errors.New("git returned an unsupported object format")
 	}
+	return repo.idLength, nil
 }
 
 // PreviousHead returns the previous HEAD value from the current reflog entry.
@@ -1013,6 +1019,37 @@ func (repo *Repo) SnapshotWorktreeWithLimit(path string, maxBytes int64) (model.
 	oid, err := repo.HashBytes(content)
 	if err != nil {
 		return model.Snapshot{}, 0, err
+	}
+	return model.Snapshot{Path: normalized, Exists: true, Blob: oid}, int64(len(content)), nil
+}
+
+// SnapshotWorktreeStored works like SnapshotWorktreeWithLimit but does not
+// write content whose blob ID is already in stored. Shell checkpoints see the
+// same dirty files on every agent command, and each write is a Git process.
+func (repo *Repo) SnapshotWorktreeStored(
+	path string,
+	maxBytes int64,
+	stored map[string]bool,
+) (model.Snapshot, int64, error) {
+	if maxBytes <= 0 {
+		return model.Snapshot{}, 0, ErrSnapshotBudget
+	}
+	content, exists, normalized, err := repo.worktreeFile(path, maxBytes)
+	if err != nil {
+		if errors.Is(err, errWorktreeFileLimit) {
+			return model.Snapshot{}, 0, ErrSnapshotBudget
+		}
+		return model.Snapshot{}, 0, err
+	}
+	if !exists {
+		return model.Snapshot{Path: normalized, Exists: false}, 0, nil
+	}
+	oid, err := repo.HashContent(content)
+	if err != nil || !stored[oid] {
+		oid, err = repo.HashBytes(content)
+		if err != nil {
+			return model.Snapshot{}, 0, err
+		}
 	}
 	return model.Snapshot{Path: normalized, Exists: true, Blob: oid}, int64(len(content)), nil
 }

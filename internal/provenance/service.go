@@ -168,6 +168,19 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 			return CaptureResult{}, err
 		}
 	}
+	shell := kind == model.CheckpointKindShellPre || kind == model.CheckpointKindShellPost
+	// Every agent shell command snapshots all dirty paths twice. Content
+	// that an unconsumed checkpoint already stored needs no new write, and
+	// one check-ignore run covers all paths.
+	var stored map[string]bool
+	if shell {
+		defer repo.StartBatch()()
+		repo.PrefetchIgnored(paths)
+		stored = map[string]bool{}
+		for _, blob := range retainedBlobs(records, state, model.Checkpoint{}) {
+			stored[blob] = true
+		}
+	}
 	snapshots := make([]model.Snapshot, 0, len(paths))
 	seen := map[string]bool{}
 	var shellBytes int64
@@ -183,15 +196,14 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 		seen[normalized] = true
 		var snapshot model.Snapshot
 		var snapshotBytes int64
-		if kind == model.CheckpointKindShellPre || kind == model.CheckpointKindShellPost {
+		if shell {
 			remaining := int64(maxShellSnapshotBytes) - shellBytes
-			snapshot, snapshotBytes, err = repo.SnapshotWorktreeWithLimit(normalized, remaining)
+			snapshot, snapshotBytes, err = repo.SnapshotWorktreeStored(normalized, remaining, stored)
 		} else {
 			snapshot, err = repo.SnapshotWorktree(normalized)
 		}
 		if err != nil {
-			if (kind == model.CheckpointKindShellPre || kind == model.CheckpointKindShellPost) &&
-				errors.Is(err, gitcmd.ErrSnapshotBudget) {
+			if shell && errors.Is(err, gitcmd.ErrSnapshotBudget) {
 				warnings = append(warnings, "stopped shell snapshot at the 16 MiB aggregate budget")
 				break
 			}
