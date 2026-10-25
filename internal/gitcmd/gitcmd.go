@@ -1673,7 +1673,6 @@ func (repo *Repo) runOutput(
 	command := exec.CommandContext(ctx, repo.gitBin, args...)
 	command.Dir = repo.Root
 	command.Env = append(gitEnvironment(),
-		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_BYLINE_NESTED=1",
 		"LC_ALL=C",
@@ -1721,12 +1720,18 @@ func (repo *Repo) streamRecords(operation string, delimiter byte, handle func(st
 	return records.finish()
 }
 
+// gitEnvironment drops the GIT_ variables a hook inherits, like GIT_DIR or
+// GIT_INDEX_FILE, because they describe the operation that runs the hook.
+// The variables that choose the system configuration stay, so git-byline
+// reads the same ignore rules, line ending, and long path settings as the
+// Git of the user. Git for Windows keeps those settings in the system file.
 func gitEnvironment() []string {
 	source := os.Environ()
 	result := make([]string, 0, len(source))
 	for _, value := range source {
 		name, _, _ := strings.Cut(value, "=")
-		if strings.HasPrefix(strings.ToUpper(name), "GIT_") {
+		upper := strings.ToUpper(name)
+		if strings.HasPrefix(upper, "GIT_") && upper != "GIT_CONFIG_NOSYSTEM" && upper != "GIT_CONFIG_SYSTEM" {
 			continue
 		}
 		result = append(result, value)

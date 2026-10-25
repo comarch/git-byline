@@ -646,6 +646,39 @@ func TestDiscoverIgnoresGitEnvironment(t *testing.T) {
 	}
 }
 
+func TestSystemConfigIgnoreRulesApply(t *testing.T) {
+	root := initRepository(t)
+	writeFile(t, root, "kept.txt", "kept\n")
+	writeFile(t, root, "build.out", "generated\n")
+	excludes := filepath.Join(t.TempDir(), "excludes")
+	if err := os.WriteFile(excludes, []byte("*.out\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	system := filepath.Join(t.TempDir(), "gitconfig")
+	config := "[core]\n\texcludesFile = " + filepath.ToSlash(excludes) + "\n"
+	if err := os.WriteFile(system, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_SYSTEM", system)
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "unrelated"))
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ignored, err := repo.Ignored("build.out"); err != nil || !ignored {
+		t.Fatalf("Ignored(build.out) with system excludes = %t, %v", ignored, err)
+	}
+	if paths, err := repo.DirtyPaths(); err != nil || strings.Join(paths, ",") != "kept.txt" {
+		t.Fatalf("DirtyPaths() with system excludes = %v, %v", paths, err)
+	}
+	// A user who turns the system file off gets the same answer from
+	// git-byline as from their own Git.
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	if ignored, err := repo.Ignored("build.out"); err != nil || ignored {
+		t.Fatalf("Ignored(build.out) without system config = %t, %v", ignored, err)
+	}
+}
+
 func TestDiscoverAndConfigErrors(t *testing.T) {
 	t.Parallel()
 	if _, err := Discover(t.TempDir()); err == nil {

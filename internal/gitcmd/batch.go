@@ -89,7 +89,6 @@ func (repo *Repo) startObjectBatch() (*objectBatch, error) {
 	command := exec.CommandContext(ctx, repo.gitBin, "cat-file", "--batch")
 	command.Dir = repo.Root
 	command.Env = append(gitEnvironment(),
-		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_BYLINE_NESTED=1",
 		"LC_ALL=C",

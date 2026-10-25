@@ -19,6 +19,15 @@ Hook input, paths, patch text, Git configuration, repository content, issue
 text, pull request code, dependencies, downloaded tools, and release files are
 untrusted.
 
+Every Git subprocess drops the `GIT_` variables it inherits, like `GIT_DIR`
+or `GIT_INDEX_FILE`, so the operation that runs a hook cannot point
+git-byline at another repository or index. Only `GIT_CONFIG_NOSYSTEM` and
+`GIT_CONFIG_SYSTEM` stay. Git reads the system, global, and repository
+configuration the same way the user's own Git does, so ignore rules from
+`core.excludesFile`, line endings, and long paths match. Git for Windows
+keeps these settings in its system file. A snapshot never includes a path
+that the user's Git ignores.
+
 The production binary opens no background network connections. Production
 code imports no network packages; the only network access is the curl
 subprocess that `update` and `version --check` run through `internal/runner`

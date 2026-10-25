@@ -1629,6 +1629,9 @@ func coverageApplyDeletedPath(t *testing.T) {
 
 func coverageApplyRewrittenContentError(t *testing.T) {
 	root := testRepo(t)
+	// git-byline reads the system configuration. With core.autocrlf from
+	// Git for Windows, rename detection already reads the removed blob.
+	git(t, root, "config", "core.autocrlf", "false")
 	write(t, root, "old.txt", strings.Repeat("same\n", 19)+"old\n")
 	old := commit(t, root, "old")
 	if err := os.Rename(filepath.Join(root, "old.txt"), filepath.Join(root, "new.txt")); err != nil {
