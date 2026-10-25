@@ -405,14 +405,21 @@ func FindFile(repo *gitcmd.Repo, start, path, blob string) (model.Note, bool, []
 	return NewFinder(repo).Find(start, path, blob)
 }
 
+// maxDecodedNoteBytes bounds the raw size of the notes one Finder keeps
+// decoded. A single note may be 16 MiB, so a count limit alone does not
+// bound memory.
+const maxDecodedNoteBytes = 64 << 20
+
 // Finder looks up file attribution for many paths in one run. It lists the
-// noted commits once and reads and decodes each note at most once, so a walk
-// over a long history without notes starts no Git process per commit.
+// noted commits once and keeps decoded notes up to a byte budget, so a walk
+// over a long history without notes starts no Git process per commit. Notes
+// past the budget are read and decoded again on each lookup.
 type Finder struct {
-	repo      *gitcmd.Repo
-	noted     map[string]string
-	histories map[string][]string
-	decoded   map[string]decodedNote
+	repo        *gitcmd.Repo
+	noted       map[string]string
+	histories   map[string][]string
+	decoded     map[string]decodedNote
+	cacheBudget int
 }
 
 type decodedNote struct {
@@ -424,9 +431,10 @@ type decodedNote struct {
 // are not seen, so one Finder must not outlive the run that created it.
 func NewFinder(repo *gitcmd.Repo) *Finder {
 	return &Finder{
-		repo:      repo,
-		histories: map[string][]string{},
-		decoded:   map[string]decodedNote{},
+		repo:        repo,
+		histories:   map[string][]string{},
+		decoded:     map[string]decodedNote{},
+		cacheBudget: maxDecodedNoteBytes,
 	}
 }
 
@@ -465,7 +473,10 @@ func (finder *Finder) Find(start, path, blob string) (model.Note, bool, []string
 				return model.Note{}, false, warnings, err
 			}
 			decoded.note, decoded.err = Decode(data)
-			finder.decoded[commit] = decoded
+			if len(data) <= finder.cacheBudget {
+				finder.cacheBudget -= len(data)
+				finder.decoded[commit] = decoded
+			}
 		}
 		if decoded.err != nil {
 			warnings = append(warnings, fmt.Sprintf("ignored attribution note on %s: %v", commit, decoded.err))

@@ -469,8 +469,10 @@ func TestFindFile(t *testing.T) {
 	}
 }
 
-func TestFinderWalksPastCommitsWithoutNotes(t *testing.T) {
-	t.Parallel()
+// finderHistory builds four commits. The first two carry notes for a and
+// b, the third carries an invalid note, and the fourth has none.
+func finderHistory(t *testing.T) (*gitcmd.Repo, string, map[string]string) {
+	t.Helper()
 	root := t.TempDir()
 	root, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -520,6 +522,12 @@ func TestFinderWalksPastCommitsWithoutNotes(t *testing.T) {
 	if err := repo.WriteNote(commits[2], []byte(`{"version":9}`)); err != nil {
 		t.Fatal(err)
 	}
+	return repo, head, blobs
+}
+
+func TestFinderWalksPastCommitsWithoutNotes(t *testing.T) {
+	t.Parallel()
+	repo, head, blobs := finderHistory(t)
 	finder := NewFinder(repo)
 	tests := []struct {
 		path  string
@@ -545,6 +553,44 @@ func TestFinderWalksPastCommitsWithoutNotes(t *testing.T) {
 			len(note.Files) != len(want.Files) {
 			t.Fatalf("Find(%s) differs from FindFile", test.path)
 		}
+	}
+}
+
+func TestFinderPastCacheBudgetReadsNotesAgain(t *testing.T) {
+	t.Parallel()
+	repo, head, blobs := finderHistory(t)
+	cached := NewFinder(repo)
+	uncached := NewFinder(repo)
+	uncached.cacheBudget = 0
+	for _, path := range []string{"a", "b", "a"} {
+		want, wantFound, wantWarnings, wantErr := cached.Find(head, path, blobs[path])
+		note, found, warnings, err := uncached.Find(head, path, blobs[path])
+		if err != nil || wantErr != nil || found != wantFound || !found ||
+			len(warnings) != len(wantWarnings) || len(note.Files) != len(want.Files) {
+			t.Fatalf("Find(%s) past the budget = %t, %v, %v, want %t, %v, %v",
+				path, found, warnings, err, wantFound, wantWarnings, wantErr)
+		}
+	}
+	if len(cached.decoded) == 0 || len(uncached.decoded) != 0 {
+		t.Fatalf("decoded notes kept = %d with budget, %d without", len(cached.decoded), len(uncached.decoded))
+	}
+}
+
+func TestFinderReportsUnreadableNote(t *testing.T) {
+	t.Parallel()
+	repo, head, blobs := finderHistory(t)
+	noted, err := repo.ListNotes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The note list still names the newest note, but its blob is gone.
+	invalid := noted[strings.TrimSpace(notesGit(t, repo.Root, "rev-parse", head+"~1"))]
+	object := filepath.Join(repo.GitDir, "objects", invalid[:2], invalid[2:])
+	if err := os.Remove(object); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := NewFinder(repo).Find(head, "a", blobs["a"]); err == nil {
+		t.Fatal("Find accepted a note blob it could not read")
 	}
 }
 
