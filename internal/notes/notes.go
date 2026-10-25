@@ -402,35 +402,83 @@ func validateSession(name string, session model.NoteSession) error {
 // It returns the whole note that carries the file, so callers can reuse its
 // session metrics.
 func FindFile(repo *gitcmd.Repo, start, path, blob string) (model.Note, bool, []string, error) {
+	return NewFinder(repo).Find(start, path, blob)
+}
+
+// Finder looks up file attribution for many paths in one run. It lists the
+// noted commits once and reads and decodes each note at most once, so a walk
+// over a long history without notes starts no Git process per commit.
+type Finder struct {
+	repo      *gitcmd.Repo
+	noted     map[string]string
+	histories map[string][]string
+	decoded   map[string]decodedNote
+}
+
+type decodedNote struct {
+	note model.Note
+	err  error
+}
+
+// NewFinder returns a Finder for repo. Notes written after the first lookup
+// are not seen, so one Finder must not outlive the run that created it.
+func NewFinder(repo *gitcmd.Repo) *Finder {
+	return &Finder{
+		repo:      repo,
+		histories: map[string][]string{},
+		decoded:   map[string]decodedNote{},
+	}
+}
+
+// Find works like FindFile and shares the history, note list, and decoded
+// notes with earlier lookups of the same Finder.
+func (finder *Finder) Find(start, path, blob string) (model.Note, bool, []string, error) {
 	if start == "" {
 		return model.Note{}, false, nil, nil
 	}
-	history, err := repo.FirstParentHistory(start)
-	if err != nil {
-		return model.Note{}, false, nil, err
+	history, ok := finder.histories[start]
+	if !ok {
+		var err error
+		history, err = finder.repo.FirstParentHistory(start)
+		if err != nil {
+			return model.Note{}, false, nil, err
+		}
+		finder.histories[start] = history
+	}
+	if finder.noted == nil {
+		noted, err := finder.repo.ListNotes()
+		if err != nil {
+			return model.Note{}, false, nil, err
+		}
+		finder.noted = noted
 	}
 	var warnings []string
 	for _, commit := range history {
-		data, ok, err := repo.ReadNote(commit)
-		if err != nil {
-			return model.Note{}, false, warnings, err
-		}
+		noteBlob, ok := finder.noted[commit]
 		if !ok {
 			continue
 		}
-		note, err := Decode(data)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("ignored attribution note on %s: %v", commit, err))
+		decoded, ok := finder.decoded[commit]
+		if !ok {
+			data, err := finder.repo.ReadNoteBlob(noteBlob)
+			if err != nil {
+				return model.Note{}, false, warnings, err
+			}
+			decoded.note, decoded.err = Decode(data)
+			finder.decoded[commit] = decoded
+		}
+		if decoded.err != nil {
+			warnings = append(warnings, fmt.Sprintf("ignored attribution note on %s: %v", commit, decoded.err))
 			continue
 		}
-		file, ok := note.Files[path]
+		file, ok := decoded.note.Files[path]
 		if !ok {
 			continue
 		}
 		if file.Blob != blob {
 			return model.Note{}, false, append(warnings, fmt.Sprintf("attribution blob mismatch for %s", path)), nil
 		}
-		return note, true, warnings, nil
+		return decoded.note, true, warnings, nil
 	}
 	return model.Note{}, false, warnings, nil
 }

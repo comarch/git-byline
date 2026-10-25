@@ -230,9 +230,9 @@ func coverageInitialUnsupportedRanges(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("initialSnapshot ranges = %v, warnings=%v", err, warnings)
 	}
-	repo = fakeRewriteRepo(t, root, "notes-read-error", parent)
+	repo = fakeRewriteRepo(t, root, "notes-list-error", parent)
 	if _, _, err := initialSnapshot(repo, model.NewState(), parent, coverageFile); err == nil ||
-		!strings.Contains(err.Error(), "forced notes read") {
+		!strings.Contains(err.Error(), "forced notes list") {
 		t.Fatalf("initialSnapshot note read = %v", err)
 	}
 	_ = root

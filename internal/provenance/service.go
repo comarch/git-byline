@@ -584,6 +584,7 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 		warnings = append(warnings, "merge commit uses first-parent attribution; unmatched content is untracked")
 	}
 
+	finder := notes.NewFinder(repo)
 	for _, path := range paths {
 		change, changed := changedByPath[path]
 		sourcePath := path
@@ -594,7 +595,7 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 		if _, ok := state.Pending.Files[path]; ok {
 			initialPath = path
 		}
-		initial, initialWarnings, err := initialSnapshot(repo, state, parent, initialPath)
+		initial, initialWarnings, err := initialSnapshotWith(repo, finder, state, parent, initialPath)
 		warnings = append(warnings, initialWarnings...)
 		if err != nil {
 			if !errors.Is(err, errUnsupportedBase) {
@@ -977,6 +978,17 @@ func collectPaths(records []model.Checkpoint, state model.State, changes map[str
 }
 
 func initialSnapshot(repo *gitcmd.Repo, state model.State, parent, path string) (engine.Snapshot, []string, error) {
+	return initialSnapshotWith(repo, notes.NewFinder(repo), state, parent, path)
+}
+
+// initialSnapshotWith is initialSnapshot with a Finder shared across the
+// paths of one annotation.
+func initialSnapshotWith(
+	repo *gitcmd.Repo,
+	finder *notes.Finder,
+	state model.State,
+	parent, path string,
+) (engine.Snapshot, []string, error) {
 	if pending, ok := state.Pending.Files[path]; ok {
 		content, err := repo.ReadBlob(pending.Blob)
 		if err != nil {
@@ -1002,7 +1014,7 @@ func initialSnapshot(repo *gitcmd.Repo, state model.State, parent, path string) 
 		}
 		return engine.Snapshot{}, nil, err
 	}
-	note, found, warnings, err := notes.FindFile(repo, parent, path, blob)
+	note, found, warnings, err := finder.Find(parent, path, blob)
 	if err != nil {
 		return engine.Snapshot{}, warnings, err
 	}
