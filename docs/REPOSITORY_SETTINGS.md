@@ -76,7 +76,7 @@ pull request prove that exact check always reports a conclusion.
 - Restrict deployments to version tags matching `v*`.
 - Do not require reviewer approval; merging the release pull request authorizes
   unattended publication.
-- Add repository-scoped `RELEASE_PAT`.
+- Add repository-scoped `RELEASE_PAT` with contents and workflows write access.
 - Keep `GITHUB_TOKEN` as the artifact publishing token.
 - Add a second recovery owner for release settings and private advisories.
 - Keep bypass actors empty unless a tested bot path needs a narrow exception.

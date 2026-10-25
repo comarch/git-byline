@@ -33,7 +33,10 @@ one successful manual release.
 
 ## Required configuration
 
-- `RELEASE_PAT`: repository-scoped GitHub App or dedicated bot token.
+- `RELEASE_PAT`: repository-scoped GitHub App or dedicated bot token with
+  contents and workflows write access. The release workflow uses it to move
+  the action major tag, because the workflow token cannot move a ref to a
+  commit that changes `.github/workflows`.
 - `release` environment: artifact upload restricted to version tags, without
   required reviewers.
 - Branch rules from [REPOSITORY_SETTINGS.md](REPOSITORY_SETTINGS.md).
