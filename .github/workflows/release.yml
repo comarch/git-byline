@@ -126,7 +126,10 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.tag.outputs.tag }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The workflow token cannot move a ref to a commit that changes
+          # files under .github/workflows, so this push uses RELEASE_PAT,
+          # which has the workflows permission.
+          TAG_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           set -euo pipefail
           major="${RELEASE_TAG%%.*}"
@@ -137,6 +140,6 @@ jobs:
           # GitHub git endpoints accept HTTP basic auth only; bearer is
           # rejected with 401, so the token rides the header as
           # x-access-token, exactly how actions/checkout authenticates.
-          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+          auth="$(printf 'x-access-token:%s' "$TAG_TOKEN" | base64 | tr -d '\n')"
           git -c http.extraheader="AUTHORIZATION: basic ${auth}" \
             push "$remote" "refs/tags/${major}" --force

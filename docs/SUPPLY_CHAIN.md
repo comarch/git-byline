@@ -76,7 +76,10 @@ trees, local paths, debug files, credentials, or unlisted content.
 
 `RELEASE_PAT` must belong to a repository-scoped GitHub App or
 dedicated bot. It exists because tags created by the built-in workflow token do
-not trigger the separate release workflow reliably.
+not trigger the separate release workflow reliably. The release workflow also
+uses it to move the action major tag. GitHub refuses that push from the
+workflow token when the release changes files under `.github/workflows`, so
+the token needs workflows write access.
 
 Merging the Release Please pull request authorizes tag and GitHub release
 creation. The `release` environment protects the separate artifact upload.
