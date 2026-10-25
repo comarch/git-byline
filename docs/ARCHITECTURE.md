@@ -118,7 +118,10 @@ validates ordinary annotation, then rechecks reachability, drops only parked
 checkpoints whose base no local or remote-tracking branch can reach, and
 retries annotation. Every unrelated checkpoint must be stranded; one blocked
 checkpoint refuses the whole cleanup without dropping records or retrying
-annotation. Hook-driven annotation never selects this destructive mode.
+annotation. `recover --drop --all` skips the reachability check and drops
+every parked checkpoint, blocked ones included, so a user can clear a queue
+of branches they will not return to. Hook-driven annotation never selects
+either destructive mode.
 `annotate --drop-stranded` performs the same destructive removal without a
 preview, so users should run `recover` first.
 
@@ -183,7 +186,8 @@ record parks with a warning. This keeps sibling branches created from one base
 independent. Parked lanes stay protected by the retention ref, are never
 deleted automatically, and resume only when branch and base match again.
 `annotate --drop-stranded` and `recover --drop` are the only paths that remove
-records, and both refuse while any branch still reaches a parked base.
+records, and both refuse while any branch still reaches a parked base, unless
+`recover --drop --all` explicitly asks to drop every parked record.
 
 A fast-forward that changes a path with checkpoints on the old tip splits
 their lanes. Checkpoints on unchanged paths keep their lane and move to the

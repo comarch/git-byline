@@ -494,7 +494,7 @@ Twenty commands, one binary:
 | --- | --- |
 | `checkpoint <preset>` | Record a human or AI edit snapshot from hook input |
 | `annotate [--drop-stranded]` | Replay pending snapshots and annotate `HEAD`; checkpoints from another branch context park with a warning and resume when branch and base return. `--drop-stranded` validates annotation, then destructively removes parked checkpoints whose base no branch can reach, so preview with `recover` first |
-| `recover [--drop] [--json]` | Preview parked checkpoint branch contexts and blocking branches; explicitly drop unreachable records and retry annotation |
+| `recover [--drop [--all]] [--json]` | Preview parked checkpoint branch contexts and blocking branches; explicitly drop unreachable records, or with `--all` every parked record, and retry annotation |
 | `blame [--json] [--tokens] [--color=auto\|always\|never] <file>` | Show line attribution for a file at `HEAD`; `--tokens` appends session token usage to AI lines (file resolves from the working directory first, like `git blame`) |
 | `status [--json]` | Show checkpoint, pending, and annotation state |
 | `dashboard [--range <rev-range>] [--repo] [--output FILE] [file]` | Generate a self-contained local HTML report |
@@ -526,8 +526,11 @@ marks every listed parked checkpoint `droppable true`. Any blocked checkpoint
 refuses the whole cleanup; restore its recorded branch and base to consume the
 evidence, or delete every listed branch, then preview again. The command
 validates ordinary annotation before deletion, rechecks reachability, drops
-only unreachable records, and retries annotation. Hooks never delete
-checkpoint records or drop parked evidence. A fast-forward pull does consume,
+only unreachable records, and retries annotation. When you will not go back
+to those branches, `recover --drop --all` drops every parked checkpoint, also
+blocked ones, without the reachability check. Their attribution evidence is
+gone, so preview first. Checkpoints of the current branch and base stay.
+Hooks never delete checkpoint records or drop parked evidence. A fast-forward pull does consume,
 with a warning, checkpoints on paths the pulled commits changed, because those
 edits were reverted or stashed before the pull. It first saves what they
 attribute on stashed paths in the stash attribution note; see

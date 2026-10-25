@@ -709,8 +709,8 @@ func coverageDropLockError(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer held.Release()
-	if _, err := dropStrandedCheckpoints(repo); err == nil {
-		t.Fatal("dropStrandedCheckpoints acquired a held lock")
+	if _, err := dropParkedCheckpoints(repo, false); err == nil {
+		t.Fatal("dropParkedCheckpoints acquired a held lock")
 	}
 	_ = root
 }
@@ -724,8 +724,8 @@ func coverageDropCheckpointError(t *testing.T) {
 	if err := os.WriteFile(dataStore.CheckpointPath(), []byte("{\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dropStrandedCheckpoints(repo); err == nil {
-		t.Fatal("dropStrandedCheckpoints accepted invalid checkpoints")
+	if _, err := dropParkedCheckpoints(repo, false); err == nil {
+		t.Fatal("dropParkedCheckpoints accepted invalid checkpoints")
 	}
 	_ = root
 }
@@ -739,8 +739,8 @@ func coverageDropStateError(t *testing.T) {
 	if err := os.Mkdir(dataStore.StatePath(), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dropStrandedCheckpoints(repo); err == nil {
-		t.Fatal("dropStrandedCheckpoints accepted an invalid state path")
+	if _, err := dropParkedCheckpoints(repo, false); err == nil {
+		t.Fatal("dropParkedCheckpoints accepted an invalid state path")
 	}
 	_ = root
 }
@@ -748,23 +748,23 @@ func coverageDropStateError(t *testing.T) {
 func coverageDropHeadError(t *testing.T) {
 	root, _, _, _ := annotateCoverageRepo(t)
 	repo := fakeRewriteRepo(t, root, "head-error", "")
-	if _, err := dropStrandedCheckpoints(repo); err == nil {
-		t.Fatal("dropStrandedCheckpoints accepted a HEAD failure")
+	if _, err := dropParkedCheckpoints(repo, false); err == nil {
+		t.Fatal("dropParkedCheckpoints accepted a HEAD failure")
 	}
 }
 
 func coverageDropBranchError(t *testing.T) {
 	repo := branchErrorCoverageRepo(t)
-	if _, err := dropStrandedCheckpoints(repo); err == nil {
-		t.Fatal("dropStrandedCheckpoints accepted a current branch failure")
+	if _, err := dropParkedCheckpoints(repo, false); err == nil {
+		t.Fatal("dropParkedCheckpoints accepted a current branch failure")
 	}
 }
 
 func coverageDropParentError(t *testing.T) {
 	root, _, _, _ := annotateCoverageRepo(t)
 	repo := fakeRewriteRepo(t, root, "parents-error", "")
-	if _, err := dropStrandedCheckpoints(repo); err == nil {
-		t.Fatal("dropStrandedCheckpoints accepted a parent failure")
+	if _, err := dropParkedCheckpoints(repo, false); err == nil {
+		t.Fatal("dropParkedCheckpoints accepted a parent failure")
 	}
 }
 
@@ -781,8 +781,8 @@ func coverageDropReachabilityError(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := fakeRewriteRepo(t, root, "any-branch-error", "")
-	if _, err := dropStrandedCheckpoints(fake); err == nil {
-		t.Fatal("dropStrandedCheckpoints accepted a reachability failure")
+	if _, err := dropParkedCheckpoints(fake, false); err == nil {
+		t.Fatal("dropParkedCheckpoints accepted a reachability failure")
 	}
 }
 
@@ -797,7 +797,7 @@ func coverageDropSkippedRecord(t *testing.T) {
 	if err := store.New(repo.GitDir).WriteState(state); err != nil {
 		t.Fatal(err)
 	}
-	if dropped, err := dropStrandedCheckpoints(repo); err != nil || dropped != 0 {
+	if dropped, err := dropParkedCheckpoints(repo, false); err != nil || dropped != 0 {
 		t.Fatalf("skipped checkpoint = %d, %v", dropped, err)
 	}
 }
@@ -832,8 +832,8 @@ func coverageDropWriteError(t *testing.T) {
 	}
 	fake := fakeRewriteRepo(t, root, "drop-write-error", "")
 	t.Setenv("FAKE_GIT_CHECKPOINT_PATH", store.New(fake.GitDir).CheckpointPath())
-	if _, err := dropStrandedCheckpoints(fake); err == nil {
-		t.Fatal("dropStrandedCheckpoints accepted a checkpoint write failure")
+	if _, err := dropParkedCheckpoints(fake, false); err == nil {
+		t.Fatal("dropParkedCheckpoints accepted a checkpoint write failure")
 	}
 }
 

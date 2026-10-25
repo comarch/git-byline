@@ -160,7 +160,7 @@ func addRecoveryCheckpoint(report *RecoveryReport, checkpoint RecoveryCheckpoint
 func recoveryAction(report RecoveryReport) string {
 	switch {
 	case report.BlockedCheckpoints > 0:
-		return "restore each checkpoint's recorded branch and base to consume it, or delete every listed branch and run git-byline recover"
+		return "restore each checkpoint's recorded branch and base to consume it, delete every listed branch and run git-byline recover, or discard them with git-byline recover --drop --all"
 	case report.StrandedCheckpoints > 0:
 		return "git-byline recover --drop"
 	case report.AnnotationPending:

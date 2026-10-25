@@ -767,11 +767,23 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 // flag exists for operators who want stranded evidence gone in the same
 // step instead of parking it.
 func AnnotateDroppingStranded(repo *gitcmd.Repo) (AnnotateResult, error) {
+	return annotateDropping(repo, false)
+}
+
+// AnnotateDroppingParked discards every parked checkpoint, also those whose
+// base a branch still reaches. After many branch switches a queue can hold
+// evidence the user will never return to, and this is the explicit way to
+// clear it without resetting the byline directory.
+func AnnotateDroppingParked(repo *gitcmd.Repo) (AnnotateResult, error) {
+	return annotateDropping(repo, true)
+}
+
+func annotateDropping(repo *gitcmd.Repo, all bool) (AnnotateResult, error) {
 	result, err := Annotate(repo)
 	if err != nil {
 		return AnnotateResult{}, err
 	}
-	dropped, err := dropStrandedCheckpoints(repo)
+	dropped, err := dropParkedCheckpoints(repo, all)
 	if err != nil {
 		return AnnotateResult{}, err
 	}
@@ -786,6 +798,9 @@ func AnnotateDroppingStranded(repo *gitcmd.Repo) (AnnotateResult, error) {
 		)
 	}
 	warning := fmt.Sprintf("dropped %d stranded checkpoints with bases no branch can reach", dropped)
+	if all {
+		warning = fmt.Sprintf("dropped %d parked checkpoints from other branch contexts", dropped)
+	}
 	result.Warnings = append([]string{warning}, withoutParkedWarnings(result.Warnings)...)
 	result.ParkedCheckpoints = 0
 	result.DroppedCheckpoints = dropped
@@ -802,7 +817,9 @@ func withoutParkedWarnings(warnings []string) []string {
 	return result
 }
 
-func dropStrandedCheckpoints(repo *gitcmd.Repo) (int, error) {
+// dropParkedCheckpoints drops unconsumed checkpoints outside the current
+// branch context. Without all, every one of them must be stranded.
+func dropParkedCheckpoints(repo *gitcmd.Repo, all bool) (int, error) {
 	dataStore := store.New(repo.GitDir)
 	held, err := lock.Acquire(dataStore.LockPath(), lockTimeout)
 	if err != nil {
@@ -841,6 +858,10 @@ func dropStrandedCheckpoints(repo *gitcmd.Repo) (int, error) {
 			recordMatchesContext(record, branchRef, head) {
 			continue
 		}
+		if all {
+			sequences[record.Seq] = true
+			continue
+		}
 		if record.BaseCommit == "" {
 			// Recorded before the first commit, so no branch can ever
 			// reach it once HEAD has a parent.
@@ -860,7 +881,7 @@ func dropStrandedCheckpoints(repo *gitcmd.Repo) (int, error) {
 	}
 	dropped, err := dataStore.DropCheckpointRecords(sequences)
 	if err != nil {
-		return 0, fmt.Errorf("drop stranded checkpoints: %w", err)
+		return 0, fmt.Errorf("drop parked checkpoints: %w", err)
 	}
 	return dropped, nil
 }
