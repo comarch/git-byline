@@ -444,21 +444,9 @@ func (finder *Finder) Find(start, path, blob string) (model.Note, bool, []string
 	if start == "" {
 		return model.Note{}, false, nil, nil
 	}
-	history, ok := finder.histories[start]
-	if !ok {
-		var err error
-		history, err = finder.repo.FirstParentHistory(start)
-		if err != nil {
-			return model.Note{}, false, nil, err
-		}
-		finder.histories[start] = history
-	}
-	if finder.noted == nil {
-		noted, err := finder.repo.ListNotes()
-		if err != nil {
-			return model.Note{}, false, nil, err
-		}
-		finder.noted = noted
+	history, err := finder.load(start)
+	if err != nil {
+		return model.Note{}, false, nil, err
 	}
 	var warnings []string
 	for _, commit := range history {
@@ -466,17 +454,9 @@ func (finder *Finder) Find(start, path, blob string) (model.Note, bool, []string
 		if !ok {
 			continue
 		}
-		decoded, ok := finder.decoded[commit]
-		if !ok {
-			data, err := finder.repo.ReadNoteBlob(noteBlob)
-			if err != nil {
-				return model.Note{}, false, warnings, err
-			}
-			decoded.note, decoded.err = Decode(data)
-			if len(data) <= finder.cacheBudget {
-				finder.cacheBudget -= len(data)
-				finder.decoded[commit] = decoded
-			}
+		decoded, err := finder.note(commit, noteBlob)
+		if err != nil {
+			return model.Note{}, false, warnings, err
 		}
 		if decoded.err != nil {
 			warnings = append(warnings, fmt.Sprintf("ignored attribution note on %s: %v", commit, decoded.err))
@@ -492,4 +472,45 @@ func (finder *Finder) Find(start, path, blob string) (model.Note, bool, []string
 		return decoded.note, true, warnings, nil
 	}
 	return model.Note{}, false, warnings, nil
+}
+
+// load returns the first-parent history of start and lists the noted
+// commits on first use.
+func (finder *Finder) load(start string) ([]string, error) {
+	history, ok := finder.histories[start]
+	if !ok {
+		var err error
+		history, err = finder.repo.FirstParentHistory(start)
+		if err != nil {
+			return nil, err
+		}
+		finder.histories[start] = history
+	}
+	if finder.noted == nil {
+		noted, err := finder.repo.ListNotes()
+		if err != nil {
+			return nil, err
+		}
+		finder.noted = noted
+	}
+	return history, nil
+}
+
+// note returns the decoded note of commit and keeps it while the cache
+// budget lasts. A note that does not decode is returned with its error.
+func (finder *Finder) note(commit, noteBlob string) (decodedNote, error) {
+	if decoded, ok := finder.decoded[commit]; ok {
+		return decoded, nil
+	}
+	data, err := finder.repo.ReadNoteBlob(noteBlob)
+	if err != nil {
+		return decodedNote{}, err
+	}
+	var decoded decodedNote
+	decoded.note, decoded.err = Decode(data)
+	if len(data) <= finder.cacheBudget {
+		finder.cacheBudget -= len(data)
+		finder.decoded[commit] = decoded
+	}
+	return decoded, nil
 }
