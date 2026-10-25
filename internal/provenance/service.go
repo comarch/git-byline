@@ -234,6 +234,16 @@ func Capture(repo *gitcmd.Repo, event preset.Event, now time.Time) (CaptureResul
 	if len(snapshots) == 0 && kind == model.CheckpointKindEdit {
 		return CaptureResult{Warnings: warnings}, nil
 	}
+	// A shell command that changed nothing, like most read-only commands,
+	// leaves no evidence. Its shell_pre only repeats human worktree state
+	// that the next checkpoint or the commit fallback attributes the same
+	// way, so the pair goes away instead of filling the queue.
+	if len(snapshots) == 0 && kind == model.CheckpointKindShellPost {
+		if _, err := dataStore.DropCheckpointRecords(map[uint64]bool{before.Seq: true}); err != nil {
+			return CaptureResult{}, fmt.Errorf("drop unchanged shell_pre: %w", err)
+		}
+		return CaptureResult{Warnings: warnings}, nil
+	}
 	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i].Path < snapshots[j].Path })
 	record := model.Checkpoint{
 		Version:    model.CheckpointVersion,

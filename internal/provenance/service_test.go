@@ -1012,6 +1012,86 @@ func TestShellCaptureUsesBlobDifferences(t *testing.T) {
 	}
 }
 
+func TestShellCaptureDropsCommandsThatChangeNothing(t *testing.T) {
+	t.Parallel()
+	root := testRepo(t)
+	write(t, root, "human.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "human.txt", "base\nhuman\n")
+	shell := func(kind, eventID string, recorded int) {
+		t.Helper()
+		event := preset.Event{Kind: kind, Type: model.AuthorHuman, EventID: eventID}
+		if kind == model.CheckpointKindShellPost {
+			event.Type = model.AuthorAI
+			event.Agent, event.Model, event.Session = "claude", "model", "session"
+		}
+		result, err := Capture(repo, event, time.Now())
+		if err != nil || result.Recorded != recorded {
+			t.Fatalf("Capture(%s %s) = %+v, %v, want %d recorded", kind, eventID, result, err, recorded)
+		}
+	}
+	records := func() []model.Checkpoint {
+		t.Helper()
+		records, _, err := store.New(repo.GitDir).ReadCheckpoints()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return records
+	}
+
+	// A read-only command leaves nothing behind.
+	shell(model.CheckpointKindShellPre, "read", 1)
+	shell(model.CheckpointKindShellPost, "read", 0)
+	if got := records(); len(got) != 0 {
+		t.Fatalf("read-only command records = %+v", got)
+	}
+
+	// An unchanged command nested in a writing one drops only its own pre.
+	shell(model.CheckpointKindShellPre, "outer", 1)
+	shell(model.CheckpointKindShellPre, "inner", 1)
+	shell(model.CheckpointKindShellPost, "inner", 0)
+	write(t, root, "agent.txt", "agent\n")
+	shell(model.CheckpointKindShellPost, "outer", 1)
+	got := records()
+	if len(got) != 2 || got[0].EventID != "outer" || got[0].Kind != model.CheckpointKindShellPre ||
+		got[1].EventID != "outer" || got[1].Kind != model.CheckpointKindShellPost {
+		t.Fatalf("writing command records = %+v", got)
+	}
+
+	head := commit(t, root, "work")
+	if _, err := Annotate(repo); err != nil {
+		t.Fatal(err)
+	}
+	data, found, err := repo.ReadNote(head)
+	if err != nil || !found {
+		t.Fatalf("ReadNote() = %t, %v", found, err)
+	}
+	note, err := notes.Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authors := map[string][]model.Author{}
+	for path, file := range note.Files {
+		for _, item := range file.Ranges {
+			authors[path] = append(authors[path], item.Attribution.Author)
+		}
+	}
+	want := map[string][]model.Author{
+		"agent.txt": {model.AuthorAI},
+		"human.txt": {model.AuthorHuman},
+	}
+	if !reflect.DeepEqual(authors, want) {
+		t.Fatalf("note authors = %v, want %v", authors, want)
+	}
+}
+
 func TestShellCaptureRecordsChangedPreexistingPath(t *testing.T) {
 	t.Parallel()
 	root := testRepo(t)
