@@ -584,6 +584,21 @@ func Annotate(repo *gitcmd.Repo) (AnnotateResult, error) {
 		warnings = append(warnings, "merge commit uses first-parent attribution; unmatched content is untracked")
 	}
 
+	// A large merge touches hundreds of paths. Batched lookups keep the
+	// number of Git processes flat; each prefetch is only a cache, so a
+	// failed one leaves the paths to their own Git commands.
+	defer repo.StartBatch()()
+	treePaths := append([]string(nil), paths...)
+	for _, change := range changes {
+		if change.OldPath != "" {
+			treePaths = append(treePaths, change.OldPath)
+		}
+	}
+	if parent != "" {
+		_ = repo.PrefetchBlobIDs(parent, treePaths)
+	}
+	_ = repo.PrefetchBlobIDs(head, paths)
+	repo.PrefetchIgnored(paths)
 	finder := notes.NewFinder(repo)
 	for _, path := range paths {
 		change, changed := changedByPath[path]

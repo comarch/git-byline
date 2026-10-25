@@ -47,6 +47,8 @@ type Repo struct {
 	GitDir    string
 	CommonDir string
 	gitBin    string
+	batch     *batchScope
+	trees     map[string]map[string]treeEntry
 }
 
 // Change describes one path changed by a commit.
@@ -749,6 +751,9 @@ func (repo *Repo) BlobID(revision, path string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
+	if entry, ok := repo.trees[revision][path]; ok {
+		return entry.blob, entry.exists, nil
+	}
 	out, err := repo.run("read tree entry", nil, "ls-tree", "-z", revision, "--", path)
 	if err != nil {
 		return "", false, err
@@ -772,6 +777,9 @@ func (repo *Repo) BlobID(revision, path string) (string, bool, error) {
 func (repo *Repo) ReadBlob(oid string) ([]byte, error) {
 	if !model.ValidObjectID(oid) {
 		return nil, errors.New("invalid blob object ID")
+	}
+	if data, batched, err := repo.readBatched("read blob", oid, maxOutputBytes); batched {
+		return data, err
 	}
 	out, err := repo.run("read blob", nil, "cat-file", "blob", oid)
 	if err != nil {
@@ -1011,6 +1019,11 @@ func (repo *Repo) SnapshotWorktreeWithLimit(path string, maxBytes int64) (model.
 
 // Ignored reports whether path is ignored by Git.
 func (repo *Repo) Ignored(path string) (bool, error) {
+	if repo.batch != nil {
+		if ignored, ok := repo.batch.ignored[path]; ok {
+			return ignored, nil
+		}
+	}
 	out, err := repo.run("check ignored path", nil, "check-ignore", "-q", "--", path)
 	if err == nil {
 		return true, nil
@@ -1086,6 +1099,9 @@ func (repo *Repo) ReadNoteRef(ref, commit string) ([]byte, bool, error) {
 func (repo *Repo) ReadNoteBlob(oid string) ([]byte, error) {
 	if !model.ValidObjectID(oid) {
 		return nil, errors.New("invalid note blob object ID")
+	}
+	if data, batched, err := repo.readBatched("read attribution note", oid, maxNoteBytes); batched {
+		return data, err
 	}
 	return repo.runLimited("read attribution note", maxNoteBytes, nil, "cat-file", "blob", oid)
 }

@@ -2292,6 +2292,11 @@ if [ "$FAKE_GIT_MODE" = "blob-size-error" ] &&
   printf '%s\n' 'forced blob size failure' >&2
   exit 2
 fi
+if { [ "$FAKE_GIT_MODE" = "content-size-budget" ] || [ "$FAKE_GIT_MODE" = "read-blob-error" ]; } &&
+   [ "$1" = "cat-file" ] && [ "$2" = "--batch" ]; then
+  printf '%s\n' 'forced batch failure' >&2
+  exit 2
+fi
 if [ "$FAKE_GIT_MODE" = "content-size-budget" ] &&
    [ "$1" = "cat-file" ] && [ "$2" = "blob" ]; then
   head -c 67108865 /dev/zero
@@ -2325,12 +2330,18 @@ if [ "$FAKE_GIT_MODE" = "ls-tree-error" ] &&
   exit 2
 fi
 if [ "$FAKE_GIT_MODE" = "target-blob-error" ] &&
+   [ "$1" = "--literal-pathspecs" ] && [ "$2" = "ls-tree" ] && [ "$6" = "$FAKE_GIT_FAIL_COMMIT" ]; then
+  printf '%s\n' 'forced target tree prefetch failure' >&2
+  exit 2
+fi
+if [ "$FAKE_GIT_MODE" = "target-blob-error" ] &&
    [ "$1" = "ls-tree" ] && [ "$3" = "$FAKE_GIT_FAIL_COMMIT" ]; then
   printf '%s\n' 'forced target tree read failure' >&2
   exit 2
 fi
 if [ "$FAKE_GIT_MODE" = "target-blob-missing" ] &&
-   [ "$1" = "ls-tree" ] && [ "$3" = "$FAKE_GIT_FAIL_COMMIT" ]; then
+   { [ "$1" = "ls-tree" ] && [ "$3" = "$FAKE_GIT_FAIL_COMMIT" ] ||
+     [ "$1" = "--literal-pathspecs" ] && [ "$2" = "ls-tree" ] && [ "$6" = "$FAKE_GIT_FAIL_COMMIT" ]; }; then
   exit 0
 fi
 if [ "$FAKE_GIT_MODE" = "dirty-error" ] &&
