@@ -310,7 +310,7 @@ func (repo *Repo) NotesMergeInProgress() (bool, error) {
 	// A branch or tag named NOTES_MERGE_PARTIAL also satisfies a plain
 	// rev-parse, so only the exact pseudoref name counts.
 	out, err := repo.run("read notes merge state", nil,
-		revParse, "--verify", "--quiet", "--symbolic-full-name", "NOTES_MERGE_PARTIAL")
+		revParse, verify, "--quiet", "--symbolic-full-name", "NOTES_MERGE_PARTIAL")
 	var commandErr *CommandError
 	if err != nil && (!errors.As(err, &commandErr) || commandErr.ExitCode != 1) {
 		return false, err

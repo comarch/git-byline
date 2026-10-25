@@ -2343,8 +2343,8 @@ if [ "$FAKE_GIT_MODE" = "target-blob-error" ] &&
   exit 2
 fi
 if [ "$FAKE_GIT_MODE" = "target-blob-missing" ] &&
-   { [ "$1" = "ls-tree" ] && [ "$3" = "$FAKE_GIT_FAIL_COMMIT" ] ||
-     [ "$1" = "--literal-pathspecs" ] && [ "$2" = "ls-tree" ] && [ "$6" = "$FAKE_GIT_FAIL_COMMIT" ]; }; then
+   { { [ "$1" = "ls-tree" ] && [ "$3" = "$FAKE_GIT_FAIL_COMMIT" ]; } ||
+     { [ "$1" = "--literal-pathspecs" ] && [ "$2" = "ls-tree" ] && [ "$6" = "$FAKE_GIT_FAIL_COMMIT" ]; }; }; then
   exit 0
 fi
 if [ "$FAKE_GIT_MODE" = "dirty-error" ] &&

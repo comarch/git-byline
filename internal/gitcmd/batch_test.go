@@ -312,6 +312,9 @@ case "$1 $2" in
   exit 0 ;;
 "cat-file blob") printf 'single'; exit 0 ;;
 "rev-parse --show-object-format=storage") printf 'sha1\n'; exit 0 ;;
+"rev-parse --show-toplevel")
+  if [ "$#" -gt 2 ]; then printf 'one line\n'; exit 0; fi
+  printf 'fatal: forced toplevel failure\n' >&2; exit 128 ;;
 "hash-object -w") printf 'forced hash failure\n' >&2; exit 2 ;;
 "check-ignore -z") printf 'unexpected\0'; exit 0 ;;
 "check-ignore -q") exit 1 ;;
@@ -365,6 +368,39 @@ func TestObjectBatchStartFailureFallsBack(t *testing.T) {
 	repo.gitBin = gitBin
 	if data, err := repo.ReadBlob(strings.Repeat("a", 40)); err != nil || string(data) != "single" {
 		t.Fatalf("ReadBlob after failed start = %q, %v", data, err)
+	}
+}
+
+func TestObjectBatchWriteFailureFallsBack(t *testing.T) {
+	oid := strings.Repeat("a", 40)
+	repo := fakeBatchGit(t, "eof")
+	defer repo.StartBatch()()
+	if _, err := repo.ReadBlob(oid); err != nil {
+		t.Fatal(err)
+	}
+	objects := repo.batch.objects
+	// Wait closes our end of the pipes, so the next request cannot be sent.
+	_ = objects.command.Wait()
+	objects.broken = false
+	if _, answered, err := objects.read("read blob", oid, maxOutputBytes); answered || err != nil || !objects.broken {
+		t.Fatalf("read() after a failed write = %t, %v, broken %t", answered, err, objects.broken)
+	}
+}
+
+func TestBatchHelpersReportGitFailures(t *testing.T) {
+	repo := fakeBatchGit(t, "")
+	if _, _, _, err := repo.discoverDirectories(); err == nil ||
+		!strings.Contains(err.Error(), "forced toplevel failure") {
+		t.Fatalf("discoverDirectories(fallback failure) = %v", err)
+	}
+	if _, _, err := repo.SnapshotWorktreeStored("../outside", 1<<20, nil); err == nil ||
+		errors.Is(err, ErrSnapshotBudget) {
+		t.Fatalf("SnapshotWorktreeStored(outside) = %v", err)
+	}
+	missing := &Repo{Root: repo.Root, GitDir: repo.GitDir, CommonDir: repo.CommonDir,
+		gitBin: filepath.Join(t.TempDir(), "missing-git")}
+	if _, err := missing.HashContent([]byte("content")); err == nil {
+		t.Fatal("HashContent without an object format succeeded")
 	}
 }
 

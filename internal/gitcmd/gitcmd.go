@@ -34,6 +34,7 @@ const (
 	revParse       = "rev-parse"
 	catFile        = "cat-file"
 	absolutePaths  = "--path-format=absolute"
+	verify         = "--verify"
 	discoverOp     = "discover worktree"
 	readNoteOp     = "read attribution note"
 )
@@ -146,7 +147,7 @@ func (repo *Repo) discoverDirectories() (string, string, string, error) {
 
 // Head returns HEAD or an empty value for an unborn repository.
 func (repo *Repo) Head() (string, error) {
-	out, err := repo.run("read HEAD", nil, revParse, "--verify", "HEAD")
+	out, err := repo.run("read HEAD", nil, revParse, verify, "HEAD")
 	if err != nil {
 		var commandErr *CommandError
 		if errors.As(err, &commandErr) && commandErr.ExitCode == 128 {
@@ -184,7 +185,7 @@ func (repo *Repo) ObjectIDLength() (int, error) {
 
 // PreviousHead returns the previous HEAD value from the current reflog entry.
 func (repo *Repo) PreviousHead() (string, bool, error) {
-	out, err := repo.run("read previous HEAD", nil, revParse, "--verify", "HEAD@{1}")
+	out, err := repo.run("read previous HEAD", nil, revParse, verify, "HEAD@{1}")
 	if err != nil {
 		var commandErr *CommandError
 		if errors.As(err, &commandErr) && commandErr.ExitCode == 128 {
@@ -685,7 +686,7 @@ func (scanner *BranchScanner) commitExistsQuiet(commit string) (bool, error) {
 		return false, err
 	}
 	_, err := scanner.repo.run("check commit exists", nil,
-		revParse, "--verify", "--quiet", commit+"^{commit}")
+		revParse, verify, "--quiet", commit+"^{commit}")
 	if err == nil {
 		return true, nil
 	}
@@ -1254,7 +1255,7 @@ func (repo *Repo) RefValue(ref string) (string, bool, error) {
 	if err := validateRefName(ref); err != nil {
 		return "", false, err
 	}
-	out, err := repo.run("read ref", nil, revParse, "--verify", ref)
+	out, err := repo.run("read ref", nil, revParse, verify, ref)
 	if err != nil {
 		var commandErr *CommandError
 		if errors.As(err, &commandErr) && commandErr.ExitCode == 128 {
