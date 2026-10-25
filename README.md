@@ -647,8 +647,10 @@ The full matrix with per-operation status lives in
 
 Agents do not only use edit tools. `shell_pre` and `shell_post` checkpoints
 snapshot the dirty set and attribute only paths whose blobs actually changed,
-so concurrent unrelated human edits are not claimed. The remaining race is a
-documented limitation, not a silent guess.
+so concurrent unrelated human edits are not claimed. A shell command that
+changes nothing, like most read-only commands, leaves no checkpoint: its
+`shell_pre` is dropped when the matching `shell_post` sees no change. The
+remaining race is a documented limitation, not a silent guess.
 
 ### Reconstruct attribution after forge merges
 
