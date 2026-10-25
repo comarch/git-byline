@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.8.0](https://github.com/comarch/git-byline/compare/v1.7.0...v1.8.0) (2026-10-25)
+
+
+### Features
+
+* add recover --drop --all to clear parked checkpoints ([cba9e96](https://github.com/comarch/git-byline/commit/cba9e96432e35cf738734521b6f6a250664e2e9e)), closes [#90](https://github.com/comarch/git-byline/issues/90)
+
+
+### Bug Fixes
+
+* **gitcmd:** follow a relocated global Git configuration ([2c8d941](https://github.com/comarch/git-byline/commit/2c8d9410c35b0be226c3fd2696da15bab7595228))
+* **gitcmd:** read the system Git configuration ([6cfec4c](https://github.com/comarch/git-byline/commit/6cfec4c011f925c95eccd9fddfab47a79f78596b)), closes [#90](https://github.com/comarch/git-byline/issues/90)
+* **provenance:** drop shell checkpoints for no-op commands ([9208fc0](https://github.com/comarch/git-byline/commit/9208fc0f943649102e5ca88c4ba61acf31b4442d)), closes [#90](https://github.com/comarch/git-byline/issues/90)
+
+
+### Performance Improvements
+
+* **gitcmd:** batch blob, tree and ignore lookups in annotate ([1510d0a](https://github.com/comarch/git-byline/commit/1510d0a3a9f2689f474534ac2d44867f3368db19)), closes [#90](https://github.com/comarch/git-byline/issues/90)
+* **gitcmd:** discover the repository with one rev-parse ([278a708](https://github.com/comarch/git-byline/commit/278a708513c8db5ef7948038fce22b6fd49c72e9)), closes [#90](https://github.com/comarch/git-byline/issues/90)
+* **hooks:** start git-byline only for committed ref transactions ([2816e09](https://github.com/comarch/git-byline/commit/2816e09b4b660ec3af351f555bc7aae5f64cc462)), closes [#90](https://github.com/comarch/git-byline/issues/90)
+* **notes:** bound the notes one finder keeps decoded ([97dee23](https://github.com/comarch/git-byline/commit/97dee23cca41ef0b509c89314b8e14f682835daf))
+* **notes:** find file attribution through the notes list ([6e0f154](https://github.com/comarch/git-byline/commit/6e0f15427f9328b87f465a1c0dde5e1f7479e9b0)), closes [#90](https://github.com/comarch/git-byline/issues/90)
+* **provenance:** share one notes finder across stashed paths ([f58ad39](https://github.com/comarch/git-byline/commit/f58ad39f4deca5947cbe3cd5ee18c9fc8670e52e))
+* **provenance:** skip blob writes already stored by checkpoints ([c1ab2e4](https://github.com/comarch/git-byline/commit/c1ab2e42e19c9bd6367abfbb4753e493fa85e86e)), closes [#90](https://github.com/comarch/git-byline/issues/90)
+
 ## [1.7.0](https://github.com/comarch/git-byline/compare/v1.6.0...v1.7.0) (2026-10-08)
 
 
