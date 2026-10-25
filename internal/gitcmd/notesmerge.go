@@ -85,7 +85,7 @@ func (repo *Repo) ObjectType(oid string) (string, error) {
 	if !model.ValidObjectID(oid) {
 		return "", errors.New("invalid object ID")
 	}
-	out, err := repo.run("read object type", nil, "cat-file", "-t", oid)
+	out, err := repo.run("read object type", nil, catFile, "-t", oid)
 	if err != nil {
 		return "", err
 	}
@@ -227,7 +227,7 @@ func (batch *notesHistoryBatch) check() error {
 		return nil
 	}
 	out, err := batch.repo.run("read notes history objects", strings.NewReader(strings.Join(batch.ids, "\n")+"\n"),
-		"cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)")
+		catFile, "--batch-check=%(objectname) %(objecttype) %(objectsize)")
 	if err != nil {
 		return err
 	}
@@ -310,7 +310,7 @@ func (repo *Repo) NotesMergeInProgress() (bool, error) {
 	// A branch or tag named NOTES_MERGE_PARTIAL also satisfies a plain
 	// rev-parse, so only the exact pseudoref name counts.
 	out, err := repo.run("read notes merge state", nil,
-		"rev-parse", "--verify", "--quiet", "--symbolic-full-name", "NOTES_MERGE_PARTIAL")
+		revParse, "--verify", "--quiet", "--symbolic-full-name", "NOTES_MERGE_PARTIAL")
 	var commandErr *CommandError
 	if err != nil && (!errors.As(err, &commandErr) || commandErr.ExitCode != 1) {
 		return false, err

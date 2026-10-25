@@ -31,6 +31,11 @@ const (
 	maxNoteBytes   = 16 << 20
 	bylineNotesRef = "refs/notes/byline"
 	globalConfig   = "--global"
+	revParse       = "rev-parse"
+	catFile        = "cat-file"
+	absolutePaths  = "--path-format=absolute"
+	discoverOp     = "discover worktree"
+	readNoteOp     = "read attribution note"
 )
 
 // ErrOutputLimit reports Git output larger than the supported file bound.
@@ -71,7 +76,7 @@ type CommandError struct {
 func IsNotRepository(err error) bool {
 	var commandErr *CommandError
 	return errors.As(err, &commandErr) &&
-		commandErr.Operation == "discover worktree" &&
+		commandErr.Operation == discoverOp &&
 		commandErr.ExitCode == 128 &&
 		strings.Contains(strings.ToLower(commandErr.Stderr), "not a git repository")
 }
@@ -115,8 +120,8 @@ func Discover(dir string) (*Repo, error) {
 // line break makes the combined output ambiguous, so any output that is not
 // exactly three lines falls back to one rev-parse per directory.
 func (repo *Repo) discoverDirectories() (string, string, string, error) {
-	out, err := repo.run("discover worktree", nil,
-		"rev-parse", "--show-toplevel", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	out, err := repo.run(discoverOp, nil,
+		revParse, "--show-toplevel", absolutePaths, "--git-dir", "--git-common-dir")
 	if err != nil {
 		return "", "", "", err
 	}
@@ -124,15 +129,15 @@ func (repo *Repo) discoverDirectories() (string, string, string, error) {
 	if len(lines) == 3 && lines[0] != "" && lines[1] != "" && lines[2] != "" {
 		return lines[0], lines[1], lines[2], nil
 	}
-	root, err := repo.text("discover worktree", nil, "rev-parse", "--show-toplevel")
+	root, err := repo.text(discoverOp, nil, revParse, "--show-toplevel")
 	if err != nil {
 		return "", "", "", err
 	}
-	gitDir, err := repo.text("discover git directory", nil, "rev-parse", "--path-format=absolute", "--git-dir")
+	gitDir, err := repo.text("discover git directory", nil, revParse, absolutePaths, "--git-dir")
 	if err != nil {
 		return "", "", "", err
 	}
-	commonDir, err := repo.text("discover common git directory", nil, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	commonDir, err := repo.text("discover common git directory", nil, revParse, absolutePaths, "--git-common-dir")
 	if err != nil {
 		return "", "", "", err
 	}
@@ -141,7 +146,7 @@ func (repo *Repo) discoverDirectories() (string, string, string, error) {
 
 // Head returns HEAD or an empty value for an unborn repository.
 func (repo *Repo) Head() (string, error) {
-	out, err := repo.run("read HEAD", nil, "rev-parse", "--verify", "HEAD")
+	out, err := repo.run("read HEAD", nil, revParse, "--verify", "HEAD")
 	if err != nil {
 		var commandErr *CommandError
 		if errors.As(err, &commandErr) && commandErr.ExitCode == 128 {
@@ -162,7 +167,7 @@ func (repo *Repo) ObjectIDLength() (int, error) {
 	if repo.idLength != 0 {
 		return repo.idLength, nil
 	}
-	out, err := repo.run("read object format", nil, "rev-parse", "--show-object-format=storage")
+	out, err := repo.run("read object format", nil, revParse, "--show-object-format=storage")
 	if err != nil {
 		return 0, err
 	}
@@ -179,7 +184,7 @@ func (repo *Repo) ObjectIDLength() (int, error) {
 
 // PreviousHead returns the previous HEAD value from the current reflog entry.
 func (repo *Repo) PreviousHead() (string, bool, error) {
-	out, err := repo.run("read previous HEAD", nil, "rev-parse", "--verify", "HEAD@{1}")
+	out, err := repo.run("read previous HEAD", nil, revParse, "--verify", "HEAD@{1}")
 	if err != nil {
 		var commandErr *CommandError
 		if errors.As(err, &commandErr) && commandErr.ExitCode == 128 {
@@ -680,7 +685,7 @@ func (scanner *BranchScanner) commitExistsQuiet(commit string) (bool, error) {
 		return false, err
 	}
 	_, err := scanner.repo.run("check commit exists", nil,
-		"rev-parse", "--verify", "--quiet", commit+"^{commit}")
+		revParse, "--verify", "--quiet", commit+"^{commit}")
 	if err == nil {
 		return true, nil
 	}
@@ -787,7 +792,7 @@ func (repo *Repo) ReadBlob(oid string) ([]byte, error) {
 	if data, batched, err := repo.readBatched("read blob", oid, maxOutputBytes); batched {
 		return data, err
 	}
-	out, err := repo.run("read blob", nil, "cat-file", "blob", oid)
+	out, err := repo.run("read blob", nil, catFile, "blob", oid)
 	if err != nil {
 		return nil, err
 	}
@@ -799,7 +804,7 @@ func (repo *Repo) BlobSize(oid string) (int64, error) {
 	if !model.ValidObjectID(oid) {
 		return 0, errors.New("invalid blob object ID")
 	}
-	out, err := repo.run("read blob size", nil, "cat-file", "-s", oid)
+	out, err := repo.run("read blob size", nil, catFile, "-s", oid)
 	if err != nil {
 		return 0, err
 	}
@@ -1113,7 +1118,7 @@ func (repo *Repo) ReadNoteRef(ref, commit string) ([]byte, bool, error) {
 		return nil, false, errors.New("invalid commit object ID")
 	}
 	out, err := repo.runLimited(
-		"read attribution note",
+		readNoteOp,
 		maxNoteBytes,
 		nil,
 		"notes",
@@ -1137,10 +1142,10 @@ func (repo *Repo) ReadNoteBlob(oid string) ([]byte, error) {
 	if !model.ValidObjectID(oid) {
 		return nil, errors.New("invalid note blob object ID")
 	}
-	if data, batched, err := repo.readBatched("read attribution note", oid, maxNoteBytes); batched {
+	if data, batched, err := repo.readBatched(readNoteOp, oid, maxNoteBytes); batched {
 		return data, err
 	}
-	return repo.runLimited("read attribution note", maxNoteBytes, nil, "cat-file", "blob", oid)
+	return repo.runLimited(readNoteOp, maxNoteBytes, nil, catFile, "blob", oid)
 }
 
 // ReadNote reads a note for commit from the attribution ref.
@@ -1249,7 +1254,7 @@ func (repo *Repo) RefValue(ref string) (string, bool, error) {
 	if err := validateRefName(ref); err != nil {
 		return "", false, err
 	}
-	out, err := repo.run("read ref", nil, "rev-parse", "--verify", ref)
+	out, err := repo.run("read ref", nil, revParse, "--verify", ref)
 	if err != nil {
 		var commandErr *CommandError
 		if errors.As(err, &commandErr) && commandErr.ExitCode == 128 {
@@ -1601,8 +1606,8 @@ func (repo *Repo) GitPath(name string) (string, error) {
 	out, err := repo.run(
 		"resolve Git path",
 		nil,
-		"rev-parse",
-		"--path-format=absolute",
+		revParse,
+		absolutePaths,
 		"--git-path",
 		name,
 	)

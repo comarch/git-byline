@@ -53,7 +53,9 @@ type batchScope struct {
 // A nested StartBatch returns a stop function that does nothing.
 func (repo *Repo) StartBatch() func() {
 	if repo.batch != nil {
-		return func() {}
+		return func() {
+			// The outer StartBatch owns the process and stops it.
+		}
 	}
 	scope := &batchScope{}
 	repo.batch = scope
@@ -86,7 +88,7 @@ func (repo *Repo) readBatched(operation, oid string, limit int) ([]byte, bool, e
 
 func (repo *Repo) startObjectBatch() (*objectBatch, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	command := exec.CommandContext(ctx, repo.gitBin, "cat-file", "--batch")
+	command := exec.CommandContext(ctx, repo.gitBin, catFile, "--batch")
 	command.Dir = repo.Root
 	command.Env = append(gitEnvironment(),
 		"GIT_TERMINAL_PROMPT=0",
@@ -208,19 +210,7 @@ func (repo *Repo) PrefetchBlobIDs(revision string, paths []string) error {
 	if !model.ValidObjectID(revision) {
 		return errors.New("invalid revision object ID")
 	}
-	wanted := map[string]bool{}
-	var pending []string
-	for _, path := range paths {
-		normalized, err := NormalizePath(path)
-		if err != nil {
-			continue
-		}
-		if _, cached := repo.trees[revision][normalized]; cached || wanted[normalized] {
-			continue
-		}
-		wanted[normalized] = true
-		pending = append(pending, normalized)
-	}
+	wanted, pending := repo.uncachedTreePaths(revision, paths)
 	if len(pending) == 0 {
 		return nil
 	}
@@ -232,45 +222,77 @@ func (repo *Repo) PrefetchBlobIDs(revision string, paths []string) error {
 	}
 	entries := repo.trees[revision]
 	for len(pending) > 0 {
-		chunk, size := 0, 0
-		for chunk < len(pending) && (chunk == 0 || size+len(pending[chunk])+1 <= maxBatchArgBytes) {
-			size += len(pending[chunk]) + 1
-			chunk++
-		}
-		args := append([]string{"--literal-pathspecs", "ls-tree", "-r", "-t", "-z", revision, "--"}, pending[:chunk]...)
-		found := map[string]treeEntry{}
-		nonBlob := map[string]bool{}
-		err := repo.streamRecords("read tree entries", 0, func(record string) error {
-			meta, path, ok := strings.Cut(record, "\t")
-			if !ok {
-				return errors.New("git returned invalid tree entry")
-			}
-			if !wanted[path] {
-				return nil
-			}
-			fields := strings.Fields(meta)
-			if len(fields) != 3 || !model.ValidObjectID(fields[2]) {
-				return errors.New("git returned invalid tree entry")
-			}
-			if fields[1] != "blob" {
-				nonBlob[path] = true
-				return nil
-			}
-			found[path] = treeEntry{blob: fields[2], exists: true}
-			return nil
-		}, args...)
+		chunk := pending[:treeChunkSize(pending)]
+		found, nonBlob, err := repo.readTreeEntries(revision, chunk, wanted)
 		if err != nil {
 			return err
 		}
-		for _, path := range pending[:chunk] {
-			if nonBlob[path] {
-				continue
+		for _, path := range chunk {
+			if !nonBlob[path] {
+				entries[path] = found[path]
 			}
-			entries[path] = found[path]
 		}
-		pending = pending[chunk:]
+		pending = pending[len(chunk):]
 	}
 	return nil
+}
+
+// uncachedTreePaths returns the valid, distinct paths without a cached tree
+// entry at revision, as a set and in their first order.
+func (repo *Repo) uncachedTreePaths(revision string, paths []string) (map[string]bool, []string) {
+	wanted := map[string]bool{}
+	var pending []string
+	for _, path := range paths {
+		normalized, err := NormalizePath(path)
+		if err != nil || wanted[normalized] {
+			continue
+		}
+		if _, cached := repo.trees[revision][normalized]; cached {
+			continue
+		}
+		wanted[normalized] = true
+		pending = append(pending, normalized)
+	}
+	return wanted, pending
+}
+
+// treeChunkSize counts the leading paths that fit in one ls-tree command
+// line. It always takes at least one path.
+func treeChunkSize(pending []string) int {
+	chunk, size := 0, 0
+	for chunk < len(pending) && (chunk == 0 || size+len(pending[chunk])+1 <= maxBatchArgBytes) {
+		size += len(pending[chunk]) + 1
+		chunk++
+	}
+	return chunk
+}
+
+// readTreeEntries runs one ls-tree for chunk and returns the blob entries
+// and the wanted paths whose entry is not a blob.
+func (repo *Repo) readTreeEntries(revision string, chunk []string, wanted map[string]bool) (map[string]treeEntry, map[string]bool, error) {
+	args := append([]string{"--literal-pathspecs", "ls-tree", "-r", "-t", "-z", revision, "--"}, chunk...)
+	found := map[string]treeEntry{}
+	nonBlob := map[string]bool{}
+	err := repo.streamRecords("read tree entries", 0, func(record string) error {
+		meta, path, ok := strings.Cut(record, "\t")
+		if !ok {
+			return errors.New("git returned invalid tree entry")
+		}
+		if !wanted[path] {
+			return nil
+		}
+		fields := strings.Fields(meta)
+		if len(fields) != 3 || !model.ValidObjectID(fields[2]) {
+			return errors.New("git returned invalid tree entry")
+		}
+		if fields[1] != "blob" {
+			nonBlob[path] = true
+			return nil
+		}
+		found[path] = treeEntry{blob: fields[2], exists: true}
+		return nil
+	}, args...)
+	return found, nonBlob, err
 }
 
 // PrefetchIgnored checks many worktree paths with one check-ignore run and

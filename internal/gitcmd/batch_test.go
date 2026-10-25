@@ -41,6 +41,31 @@ func TestObjectBatchReads(t *testing.T) {
 	if repo.batch == nil || repo.batch.objects != objects {
 		t.Fatal("nested StartBatch stopped the running batch")
 	}
+	checkObjectBatchAnswers(t, objects, blob, tree, missing)
+	// Objects the batch does not answer keep the single command error.
+	if _, err := repo.ReadBlob(missing); err == nil {
+		t.Fatal("ReadBlob accepted a missing object")
+	}
+	if _, err := repo.ReadBlob(tree); err == nil {
+		t.Fatal("ReadBlob accepted a tree")
+	}
+	objects.broken = true
+	if data, err := repo.ReadBlob(blob); err != nil || string(data) != "one\ntwo\n" {
+		t.Fatalf("ReadBlob(broken batch) = %q, %v", data, err)
+	}
+	stop()
+	if repo.batch != nil {
+		t.Fatal("stop left the batch in place")
+	}
+	if data, err := repo.ReadBlob(blob); err != nil || string(data) != "one\ntwo\n" {
+		t.Fatalf("ReadBlob(after stop) = %q, %v", data, err)
+	}
+}
+
+// checkObjectBatchAnswers reads each kind of object through one running
+// batch process, so a later answer shows the earlier ones left no output.
+func checkObjectBatchAnswers(t *testing.T, objects *objectBatch, blob, tree, missing string) {
+	t.Helper()
 	tests := []struct {
 		name     string
 		oid      string
@@ -61,24 +86,6 @@ func TestObjectBatchReads(t *testing.T) {
 			t.Fatalf("%s: read() = %q, %t, %v, want %q, %t, %v",
 				test.name, data, answered, err, test.want, test.answered, test.err)
 		}
-	}
-	// Objects the batch does not answer keep the single command error.
-	if _, err := repo.ReadBlob(missing); err == nil {
-		t.Fatal("ReadBlob accepted a missing object")
-	}
-	if _, err := repo.ReadBlob(tree); err == nil {
-		t.Fatal("ReadBlob accepted a tree")
-	}
-	objects.broken = true
-	if data, err := repo.ReadBlob(blob); err != nil || string(data) != "one\ntwo\n" {
-		t.Fatalf("ReadBlob(broken batch) = %q, %v", data, err)
-	}
-	stop()
-	if repo.batch != nil {
-		t.Fatal("stop left the batch in place")
-	}
-	if data, err := repo.ReadBlob(blob); err != nil || string(data) != "one\ntwo\n" {
-		t.Fatalf("ReadBlob(after stop) = %q, %v", data, err)
 	}
 }
 
