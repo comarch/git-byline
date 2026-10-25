@@ -1727,16 +1727,23 @@ func (repo *Repo) streamRecords(operation string, delimiter byte, handle func(st
 
 // gitEnvironment drops the GIT_ variables a hook inherits, like GIT_DIR or
 // GIT_INDEX_FILE, because they describe the operation that runs the hook.
-// The variables that choose the system configuration stay, so git-byline
-// reads the same ignore rules, line ending, and long path settings as the
-// Git of the user. Git for Windows keeps those settings in the system file.
+// The variables that choose the system and global configuration stay, so
+// git-byline reads the same ignore rules, line ending, and long path
+// settings as the Git of the user. Git for Windows keeps those settings in
+// the system file.
+var configFileVariables = map[string]bool{
+	"GIT_CONFIG_NOSYSTEM": true,
+	"GIT_CONFIG_SYSTEM":   true,
+	"GIT_CONFIG_GLOBAL":   true,
+}
+
 func gitEnvironment() []string {
 	source := os.Environ()
 	result := make([]string, 0, len(source))
 	for _, value := range source {
 		name, _, _ := strings.Cut(value, "=")
 		upper := strings.ToUpper(name)
-		if strings.HasPrefix(upper, "GIT_") && upper != "GIT_CONFIG_NOSYSTEM" && upper != "GIT_CONFIG_SYSTEM" {
+		if strings.HasPrefix(upper, "GIT_") && !configFileVariables[upper] {
 			continue
 		}
 		result = append(result, value)

@@ -679,6 +679,30 @@ func TestSystemConfigIgnoreRulesApply(t *testing.T) {
 	}
 }
 
+func TestGlobalConfigFileIgnoreRulesApply(t *testing.T) {
+	root := initRepository(t)
+	writeFile(t, root, "build.out", "generated\n")
+	excludes := filepath.Join(t.TempDir(), "excludes")
+	if err := os.WriteFile(excludes, []byte("*.out\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	config := "[core]\n\texcludesFile = " + filepath.ToSlash(excludes) + "\n"
+	if err := os.WriteFile(global, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A user can move the global file away from HOME, and git-byline must
+	// follow it like the user's Git does.
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ignored, err := repo.Ignored("build.out"); err != nil || !ignored {
+		t.Fatalf("Ignored(build.out) with relocated global excludes = %t, %v", ignored, err)
+	}
+}
+
 func TestDiscoverAndConfigErrors(t *testing.T) {
 	t.Parallel()
 	if _, err := Discover(t.TempDir()); err == nil {
