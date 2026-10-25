@@ -353,7 +353,7 @@ func coverageBlameNoteError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := fakeRewriteRepo(t, root, "notes-read-error", head)
+	fake := fakeRewriteRepo(t, root, "notes-list-error", head)
 	if _, err := Blame(fake, coverageFile); err == nil {
 		t.Fatal("Blame accepted a note lookup failure")
 	}

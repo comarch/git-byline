@@ -1081,6 +1081,15 @@ func (repo *Repo) ReadNoteRef(ref, commit string) ([]byte, bool, error) {
 	return nil, false, err
 }
 
+// ReadNoteBlob reads a note blob that ListNotes returned, with the same
+// size limit as ReadNote.
+func (repo *Repo) ReadNoteBlob(oid string) ([]byte, error) {
+	if !model.ValidObjectID(oid) {
+		return nil, errors.New("invalid note blob object ID")
+	}
+	return repo.runLimited("read attribution note", maxNoteBytes, nil, "cat-file", "blob", oid)
+}
+
 // ReadNote reads a note for commit from the attribution ref.
 func (repo *Repo) ReadNote(commit string) ([]byte, bool, error) {
 	return repo.ReadNoteRef(bylineNotesRef, commit)

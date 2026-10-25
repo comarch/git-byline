@@ -469,6 +469,85 @@ func TestFindFile(t *testing.T) {
 	}
 }
 
+func TestFinderWalksPastCommitsWithoutNotes(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notesGit(t, root, "init", "-b", "main")
+	notesGit(t, root, "config", "user.name", "Test User")
+	notesGit(t, root, "config", "user.email", "test@example.invalid")
+	var commits []string
+	for index, name := range []string{"a", "b", "c", "d"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		notesGit(t, root, "add", name)
+		notesGit(t, root, "commit", "-m", fmt.Sprintf("commit %d", index))
+		commits = append(commits, strings.TrimSpace(notesGit(t, root, "rev-parse", "HEAD")))
+	}
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := commits[3]
+	blobs := map[string]string{}
+	for _, name := range []string{"a", "b"} {
+		blob, _, err := repo.BlobID(head, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blobs[name] = blob
+	}
+	for commit, files := range map[string][]string{commits[0]: {"a"}, commits[1]: {"a", "b"}} {
+		note := model.Note{Version: model.NoteVersion, Files: map[string]model.NoteFile{}}
+		for _, name := range files {
+			note.Files[name] = model.NoteFile{Blob: blobs[name], Ranges: []model.Range{{
+				Start: 1, End: 1,
+				Attribution: model.Attribution{Author: model.AuthorHuman},
+			}}}
+		}
+		data, err := Encode(note)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.WriteNote(commit, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.WriteNote(commits[2], []byte(`{"version":9}`)); err != nil {
+		t.Fatal(err)
+	}
+	finder := NewFinder(repo)
+	tests := []struct {
+		path  string
+		blob  string
+		found bool
+		warns int
+	}{
+		{path: "a", blob: blobs["a"], found: true, warns: 1},
+		{path: "b", blob: blobs["b"], found: true, warns: 1},
+		{path: "a", blob: blobs["b"], warns: 2},
+		{path: "d", blob: blobs["a"], warns: 1},
+	}
+	for _, test := range tests {
+		note, found, warnings, err := finder.Find(head, test.path, test.blob)
+		if err != nil || found != test.found || len(warnings) != test.warns {
+			t.Fatalf("Find(%s) = %t, %v, %v", test.path, found, warnings, err)
+		}
+		if test.found && len(note.Files) != 2 {
+			t.Fatalf("Find(%s) returned a note from the wrong commit: %+v", test.path, note)
+		}
+		want, wantFound, wantWarnings, wantErr := FindFile(repo, head, test.path, test.blob)
+		if found != wantFound || len(warnings) != len(wantWarnings) || (wantErr == nil) != (err == nil) ||
+			len(note.Files) != len(want.Files) {
+			t.Fatalf("Find(%s) differs from FindFile", test.path)
+		}
+	}
+}
+
 func notesGit(t *testing.T, root string, args ...string) string {
 	t.Helper()
 	command := exec.Command("git", args...)

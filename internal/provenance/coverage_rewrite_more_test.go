@@ -2149,6 +2149,11 @@ if [ "$FAKE_GIT_MODE" = "notes-read-error" ] &&
   printf '%s\n' 'forced notes read failure' >&2
   exit 2
 fi
+if [ "$FAKE_GIT_MODE" = "notes-list-error" ] &&
+   [ "$1" = "notes" ] && [ "$2" = "--ref=refs/notes/byline" ] && [ "$3" = "list" ]; then
+  printf '%s\n' 'forced notes list failure' >&2
+  exit 2
+fi
 if [ "$FAKE_GIT_MODE" = "notes-write-error" ] &&
    [ "$1" = "notes" ] && [ "$3" = "add" ]; then
   printf '%s\n' 'forced notes write failure' >&2
