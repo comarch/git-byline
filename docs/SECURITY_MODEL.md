@@ -21,8 +21,8 @@ untrusted.
 
 Every Git subprocess drops the `GIT_` variables it inherits, like `GIT_DIR`
 or `GIT_INDEX_FILE`, so the operation that runs a hook cannot point
-git-byline at another repository or index. Only `GIT_CONFIG_NOSYSTEM` and
-`GIT_CONFIG_SYSTEM` stay. Git reads the system, global, and repository
+git-byline at another repository or index. Only `GIT_CONFIG_NOSYSTEM`,
+`GIT_CONFIG_SYSTEM`, and `GIT_CONFIG_GLOBAL` stay. Git reads the system, global, and repository
 configuration the same way the user's own Git does, so ignore rules from
 `core.excludesFile`, line endings, and long paths match. Git for Windows
 keeps these settings in its system file. A snapshot never includes a path
