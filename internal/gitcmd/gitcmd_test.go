@@ -660,6 +660,8 @@ func TestSystemConfigIgnoreRulesApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_CONFIG_SYSTEM", system)
+	// The global file of the developer must not add or hide ignore rules.
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "unrelated"))
 	repo, err := Discover(root)
 	if err != nil {
