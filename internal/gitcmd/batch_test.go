@@ -214,6 +214,70 @@ func TestPrefetchIgnored(t *testing.T) {
 	}
 }
 
+func TestHashContentMatchesGit(t *testing.T) {
+	t.Parallel()
+	for _, format := range []string{"sha1", "sha256"} {
+		format := format
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			runGit(t, root, "init", "--object-format="+format)
+			repo, err := Discover(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, content := range []string{"", "one\n", "crlf\r\nline\r\n", "no newline"} {
+				want, err := repo.HashBytes([]byte(content))
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := repo.HashContent([]byte(content))
+				if err != nil || got != want {
+					t.Fatalf("HashContent(%q) = %q, %v, want %q", content, got, err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSnapshotWorktreeStoredSkipsKnownBlobs(t *testing.T) {
+	t.Parallel()
+	root := initRepository(t)
+	writeFile(t, root, "file.txt", "one\n")
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oid, err := repo.HashContent([]byte("one\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := filepath.Join(root, ".git", "objects", oid[:2], oid[2:])
+	snapshot, size, err := repo.SnapshotWorktreeStored("file.txt", 1<<20, map[string]bool{oid: true})
+	if err != nil || snapshot.Blob != oid || !snapshot.Exists || size != 4 {
+		t.Fatalf("SnapshotWorktreeStored(stored) = %+v, %d, %v", snapshot, size, err)
+	}
+	if _, err := os.Stat(object); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("SnapshotWorktreeStored wrote a stored blob: %v", err)
+	}
+	snapshot, _, err = repo.SnapshotWorktreeStored("file.txt", 1<<20, nil)
+	if err != nil || snapshot.Blob != oid {
+		t.Fatalf("SnapshotWorktreeStored(new) = %+v, %v", snapshot, err)
+	}
+	if _, err := os.Stat(object); err != nil {
+		t.Fatalf("SnapshotWorktreeStored did not write a new blob: %v", err)
+	}
+	if snapshot, _, err := repo.SnapshotWorktreeStored("gone.txt", 1<<20, nil); err != nil || snapshot.Exists {
+		t.Fatalf("SnapshotWorktreeStored(missing) = %+v, %v", snapshot, err)
+	}
+	if _, _, err := repo.SnapshotWorktreeStored("file.txt", 2, nil); !errors.Is(err, ErrSnapshotBudget) {
+		t.Fatalf("SnapshotWorktreeStored(budget) = %v", err)
+	}
+	if _, _, err := repo.SnapshotWorktreeStored("file.txt", 0, nil); !errors.Is(err, ErrSnapshotBudget) {
+		t.Fatalf("SnapshotWorktreeStored(no budget) = %v", err)
+	}
+}
+
 // fakeBatchGit returns a repo whose Git answers cat-file --batch, ls-tree,
 // check-ignore, and hash-object with broken output chosen by mode. Single
 // cat-file blob commands print "single", so a fallback is visible.
@@ -316,6 +380,11 @@ func TestPrefetchRejectsBrokenGitOutput(t *testing.T) {
 	repo.PrefetchIgnored([]string{"../outside", "/absolute"})
 	if repo.batch.ignored != nil {
 		t.Fatal("PrefetchIgnored ran without a valid path")
+	}
+	writeFile(t, repo.Root, "file.txt", "content\n")
+	if _, _, err := repo.SnapshotWorktreeStored("file.txt", 1<<20, nil); err == nil ||
+		!strings.Contains(err.Error(), "forced hash failure") {
+		t.Fatalf("SnapshotWorktreeStored(hash failure) = %v", err)
 	}
 }
 
