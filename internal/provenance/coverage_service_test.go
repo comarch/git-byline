@@ -717,3 +717,33 @@ func coverageAnnotateNoopRetentionFailure(t *testing.T) {
 		t.Fatalf("Annotate() error = %v", err)
 	}
 }
+
+func TestCoverageUnchangedShellPostDropFailure(t *testing.T) {
+	skipIfUnsupportedPermissions(t)
+	root := testRepo(t)
+	write(t, root, "human.txt", "base\n")
+	commit(t, root, "base")
+	repo, err := gitcmd.Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "human.txt", "base\nhuman\n")
+	pre := preset.Event{Kind: model.CheckpointKindShellPre, Type: model.AuthorHuman, EventID: "read"}
+	if _, err := Capture(repo, pre, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// The lock file exists already, so only the rewrite of the log fails.
+	dir := store.New(repo.GitDir).Dir
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	post := preset.Event{
+		Kind: model.CheckpointKindShellPost, Type: model.AuthorAI, EventID: "read",
+		Agent: "claude", Model: "model", Session: "session",
+	}
+	if _, err := Capture(repo, post, time.Now()); err == nil ||
+		!strings.Contains(err.Error(), "drop unchanged shell_pre") {
+		t.Fatalf("Capture(unchanged shell_post) error = %v", err)
+	}
+}

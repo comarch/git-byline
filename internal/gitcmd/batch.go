@@ -95,17 +95,15 @@ func (repo *Repo) startObjectBatch() (*objectBatch, error) {
 		"GIT_BYLINE_NESTED=1",
 		"LC_ALL=C",
 	)
+	var stdout io.ReadCloser
 	stdin, err := command.StdinPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("start object batch: %w", err)
+	if err == nil {
+		stdout, err = command.StdoutPipe()
 	}
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("start object batch: %w", err)
+	if err == nil {
+		err = command.Start()
 	}
-	if err := command.Start(); err != nil {
+	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("start object batch: %w", err)
 	}
