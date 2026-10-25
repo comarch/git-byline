@@ -63,9 +63,11 @@ and is rejected there. Paths outside every worktree of the repository stay
 rejected. Shell events keep using the dirty paths of the hook's own worktree.
 
 The managed `reference-transaction` hook has the opposite failure contract.
-It exits immediately when `GIT_BYLINE_NESTED` is set, ignores refs outside
-`HEAD`, `refs/heads/*`, `refs/stash`, and `MERGE_AUTOSTASH`, and always exits
-zero. This hook runs on the critical path of commands such as `git status`,
+It exits immediately when `GIT_BYLINE_NESTED` is set, starts the binary only
+for the `committed` phase, ignores refs outside `HEAD`, `refs/heads/*`,
+`refs/stash`, and `MERGE_AUTOSTASH`, and always exits zero. The phase check
+is a shell `case`, not an early exit, so user hook code below the managed
+block still runs for every phase. This hook runs on the critical path of commands such as `git status`,
 reset, stash, pull, and branch switching. The wrapper keeps the never-nonzero
 contract; the binary parses and filters transaction lines before repository
 discovery. A provenance failure must not break repository operations.

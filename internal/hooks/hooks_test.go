@@ -1459,7 +1459,7 @@ func TestRewriteHookCommandsFailContracts(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			args := append([]string{"-c", test.command + ` "$@"`, "git-byline"}, test.args...)
+			args := append([]string{"-c", test.command, "git-byline"}, test.args...)
 			command := exec.Command("sh", args...)
 			command.Stdin = strings.NewReader(test.input)
 			command.Env = append(os.Environ(), test.env...)
@@ -1471,6 +1471,62 @@ func TestRewriteHookCommandsFailContracts(t *testing.T) {
 	}
 }
 
+func TestReferenceTransactionHookStartsBylineOnlyWhenCommitted(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fake binary is not executable on Windows")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "phases")
+	binary := filepath.Join(dir, "git-byline")
+	fake := "#!/bin/sh\nprintf '%s\\n' \"$6\" >>'" + marker + "'\ncat >/dev/null\n"
+	if err := os.WriteFile(binary, []byte(fake), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	userMarker := filepath.Join(dir, "user")
+	script := "#!/bin/sh\n" + blockStart + "\n" + referenceTransactionHookCommand(binary) + "\n" + blockEnd +
+		"\nprintf '%s\\n' \"$1\" >>'" + userMarker + "'\n"
+	phases := []string{"preparing", "prepared", "committed", "preparing", "aborted"}
+	for _, phase := range phases {
+		command := exec.Command("sh", "-c", script, "reference-transaction", phase)
+		command.Stdin = strings.NewReader("0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 HEAD\n")
+		if out, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("hook %s: %v\n%s", phase, err, out)
+		}
+	}
+	started, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(started) != "committed\n" {
+		t.Fatalf("git-byline started for phases %q, want only committed", started)
+	}
+	user, err := os.ReadFile(userMarker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(user) != strings.Join(phases, "\n")+"\n" {
+		t.Fatalf("user hook ran for phases %q, want %q", user, phases)
+	}
+}
+
+func TestReferenceTransactionCommandRejectsOtherBodies(t *testing.T) {
+	t.Parallel()
+	current := referenceTransactionHookCommand("/old/git-byline")
+	tests := map[string]string{
+		"missing nested guard": strings.TrimPrefix(current, referenceTransactionNestedGuard),
+		"other command":        referenceTransactionNestedGuard + "echo hello",
+		"missing esac":         strings.TrimSuffix(current, "\nesac"),
+		"other phase":          strings.Replace(current, "committed) ", "prepared) ", 1),
+		"extra command":        strings.Replace(current, " ;;", " ; rm -rf / ;;", 1),
+	}
+	for name, command := range tests {
+		if isReferenceTransactionCommand(command) {
+			t.Errorf("%s: isReferenceTransactionCommand accepted %q", name, command)
+		}
+	}
+}
+
 func TestManagedRewriteBlocksAreRecognized(t *testing.T) {
 	t.Parallel()
 	commands := []string{
@@ -1478,6 +1534,9 @@ func TestManagedRewriteBlocksAreRecognized(t *testing.T) {
 		rewriteHookCommand("/old/git-byline", "post-merge", true),
 		rewriteHookCommand("/old/git-byline", "post-checkout", false),
 		referenceTransactionHookCommand("/old/git-byline"),
+		// The block before phase filtering started git-byline for every phase.
+		"if [ -n \"${GIT_BYLINE_NESTED:-}\" ]; then\n  exit 0\nfi\n" +
+			`'/old/git-byline' rewrite --mode ref-txn --hook-input stdin "$@" || true`,
 	}
 	for _, command := range commands {
 		command := command

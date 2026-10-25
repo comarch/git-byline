@@ -379,12 +379,18 @@ func rewriteHookCommand(executable, mode string, failClosed bool) string {
 	return command + " || true"
 }
 
+// referenceTransactionHookCommand starts git-byline only for the committed
+// phase, the only one it acts on. Git runs this hook up to seven times per
+// commit, and starting the binary for every phase costs seconds on
+// systems with slow process creation. A case instead of an early exit keeps
+// the user's own hook code below the block running for every phase.
 func referenceTransactionHookCommand(executable string) string {
-	return `if [ -n "${GIT_BYLINE_NESTED:-}" ]; then
-  exit 0
-fi
-` + quoteExecutable(executable) + ` rewrite --mode ref-txn --hook-input stdin "$@" || true`
+	return referenceTransactionNestedGuard + `case "${1:-}" in
+committed) ` + quoteExecutable(executable) + ` rewrite --mode ref-txn --hook-input stdin "$@" || true ;;
+esac`
 }
+
+const referenceTransactionNestedGuard = "if [ -n \"${GIT_BYLINE_NESTED:-}\" ]; then\n  exit 0\nfi\n"
 
 func selectedAgents(value string) []string {
 	switch value {
@@ -1984,15 +1990,22 @@ func isPostMergeCommand(command string) bool {
 		commandHasGitBylineExecutable(lines[1], " annotate || exit 1")
 }
 
+// isReferenceTransactionCommand recognizes the current phase-filtered
+// block and the older block that started git-byline for every phase.
 func isReferenceTransactionCommand(command string) bool {
-	prefix := "if [ -n \"${GIT_BYLINE_NESTED:-}\" ]; then\n  exit 0\nfi\n"
-	if !strings.HasPrefix(command, prefix) {
+	body, found := strings.CutPrefix(command, referenceTransactionNestedGuard)
+	if !found {
 		return false
 	}
-	return commandHasGitBylineExecutable(
-		strings.TrimPrefix(command, prefix),
-		` rewrite --mode ref-txn --hook-input stdin "$@" || true`,
-	)
+	if commandHasGitBylineExecutable(body, ` rewrite --mode ref-txn --hook-input stdin "$@" || true`) {
+		return true
+	}
+	body, found = strings.CutPrefix(body, "case \"${1:-}\" in\ncommitted) ")
+	if !found {
+		return false
+	}
+	body, found = strings.CutSuffix(body, " ;;\nesac")
+	return found && commandHasGitBylineExecutable(body, ` rewrite --mode ref-txn --hook-input stdin "$@" || true`)
 }
 
 func isShellHook(data []byte) bool {
