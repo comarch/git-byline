@@ -1446,3 +1446,26 @@ func assertHeadReflogAction(t *testing.T, repo *Repo, wantAction string, wantFas
 		t.Fatalf("HeadReflogAction() = %q, want prefix %q", action, wantAction)
 	}
 }
+
+func TestDiscoverPathWithLineBreak(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows paths cannot contain a line break")
+	}
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "line\nbreak")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init", "-b", "main")
+	repo, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.Root != root || repo.GitDir != filepath.Join(root, ".git") || repo.CommonDir != repo.GitDir {
+		t.Fatalf("Discover() = %+v", repo)
+	}
+}

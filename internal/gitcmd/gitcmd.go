@@ -95,15 +95,7 @@ func Discover(dir string) (*Repo, error) {
 		return nil, fmt.Errorf("resolve working directory: %w", err)
 	}
 	temp := &Repo{Root: absolute, gitBin: gitBin}
-	root, err := temp.text("discover worktree", nil, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return nil, err
-	}
-	gitDir, err := temp.text("discover git directory", nil, "rev-parse", "--path-format=absolute", "--git-dir")
-	if err != nil {
-		return nil, err
-	}
-	commonDir, err := temp.text("discover common git directory", nil, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	root, gitDir, commonDir, err := temp.discoverDirectories()
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +105,35 @@ func Discover(dir string) (*Repo, error) {
 		CommonDir: filepath.Clean(commonDir),
 		gitBin:    gitBin,
 	}, nil
+}
+
+// discoverDirectories reads the worktree, Git, and common directories with
+// one rev-parse, because every hook run starts with discovery. A path with a
+// line break makes the combined output ambiguous, so any output that is not
+// exactly three lines falls back to one rev-parse per directory.
+func (repo *Repo) discoverDirectories() (string, string, string, error) {
+	out, err := repo.run("discover worktree", nil,
+		"rev-parse", "--show-toplevel", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	if err != nil {
+		return "", "", "", err
+	}
+	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+	if len(lines) == 3 && lines[0] != "" && lines[1] != "" && lines[2] != "" {
+		return lines[0], lines[1], lines[2], nil
+	}
+	root, err := repo.text("discover worktree", nil, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", "", "", err
+	}
+	gitDir, err := repo.text("discover git directory", nil, "rev-parse", "--path-format=absolute", "--git-dir")
+	if err != nil {
+		return "", "", "", err
+	}
+	commonDir, err := repo.text("discover common git directory", nil, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", "", "", err
+	}
+	return root, gitDir, commonDir, nil
 }
 
 // Head returns HEAD or an empty value for an unborn repository.
