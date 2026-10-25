@@ -77,11 +77,12 @@ func commands() []*command {
 		{
 			name:  "recover",
 			short: "preview or resolve stranded checkpoints",
-			usage: "Usage: git-byline recover [--drop] [--json]\n\n" +
+			usage: "Usage: git-byline recover [--drop [--all]] [--json]\n\n" +
 				"Preview parked checkpoint branch contexts, object availability,\n" +
 				"and branches that still reach each base. Default changes no state.\n" +
 				"Use --drop to discard only unreachable checkpoints and retry\n" +
-				"annotation.",
+				"annotation. --drop --all discards every parked checkpoint, also\n" +
+				"those a branch still reaches; their attribution evidence is lost.",
 			run: runRecover,
 		},
 		{

@@ -105,7 +105,7 @@ func TestPreviewRecoveryReportsBlockedAndStrandedCheckpoints(t *testing.T) {
 		blocked.UnrelatedCheckpoints != 2 ||
 		blocked.StrandedCheckpoints != 0 ||
 		blocked.BlockedCheckpoints != 2 ||
-		blocked.RecommendedAction != "restore each checkpoint's recorded branch and base to consume it, or delete every listed branch and run git-byline recover" {
+		blocked.RecommendedAction != "restore each checkpoint's recorded branch and base to consume it, delete every listed branch and run git-byline recover, or discard them with git-byline recover --drop --all" {
 		t.Fatalf("blocked preview = %+v", blocked)
 	}
 	for _, checkpoint := range blocked.Checkpoints {
@@ -130,6 +130,32 @@ func TestPreviewRecoveryReportsBlockedAndStrandedCheckpoints(t *testing.T) {
 		if !checkpoint.ObjectPresent || !checkpoint.Droppable || len(checkpoint.Branches) != 0 {
 			t.Fatalf("stranded checkpoint = %+v", checkpoint)
 		}
+	}
+}
+
+func TestAnnotateDroppingParkedDropsBlockedCheckpoints(t *testing.T) {
+	t.Parallel()
+	repo, root := setupStrandedBranchEvidence(t, false)
+	write(t, root, "file.txt", "base\nmainline\n")
+	commit(t, root, "mainline")
+
+	if _, err := AnnotateDroppingStranded(repo); err == nil {
+		t.Fatal("AnnotateDroppingStranded dropped checkpoints a branch still reaches")
+	}
+	result, err := AnnotateDroppingParked(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DroppedCheckpoints != 2 || result.ParkedCheckpoints != 0 ||
+		len(result.Warnings) == 0 || result.Warnings[0] != "dropped 2 parked checkpoints from other branch contexts" {
+		t.Fatalf("AnnotateDroppingParked = %+v", result)
+	}
+	report, err := PreviewRecovery(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.UnrelatedCheckpoints != 0 || report.AnnotationPending {
+		t.Fatalf("preview after dropping parked checkpoints = %+v", report)
 	}
 }
 

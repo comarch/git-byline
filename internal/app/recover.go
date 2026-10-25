@@ -24,12 +24,16 @@ func runRecover(env *Env, command *command, args []string) (int, error) {
 	var output strings.Builder
 	flags.SetOutput(&output)
 	drop := flags.Bool("drop", false, "discard unreachable checkpoints and retry annotation")
+	all := flags.Bool("all", false, "with --drop, also discard parked checkpoints a branch still reaches")
 	jsonOutput := flags.Bool("json", false, "print one machine-readable JSON object")
 	if err := flags.Parse(args); err != nil {
 		return flagError(env, command, output.String(), err)
 	}
 	if flags.NArg() != 0 {
 		return commandUsageError(env, command, errors.New("recover takes no positional arguments"))
+	}
+	if *all && !*drop {
+		return commandUsageError(env, command, errors.New("--all needs --drop"))
 	}
 	repo, err := discoverForEnv(env)
 	if err != nil {
@@ -47,7 +51,7 @@ func runRecover(env *Env, command *command, args []string) (int, error) {
 	if !*drop {
 		return writeRecoverPreviewResult(env, command, commandResult, *jsonOutput)
 	}
-	return runRecoverDrop(env, command, repo, commandResult, *jsonOutput)
+	return runRecoverDrop(env, command, repo, commandResult, *all, *jsonOutput)
 }
 
 func writeRecoverPreviewResult(
@@ -71,13 +75,18 @@ func runRecoverDrop(
 	command *command,
 	repo *gitcmd.Repo,
 	result recoverCommandResult,
+	all bool,
 	jsonOutput bool,
 ) (int, error) {
 	preview := result.Preview
-	if preview.BlockedCheckpoints > 0 {
-		return operationalError(env, command.name, blockedRecoveryError(preview))
+	drop := provenance.AnnotateDroppingParked
+	if !all {
+		if preview.BlockedCheckpoints > 0 {
+			return operationalError(env, command.name, blockedRecoveryError(preview))
+		}
+		drop = provenance.AnnotateDroppingStranded
 	}
-	annotation, err := provenance.AnnotateDroppingStranded(repo)
+	annotation, err := drop(repo)
 	if err != nil {
 		return annotateOperationalError(env, command.name, repo, err)
 	}
@@ -140,7 +149,8 @@ func blockedRecoveryError(report provenance.RecoveryReport) error {
 	return fmt.Errorf(
 		"refusing to drop %d blocked checkpoints\n%s\n"+
 			"restore each checkpoint's recorded branch and base to consume it, "+
-			"or delete every listed branch and run: git-byline recover",
+			"delete every listed branch and run: git-byline recover, "+
+			"or discard all parked checkpoints with: git-byline recover --drop --all",
 		report.BlockedCheckpoints,
 		strings.Join(details, "\n"),
 	)

@@ -149,12 +149,35 @@ func TestRecoverDropAnnotatesAfterBranchDeletion(t *testing.T) {
 	}
 }
 
+func TestRecoverDropAllDiscardsBlockedCheckpoints(t *testing.T) {
+	t.Parallel()
+	root, _ := setupAppStrandedRecovery(t)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	code, stdout, stderr, err := appRun(root, now, nil, "recover", "--drop", "--all")
+	if code != ExitSuccess || err != nil ||
+		!strings.Contains(stderr, "dropped 1 parked checkpoints from other branch contexts") ||
+		strings.Contains(stderr, "parked 1 checkpoints") ||
+		!strings.Contains(stdout, "annotated ") {
+		t.Fatalf("recover --drop --all = %d, %q, %q, %v", code, stdout, stderr, err)
+	}
+	report := readRecoveryPreview(t, root)
+	if report.UnrelatedCheckpoints != 0 || report.BlockedCheckpoints != 0 || report.RecommendedAction != "" {
+		t.Fatalf("preview after drop --all = %+v", report)
+	}
+	// The feature branch still exists, so only --all could clear it.
+	if branches := appGit(t, root, "branch", "--list", "feature"); !strings.Contains(branches, "feature") {
+		t.Fatalf("feature branch = %q", branches)
+	}
+}
+
 func TestRecoverUsage(t *testing.T) {
 	t.Parallel()
 	root := appRepo(t)
 	for _, args := range [][]string{
 		{"recover", "extra"},
 		{"recover", "--unknown"},
+		{"recover", "--all"},
 	} {
 		code, _, _, err := appRun(root, time.Time{}, nil, args...)
 		if code != ExitUsage || err == nil {
