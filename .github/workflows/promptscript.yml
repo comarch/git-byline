@@ -44,12 +44,12 @@ jobs:
           node-version: 26
 
       - name: Validate PromptScript
-        run: npm exec --yes --package @promptscript/cli@1.23.0 -- prs validate --strict
+        run: npm exec --yes --package @promptscript/cli@1.24.0 -- prs validate --strict
 
       - name: Compile PromptScript
         run: |
-          npm exec --yes --package @promptscript/cli@1.23.0 -- prs compile --all-builds --force --strict
-          npm exec --yes --package @promptscript/cli@1.23.0 -- prs compile --all --force --strict
+          npm exec --yes --package @promptscript/cli@1.24.0 -- prs compile --all-builds --force --strict
+          npm exec --yes --package @promptscript/cli@1.24.0 -- prs compile --all --force --strict
 
       # The committed OpenCode plugin carries the git-byline patch on top of
       # the generated output, so patch the fresh output before comparing.
